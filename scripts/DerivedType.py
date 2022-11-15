@@ -173,6 +173,7 @@ class derived_type(object):
         # rw is a variable that holds either read or write mode
         #
         spaces = "     "
+        fates_list = ["veg_pp\%is_veg","veg_pp\%is_bareground","veg_pp%wt_ed"]
         if(rw.lower() == 'write' or rw.lower() == 'w'):
             ofile.write(spaces+'\n')
             ofile.write(spaces+'!====================== {} ======================!\n'.format(self.name))
@@ -183,6 +184,7 @@ class derived_type(object):
                 c13c14 = bool('c13' in component[1] or 'c14' in component[1])
                 if(c13c14): continue
                 fname = self.name+'%'+component[1]
+                if(fname in fates_list): continue
 
                 str1 = 'write (fid, "(A)") "{}" \n'.format(fname)
                 str2 = 'write (fid, *) {}\n'.format(fname)
@@ -200,6 +202,8 @@ class derived_type(object):
                 c13c14 = bool('c13' in component[1] or 'c14' in component[1])
                 if(c13c14): continue
                 fname = self.name+'%'+component[1]
+                if(fname in fates_list): continue
+
                 dim = component[2]
                 dim1 = wr.get_delta_from_dim(dim,'y'); dim1 = dim1.replace('_all','')
                 str1 = "call fio_read(18,'{}', {}{}, errcode=errcode)\n".format(fname,fname,dim1)

@@ -16,16 +16,21 @@ def main():
     from mod_config import elm_files, home_dir, default_mods, unittests_dir
     from edit_files import process_for_unit_test
 
-    
-    casename = "LakeTemperature"
+    master_sub_dict = {} 
+
+    # casename = "dyn_hwcontent"
+    casename = "methane"
     casename = unittests_dir+casename
     # Determines if SPEL should run to make optimizations 
-    opt = False
-    add_acc = False 
-    adjust_allocation = False 
+    opt = True
+    add_acc = True
+    adjust_allocation = False  
 
-    sub_name_list = ["LakeTemperature"] #['DustEmission','DustDryDep']  # ["dyn_cnbal_patch"]
-    # sub_name_list = ["HydrologyNoDrainage"] #["SnowWater"] , "AerosolMasses","LakeHydrology"]
+    sub_name_list = ["CH4"]
+    # sub_name_list = ["ComputeWaterMassNonLake"] #["SurfaceRadiation"]  # ["dyn_cnbal_patch"]
+    # sub_name_list = ['DustEmission','DustDryDep']
+
+    # sub_name_list = ["HydrologyNoDrainage"] # ["SnowWater"] , "AerosolMasses","LakeHydrology"]
 
     # Create script output directory if not present:
     if(not os.path.isdir("./script-output")):
@@ -38,8 +43,10 @@ def main():
         if(not os.path.isdir(f"{unittests_dir}")):
             os.system(f"mkdir {unittests_dir}")
         os.system(f"mkdir {casename}")
-    
-
+        preprocess = True
+    else:
+        print(f"case {casename} already exists skipping preprocessing")
+        preprocess = False 
     
     # EcoDyn_subs_list = ["SoilLittDecompAlloc", "SoilLittDecompAlloc2","Phenology","GrowthResp",
     #                "vegcf_summary_rr","RootDynamics","CarbonStateUpdate0","CNLitterToColumn","CarbonIsoFlux1"
@@ -89,16 +96,15 @@ def main():
     needed_mods = default_mods[:]
     for s in sub_name_list:
         # Get general info of the subroutine
-        file,startln,endln = find_file_for_subroutine(s)
-        subroutines[s] = Subroutine(s,file,['elm_drv'],startln,endln)
+        subroutines[s] = Subroutine(s,calltree=['elm_drv'])
 
         # Process by removing certain modules and syntax
         # This is aimed for making subroutines compatible
         # with the !$acc routine directive, which may not be useful for
         # highly complex subroutines
-        if(not opt):
+        if(preprocess and not opt):
             process_for_unit_test(fname=file,casename=casename,
-                     mods=needed_mods,overwrite=True,verbose=True)
+                     mods=needed_mods,overwrite=True,verbose=False)
 
     # examineLoops performs adjustments that go beyond the "naive" 
     # reliance on the "!$acc routine" directive. 
@@ -121,6 +127,7 @@ def main():
         # to by the subroutine and any of its callees
         
         local_vars = getLocalVariables(subroutines[s],verbose=False)
+
         subroutines[s].parse_subroutine(var_list,verbose=True)
         subroutines[s].child_subroutines_analysis(var_list)
 
@@ -129,17 +136,24 @@ def main():
             if(c13c14):
                 del subroutines[s].elmtype_r[key]
                 continue
+            if("_inst" in key):
+                key = key.replace("_inst","_vars")
+                print(f"new read_types key: {key}")
             read_types.append(key)
+        
         #################################################
         for key in subroutines[s].elmtype_w.copy():
             c13c14 = bool('c13' in key or 'c14' in key)
             if(c13c14):
                 del subroutines[s].elmtype_w[key]
                 continue
+            if("_inst" in key):
+                key = key.replace("_inst","_vars")
+                print(f"new write_types key: {key}")
+
             write_types.append(key)
         subroutines[s].exportReadWriteVariables()
          
-    print("Write types:",write_types)
     analyze_var = True
     if(analyze_var):
         write_var_dict = {}
@@ -175,7 +189,6 @@ def main():
                 if el in write_var_dict[key]:
                     vfile.write(f"{s}::{el} reads from {key} \n")
                     ffile.write(tab+tab+el+'\n')
-    
         
     vfile.close()
     ffile.close()
@@ -203,7 +216,9 @@ def main():
     list_pp = ['veg_pp','lun_pp','col_pp','grc_pp','top_pp']
     for l in list_pp:
         read_types.append(l)
-
+    
+    replace_inst = ['soilstate_inst','waterflux_inst','canopystate_inst','atm2lnd_inst','surfalb_inst',
+                'solarabs_inst','photosyns_inst','soilhydrology_inst','urbanparams_inst']
     read_types = list(set(read_types))
     write_types = list(set(write_types))
     for v in var_list:
@@ -221,8 +236,7 @@ def main():
             ofile.write("   "+c[1]+"\n")
     ofile.close()
 
-    replace_inst = ['soilstate_inst','waterflux_inst','canopystate_inst','atm2lnd_inst','surfalb_inst',
-                'solarabs_inst','photosyns_inst','soilhydrology_inst','urbanparams_inst']
+    
 
     aggregated_elmtypes_list = []
     for s in sub_name_list:
@@ -273,7 +287,7 @@ def main():
     print(cmd)
     os.system(f"cp {home_dir}scripts/script-output/concat.F90 {casename}/verificationMod.F90")
 
-    # print stencil for acc directives to screen to be c/p'ed in main.F90
+    # print and write stencil for acc directives to screen to be c/p'ed in main.F90
     # may be worth editing main.F90 directly.
     aggregated_elmtypes_list.sort(key=lambda v: v.upper())
     from mod_config import _bc
@@ -288,7 +302,6 @@ def main():
         else :
             print(acc+el+'     , &'+endc)
     print(acc+'  )'+endc)
-
 
     const_mods = ['elm_varcon','elm_varpar','shr_const_mod',
               'landunit_varcon','column_varcon','pftvarcon',

@@ -2,12 +2,12 @@
 Python Module that collects functions that 
 have broad utility for several modules in SPEL 
 """
+from array import array
 import sys 
 import re 
 import subprocess as sp
 from typing import Optional
 from mod_config import elm_files, _bc
-
 
 class Variable(object):
     """
@@ -18,16 +18,21 @@ class Variable(object):
         * self.subgrid -> subgrid level used for allocation 
         * self.ln -> line number of declaration
     """
-    def __init__(self, type, name,subgrid,ln,dim,optional=False):
+    def __init__(self, type,name,subgrid,ln,dim,optional=False,keyword=''):
         self.type = type
         self.name = name
         self.subgrid = subgrid
         self.ln = ln 
         self.dim = dim
         self.optional = optional
+        self.keyword = keyword
+        self.filter_used = ''
+        self.subs = [] 
+
     
     def printVariable(self): 
         print(f"Variable:\n {self.type} {self.name} subgrid: {self.subgrid} {self.dim}-D")
+        print(f"Passed to {self.subs} {self.keyword}")
 
 def removeBounds(line,verbose=False):
     """
@@ -120,19 +125,18 @@ def lineContinuationAdjustment(lines,ln,verbose=False):
 
    return l, lines_to_skip;
 
-def find_file_for_subroutine(name,fn=''):
+def find_file_for_subroutine(name,fn='',ignore_interface=False):
     """
     finds file, start and end line numbers for subroutines
     find file and start of interface for interfaces
     """
-    interface_list = get_interface_list()
-    
     if(not fn):
         search_file = f"{elm_files}*.F90"
     else:
         search_file = f"{elm_files}{fn}"
     
-    if(name not in interface_list):
+    interface_list = get_interface_list()
+    if(name not in interface_list or ignore_interface):
         cmd = f'grep -in -E "^[[:space:]]*(subroutine {name})\\b" {search_file} | head -1'
         cmd_end = f'grep -in -E "^[[:space:]]*(end subroutine {name})\\b" {search_file} | head -1'
     else:
@@ -151,6 +155,9 @@ def find_file_for_subroutine(name,fn=''):
             endline = 0
     else:
         file = fn
+        if(not output ):
+            print(name,file)
+            print(f"cmd: {cmd}")
         startline = int(output.split(':')[0])
         if(cmd_end!=''):
             output = sp.getoutput(cmd_end)
@@ -254,9 +261,9 @@ def getLocalVariables(sub,verbose=False,class_var=False ):
                             optional = False 
                             if('optional' in temp_decl):
                                 optional = True
-                            sub.Arguments.append(Variable(data_type,varname,subgrid,ln,dim,optional))
+                            sub.Arguments[varname] = Variable(data_type,varname,subgrid,ln,dim,optional)
                         else: 
-                            sub.LocalVariables['arrays'].append(Variable(data_type,varname,subgrid,ln,dim))
+                            sub.LocalVariables['arrays'][varname] = Variable(data_type,varname,subgrid,ln,dim)
                         # This removes the array from the list of variables
                         temp_vars = temp_vars.replace(arr,'')
                 # Get the scalar arguments  
@@ -267,7 +274,7 @@ def getLocalVariables(sub,verbose=False,class_var=False ):
                         optional = False 
                         if('optional' in temp_decl):
                             optional = True
-                        sub.Arguments.append(Variable(data_type,var,'',ln,dim=0,optional=optional))
+                        sub.Arguments[var] = Variable(data_type,var,'',ln,dim=0,optional=optional)
                     else:
                         parameter = bool("parameter" in temp_decl.lower())
                         if(parameter): continue
@@ -297,9 +304,15 @@ def getLocalVariables(sub,verbose=False,class_var=False ):
 
 def convertAssociateDict(associate_vars, varlist):
     dtypes = []
+    
+    replace_inst = ['soilstate_inst','waterflux_inst','canopystate_inst','atm2lnd_inst','surfalb_inst',
+                'solarabs_inst','photosyns_inst','soilhydrology_inst','urbanparams_inst']
+
     for vars in associate_vars.values():
         for v in vars: 
             _type, field = v.split("%")
+            if(_type in replace_inst):
+                _type = _type.replace("_inst","vars")
             if(_type not in dtypes):
                 dtypes.append(_type)
     
@@ -311,15 +324,15 @@ def convertAssociateDict(associate_vars, varlist):
 
     return
 
-def adjust_array_access_and_allocation(local_arrs,passed_to_sub,sub,verbose=False):
+def adjust_array_access_and_allocation(local_arrs,sub,dargs=False,verbose=False):
     """
     Function edits ELM FORTRAN files to reduce memory.
     Replaces statements like "arr(bounds%begc:bounds%endc)" -> "arr(1:num_filterc)" 
     and accesses like "arr(c)" -> "arr(fc)" 
 
     * local_arrs    : list of local array Variables
-    * passed_to_sub : dictionary that matches "arr" to subroutines that take them as arguments
     * sub           : Subroutine that calls this function and declares the local_arrs
+    * sub.VariablesPassedToSub : dictionary that matches "arr" to subroutines that take them as arguments
     """
     import re
     from mod_config import _bc, elm_files,home_dir
@@ -327,54 +340,58 @@ def adjust_array_access_and_allocation(local_arrs,passed_to_sub,sub,verbose=Fals
 
     # Get lines of this file:
     ifile = open(elm_files+sub.filepath,'r')
-    print(f"First Time modifying {sub.filepath} for memory adjustments")
-    
     lines = ifile.readlines() # read entire file
     ifile.close()
-    track_changes = [] 
-    arg_list = [v.name for v in sub.Arguments]
+
+    track_changes = []
+    arg_list = [v for v in sub.Arguments] 
     scalar_list = [v.name for v in sub.LocalVariables['scalars'] ]
 
     print(_bc.BOLD+_bc.FAIL+f"arguments for {sub.name} are",arg_list,_bc.ENDC)
     print(_bc.BOLD+_bc.FAIL+f"scalars for {sub.name} are",scalar_list,_bc.ENDC)
 
     # replace declarations first
-    for arr in local_arrs:
-        var = arr[0]; filter_used = arr[1]
-        ln = var.ln; #line number of declaration
-        subgrid = var.subgrid # subgrid index 
+    if(not dargs):
+        for arr in local_arrs:
+            var = arr 
+            filter_used = arr.filter_used
+            ln = var.ln; #line number of declaration
+            subgrid = var.subgrid # subgrid index 
 
-        print(_bc.BOLD+_bc.WARNING+f"Adjusting {var.name}"+_bc.ENDC)
-        filter_used = filter_used + subgrid
-        
-        # Check that the corresponding num_filter exists
-        num_filter = "num_"+filter_used.replace("filter_","")
-        if(num_filter not in arg_list):
-            print(num_filter,"doesn't exist!")
-            sys.exit()
-        lold = lines[ln]
-        print(_bc.FAIL+lold.strip('\n')+_bc.ENDC)
-        _str = f"bounds%beg{subgrid}:bounds%end{subgrid}"
+            print(_bc.BOLD+_bc.WARNING+f"Adjusting {var.name}"+_bc.ENDC)
+            filter_used = filter_used + subgrid
 
-        replace_str = f"1:{num_filter}"
-        lnew = lines[ln].replace(_str,replace_str)
-        print(_bc.OKGREEN+lnew.strip('\n')+_bc.ENDC)
-        lines[ln] = lnew 
-        track_changes.append(lnew)
+            # Check that the corresponding num_filter exists
+            num_filter = "num_"+filter_used.replace("filter_","")
+            if(num_filter not in arg_list):
+                print(num_filter,"doesn't exist!")
+                sys.exit()
+            lold = lines[ln]
+            print(_bc.FAIL+lold.strip('\n')+_bc.ENDC)
+            _str = f"bounds%beg{subgrid}:bounds%end{subgrid}"
+
+            replace_str = f"1:{num_filter}"
+            lnew = lines[ln].replace(_str,replace_str)
+            print(_bc.OKGREEN+lnew.strip('\n')+_bc.ENDC)
+            lines[ln] = lnew 
+            track_changes.append(lnew)
 
     # Go through all loops and make replacements for filter index 
     ng_regex_array = re.compile("\w+\s*\([,\w+\*-]+\)",re.IGNORECASE)
     regex_var = re.compile(r'\w+')
     regex_indices = re.compile(r'(?<=\()(.+)(?=\))')
-    
+    print("Going through loops")
     # Make list for quick check if var should be adjusted.
-    list_of_var_names = [v[0].name for v in local_arrs]
+    list_of_var_names = [v.name for v in local_arrs]
+    print(list_of_var_names)
+
     for loop in sub.DoLoops:
         lstart = loop.start[0]; lend = loop.end[0]
         if(loop.subcall.name != sub.name): continue
+
         for n in range(lstart,lend):
             l = lines[n].split("!")[0]
-            l = l.strip() 
+            l = l.strip()
             if(not l): continue
             m_arr = ng_regex_array.findall(lines[n])
             lold = lines[n]
@@ -396,18 +413,25 @@ def adjust_array_access_and_allocation(local_arrs,passed_to_sub,sub,verbose=Fals
                         temp_line = temp_line.replace(arr,v)
                         removing = True
                         continue
+
                     # Check if var is 
                     if(v in list_of_var_names):
                         loc_ = list_of_var_names.index(v)
                         local_var = local_arrs[loc_]
-                        var = local_var[0]
-                        filter_used = local_var[1]+var.subgrid
+                        var = local_var
+                        subgrid = var.subgrid
+                        filter_used = var.filter_used + var.subgrid
 
                         # Consistency check for filter.
                         # TODO: allow scripts to insert reverse filter (eg., "fc = col_to_filter(c)" )
-                        if(filter_used != loop.filter[0]):
-                            print(f"Filter Mismatch: loops uses {loop.filter[0]}, var needs {filter_used}")
+                        loop_filter = loop.filter[0] 
+                        same_filter_type = bool(filter_used[:-1] == loop_filter[:-1])
+                        if(filter_used != loop_filter and not same_filter_type):
+                            print(f"Filter Mismatch: loops uses {loop.filter[0]}, {var.name} needs {filter_used}")
                             sys.exit()
+                        elif(same_filter_type and filter_used != loop_filter):
+                            print(_bc.WARNING+_bc.BOLD+f"{var.name} needs reverse filter!")
+
                         # Make replacement in line: (assumes subgrid is first index!!)
                         # lnew = lnew.replace(f"{v}({subgrid}",f"{v}(f{subgrid}")
                         lnew = re.sub(f"{v}\s*\({subgrid}",f"{v}(f{subgrid}",lnew)
@@ -432,58 +456,87 @@ def adjust_array_access_and_allocation(local_arrs,passed_to_sub,sub,verbose=Fals
 
     
     # Check if subroutine calls need to be adjusted
-    for arr in passed_to_sub:
-        childsub = passed_to_sub[arr][0] 
-        ln = passed_to_sub[arr][1]
-        argnum = passed_to_sub[arr][2] 
-        
-        lold = lines[ln].strip('\n')
-        
-        # get the Variable instance for "arr"
-        # If index fails, then there is an inconsistency 
-        # in examineLoops 
-        loc_ = list_of_var_names.index(arr)
-        local_var = local_arrs[loc_]
-        var = local_var[0]
-        filter_used = local_var[1]+var.subgrid
-        
-        # bounds string:
-        bounds_string = f"\s*bounds%beg{var.subgrid}\s*:\s*bounds%end{var.subgrid}\s*"
-        # string to replace bounds with
-        num_filter = "num_"+filter_used.replace("filter_","")
-        num_filter = f"1:{num_filter}"
-        replaced = False 
-        regex_array_arg = re.compile(f"{arr}\s*\({bounds_string}")
-        match = regex_array_arg.search(lold)
-        if(match):
-            lnew = regex_array_arg.sub(f"{arr}({num_filter}",lines[ln])
-            lines[ln] = lnew 
-            replaced = True 
-            track_changes.append(lnew)
+    # First filter out sub arguments that aren't local 
+    # variables only accessed by a filter 
+    # Adjust Subroutine calls
 
+    # Note that these subroutines have specific versions for 
+    # using filter or not using a filter. 
+    dont_adjust = ['c2g','p2c','p2g','p2c','c2l','l2g']
+    dont_adjust_string = '|'.join(dont_adjust)
+    regex_skip_string = re.compile(f"({dont_adjust_string})",re.IGNORECASE)
 
-        while(lold.endswith('&') and not replaced):
-            ln += 1
-            lold = lines[ln].strip('\n')
-            match = regex_array_arg.search(lold)
-            if(match): 
-                lnew = regex_array_arg.sub(f"{arr}({num_filter}",lines[ln])
-                lines[ln] = lnew
-                replaced = True 
-                track_changes.append(lnew)
-
-        
-        if(replaced):
-            print(_bc.FAIL   +lold.strip('\n')+_bc.ENDC)
-            print(_bc.OKGREEN+lnew.strip('\n')+_bc.ENDC)
-            print("\n")
-        else:
-            sys.exit(f"Error: couldn't replace argument {arr}")
+    vars_to_check = { s : [] for s in sub.VariablesPassedToSubs }
+    for subname, arg in sub.VariablesPassedToSubs.items():
+        m_skip = regex_skip_string.search(subname)
+        if(m_skip): 
+            print(_bc.FAIL+f"{subname} must be manually altered !"+_bc.ENDC)
+            continue  
+        for v in arg: 
+            if(v.name in list_of_var_names):
+                print(f"Need to check {var} for mem adjustment called in {subname}.")
+                vars_to_check[subname].append(v)
     
-        # Modify dummy arguments for child subs if needed 
-        # print(arr,"matches:",childsub.dummy_args_list[argnum])
-        darg = Variable(var.type,childsub.dummy_args_list[argnum],var.subgrid,0,var.dim,var.optional)
-        adjust_child_sub_arguments(childsub,darg)
+    print(vars_to_check)
+    for sname, vars in vars_to_check.items():
+        for v in vars:
+            print(f"{sname} :: {v.name}")
+    
+    for subname,args in sub.VariablesPassedToSubs.items(): 
+        m_skip = regex_skip_string.search(subname)
+        if(m_skip): 
+            print(_bc.FAIL+f"{subname} must be manually altered !"+_bc.ENDC)
+            continue    
+        regex_subcall = re.compile(f'\s+(call)\s+({subname})',re.IGNORECASE)
+        
+        for arg in args: 
+            # If index fails, then there is an inconsistency 
+            # in examineLoops 
+            if(arg.name not in list_of_var_names): continue 
+            loc_ = list_of_var_names.index(arg.name)
+            local_var = local_arrs[loc_]
+            filter_used = local_var.filter_used + arg.subgrid
+            # bounds string:
+            bounds_string = f"\s*bounds%beg{arg.subgrid}\s*:\s*bounds%end{arg.subgrid}\s*"
+            # string to replace bounds with
+            num_filter = "num_"+filter_used.replace("filter_","")
+            num_filter = f"1:{num_filter}"
+            regex_array_arg = re.compile(f"{arg.name}\s*\({bounds_string}")
+
+            for ln in range(sub.startline, sub.endline):
+                line = lines[ln]
+                match_call = regex_subcall.search(line)
+                if(match_call): 
+                    replaced = False 
+                    # create regex to match variables needed
+                    l = line[:]
+                    m_var = regex_array_arg.search(l)
+                    if(m_var): 
+                        lold = lines[ln].rstrip('\n')
+                        lnew = regex_array_arg.sub(f"{arg.name}({num_filter}",lines[ln])
+                        lines[ln] = lnew 
+                        replaced = True 
+                        track_changes.append(lnew)
+
+                    while(l.rstrip('\n').endswith('&') and not replaced):
+                        ln += 1 
+                        l = lines[ln] 
+                        m_var = regex_array_arg.search(l)
+                        if(m_var): 
+                            lold = lines[ln].rstrip('\n')
+                            lnew = regex_array_arg.sub(f"{arg.name}({num_filter}",lines[ln])
+                            lines[ln] = lnew 
+                            replaced = True 
+                            track_changes.append(lnew)
+
+                    if(replaced): 
+                        print(_bc.FAIL   +lold.rstrip('\n')+_bc.ENDC)
+                        print(_bc.OKGREEN+lnew.rstrip('\n')+_bc.ENDC)
+                        print("\n")
+                        break
+                    else:
+                        print(_bc.FAIL+f"Couldn't replace {arg.name} in subroutine call"+_bc.ENDC)
+                        sys.exit()
 
     # Save changes:
     if(track_changes):
@@ -498,37 +551,150 @@ def adjust_array_access_and_allocation(local_arrs,passed_to_sub,sub,verbose=Fals
             ofile.writelines(lines) 
             ofile.close()
 
-def adjust_child_sub_arguments(childsub,arg):
+    for subname,args in sub.VariablesPassedToSubs.items():
+        # Modify dummy arguments for child subs if needed 
+        # may be redundant to find file here?
+        #         
+        m_skip = regex_skip_string.search(subname)
+        if(m_skip): 
+            print(_bc.FAIL+f"{subname} must be manually altered !"+_bc.ENDC)
+            continue  
+        print(_bc.WARNING+f"Modifying dummy args for {subname}")
+        file,startline,endline = find_file_for_subroutine(subname)
+        childsub = sub.child_Subroutine[subname]
+        adjust_child_sub_arguments(childsub,file,startline,endline,args)
+        
+
+def adjust_child_sub_arguments(sub,file,lstart,lend,args):
     """
     Function that checks and modifies bounds accesses 
     for subroutine arguments 
         * childsub : Subroutine instance for child subroutine 
         * arg : Variable instance for dummy arg name
     """
-    ifile = open(elm_files+childsub.filepath,'r') 
+    import os 
+    from mod_config import home_dir, _bc
+
+    if(os.path.exists(home_dir+f"modified-files/{file}")):
+            print(file,"has already been modified")
+            file = f"../modified-files/{file}"
+    
+    print(f"Opening {elm_files}{file}")
+    ifile = open(elm_files+file,'r') 
     lines = ifile.readlines() 
     ifile.close() 
 
-    startline = childsub.startline
-    endline = childsub.endline 
-    regex_arg_type = re.compile(f"{arg.type}")
-    regex_arg_name = re.compile(f"{arg.name}\s*\(")
-    regex_bounds = re.compile(f"bounds%beg{arg.subgrid}")
+    for arg in args:
+        # Use keyword instead of arg name.  
+        # If keyword is missing then we need to determine the name!
+        kw = arg.keyword
+        if(not kw): 
+            sys.exit(f"Error keyword for {arg.name} in {sub.name} is missing")
 
-    for ct in range(startline-1,endline):
-        line = lines[ct]
-        line = line.split("!")[0] 
-        line = line.strip()
-        # Match type and name for arg 
-        match_type = regex_arg_type.search(line) 
-        match_name = regex_arg_name.search(line)
-        if(match_type and match_name): 
-            match_bounds = regex_bounds.search(line) 
-            if(match_bounds):
-                print(f"Need to replace {line} and all accesses")
-                sys.exit()
-            else:
-                print(f"{line} -- No Action Needed")
-                return 
+        regex_arg_type = re.compile(f"{arg.type}",re.IGNORECASE)
+        regex_arg_name = re.compile(f"{kw}\s*\(",re.IGNORECASE)
+        regex_bounds_full = re.compile(f"({kw}\s*\()(bounds%beg{arg.subgrid})\s*(:)\s*(bounds%end{arg.subgrid})\s*(\))",re.IGNORECASE)
+        regex_bounds = re.compile(f"({kw}\s*\(\s*bounds%beg{arg.subgrid}[\s:]+\))",re.IGNORECASE)
+        for ct in range(lstart-1,lend):
+            #
+            line= lines[ct]
+            lold = line
+            line = line.split("!")[0] 
+            line = line.strip()
+
+            replaced = False 
+            # Match type and name for arg 
+            match_type = regex_arg_type.search(line) 
+            match_name = regex_arg_name.search(line)
+
+            if(match_type and match_name): 
+                match_bounds = regex_bounds.search(line) 
+                match_full_bounds = regex_bounds_full.search(line)
+                if(match_bounds and not match_full_bounds):
+                    lnew = regex_bounds.sub(f"{kw}(1:)",lold)
+                    lines[ct] = lnew
+                    print(_bc.BOLD+_bc.FAIL+lold.rstrip('\n')+_bc.ENDC)
+                    print(_bc.BOLD+_bc.OKGREEN+lnew.rstrip('\n')+_bc.ENDC)
+                    replaced = True
+                else:
+                    print(f"{line} -- No Action Needed")
+                    sys.exit()
     
+    # Write to file 
+    with open(elm_files+file,'w') as ofile:
+        ofile.writelines(lines)
+    
+    # re-run access adjustment for the dummy args only!
+    sub.filepath = file
+    print(f"Adjust dargs for {sub.name} at {sub.filepath}")
+    dargs = [] 
+    for arg in args:
+        v = arg
+        v.name = v.keyword 
+        v.keyword = ''
+
+    adjust_array_access_and_allocation(local_arrs=args,sub=sub,verbose=True,dargs=True)
+    sys.exit()
+    
+def determine_filter_access(sub,verbose=False):
+    """
+    Function that will go through all the loops for 
+    local variables that are bounds accessed.
+    """
+    
+    print(_bc.BOLD+_bc.WARNING+f"Adjusting Allocation for {sub.name}"+_bc.ENDC)
+    
+    # TODO: 
+    # Insert function call to check if any local 
+    # variables are passed as subroutine arguments 
+    if(verbose): print("Checking if variables can be allocated by filter")
+    ok_to_replace = {}
+    
+    # List that accumulates all info necessary for memory adjustment
+    local_vars = []  # [Variable]
+    array_dict = sub.LocalVariables["arrays"]
+    for vname, lcl_var in array_dict.items():
+        if(lcl_var.subgrid == "?"): continue 
+        lcl_arr = lcl_var.name 
+        ok_to_replace[lcl_arr] = False 
+        filter_used = ''
+        indx, ln = lcl_var.subgrid, lcl_var.ln 
+        for loop in sub.DoLoops: 
+            if(loop.subcall.name != sub.name): continue 
+            if(lcl_arr in loop.vars or lcl_arr in loop.reduce_vars):
+                if(not loop.filter): # Loop doesn't use a filter?
+                    filter_used = "None"
+                    continue
+                fvar, fidx, newidx = loop.filter
+                # Case where no filter is used 
+                if(not fvar): 
+                    if(indx not in loop.index):
+                        print(f"{lcl_arr} {indx} used in {loop.subcall.name}:L{loop.start[0]} {fvar},{fidx}{loop.index}")
+                if(not filter_used):
+                    # Get rid of the subgrid info
+                    filter_used = fvar[:-1]
+                elif(filter_used != fvar[:-1] and filter_used != "Mixed"):
+                    print(_bc.BOLD+_bc.HEADER+f"{lcl_arr} {indx} used in {loop.subcall.name}:L{loop.start[0]} {fvar},{fidx}{loop.index}"+_bc.ENDC)
+                    filter_used = "Mixed"
+                    break
+        #
+        if(filter_used == "None"):
+            print(f"No filter being used -- won't adjust {lcl_arr}")
+        elif(filter_used == "Mixed"): 
+            print(_bc.WARNING+f"{lcl_arr} has multiple filters being used -- won't adjust"+_bc.ENDC)
+            ok_to_replace[lcl_arr] = False 
+        elif(filter_used and filter_used != "Mixed"):
+            print(f"{lcl_arr} only uses {filter_used}{indx}")
+            ok_to_replace[lcl_arr] = True 
+            lcl_var.filter_used = filter_used
+            local_vars.append(lcl_var)
+        else: 
+            print(_bc.WARNING + f"{lcl_arr} is not used by any loops!!"+ _bc.ENDC)
+        
+    if(local_vars):
+        list_of_var_names = [v.name for v in local_vars]
+        print(_bc.BOLD+_bc.HEADER+f"Adjusting {sub.name} vars:{list_of_var_names}"+_bc.ENDC)
+        adjust_array_access_and_allocation(local_vars, sub=sub,verbose=True)
+    else:
+        print(_bc.BOLD+_bc.HEADER+f"No variables need to be adjusted for {sub.name}"+_bc.ENDC)
     

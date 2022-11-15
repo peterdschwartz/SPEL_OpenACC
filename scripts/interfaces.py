@@ -1,4 +1,3 @@
-
 def resolve_interface(sub,iname,args,varlist,verbose=False):
     """
     Determines which subroutine in an interface is being called.
@@ -13,8 +12,10 @@ def resolve_interface(sub,iname,args,varlist,verbose=False):
     if(verbose): print(_bc.FAIL+f"Resolving interface for {iname}\n with args: {args}")
     cmd = f'grep -in -E "^[[:space:]]+(interface {iname})" {elm_files}*.F90'
     output = sp.getoutput(cmd)
+
     # Get file and line number for interface
     _str = output.replace(elm_files,'') 
+
     # list that goes:  [filename, linenumber, interface {iname}]
     fn, ln, pattern = _str.split(':')
     if(verbose): print(fn,ln,pattern+_bc.ENDC)
@@ -83,7 +84,7 @@ def resolve_interface(sub,iname,args,varlist,verbose=False):
             l_args.append(Variable(type="?",name=arg,subgrid="?",ln="?",dim="?"))
             continue 
         # Check arguments first:
-        for var in sub.Arguments:
+        for vname,var in sub.Arguments.items():
             if(arg.lower() == var.name.lower()):
                 print(f"Matched {arg} to {var.name}")
                 l_args.append(var)
@@ -92,7 +93,7 @@ def resolve_interface(sub,iname,args,varlist,verbose=False):
         if(found): continue
 
         # Check local variables, arrays :
-        for var in sub.LocalVariables['arrays']: 
+        for vname, var in sub.LocalVariables['arrays'].items(): 
             if(arg.lower() == var.name.lower()):
                 print(f"Matched {arg} to {var.name}")
                 l_args.append(var)
@@ -117,12 +118,13 @@ def resolve_interface(sub,iname,args,varlist,verbose=False):
     
     num_input_args = len(l_args)
     
-    resolvedSub = '' # subroutine name that is returned by this function.
+    resolved_sub_name = '' # subroutine name that is returned by this function.
 
     # Instantiate subroutines for interface procedures
     for s in subroutines:
-        fn1,startline,endline = find_file_for_subroutine(s,fn)
-        testsub = Subroutine(s,fn1,[''],start=startline,end=endline)
+        print("resolve_interface :: ")
+        fn1,startline,endline = find_file_for_subroutine(name=s,fn=fn,ignore_interface=True)
+        testsub = Subroutine(s,fn1,calltree=sub.calltree,start=startline,end=endline,ignore_interface=True)
         x = getLocalVariables(testsub,verbose=False)
         
         # Go through each argument and check if 
@@ -132,9 +134,11 @@ def resolve_interface(sub,iname,args,varlist,verbose=False):
         # Check if this subroutine is a match or not 
         if(sum(matched) == num_input_args):
             if(verbose): print(f"Subroutine is {s}"+_bc.ENDC)
-            resolvedSub = s
+            resolved_sub_name = s
+            child_sub = testsub
+
             break
-    return resolvedSub
+    return resolved_sub_name, child_sub
 
 def match_input_arguments(l_args, sub,special,verbose=False):
     """
@@ -144,9 +148,9 @@ def match_input_arguments(l_args, sub,special,verbose=False):
     import sys 
 
     if(not sub.Arguments): 
-        sys.exit("match_input_arguments:: Error - must first parse variables for sub")
+        sys.exit(f"match_input_arguments:: Error - must first parse variables for {sub.name}")
     
-    test_args = sub.Arguments[:]
+    test_args = [v for v in sub.Arguments.values()]
     
     num_input_args = len(l_args)
 
@@ -168,7 +172,7 @@ def match_input_arguments(l_args, sub,special,verbose=False):
         return matched # not enough arguments 
     
     # get list of arg names for keyword comparsions
-    test_arg_names = [v.name for v in test_args]
+    test_arg_names = [k for k in sub.Arguments.keys()]
    
     argn = 0 # argument number 
     skip = 0 # keep track of skipped optional arguments

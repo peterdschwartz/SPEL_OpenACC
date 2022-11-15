@@ -17,20 +17,28 @@ subroutine duplicate_weights(unique_sites,total_gridcells)
    end do
 end subroutine duplicate_weights
 subroutine duplicate_clumps(mode,unique_sites,num_sites)
+   use elm_instMod, only : canopystate_vars 
    use GridcellType, only : grc_pp 
+   use TopounitDataType, only : top_as 
    use LandunitType, only : lun_pp 
    use ColumnType, only : col_pp 
    use ColumnDataType, only : col_es 
-   use ColumnDataType, only : col_ef 
    use ColumnDataType, only : col_ws 
    use ColumnDataType, only : col_wf 
+   use ColumnDataType, only : col_nf 
+   use ColumnDataType, only : col_cf 
    use VegetationType, only : veg_pp 
-   use VegetationDataType, only : veg_ef 
+   use VegetationDataType, only : veg_wf 
+   use VegetationDataType, only : veg_cs 
+   use VegetationDataType, only : veg_cf 
    use elm_instMod, only : ch4_vars 
    use elm_instMod, only : soilstate_vars 
-   use elm_instMod, only : solarabs_vars 
+   use elm_instMod, only : energyflux_vars 
    use TopounitType, only : top_pp 
+   use SharedParamsMod, only : ParamsShareInst 
    use elm_instMod, only : lakestate_vars 
+   use elm_instMod, only : soilhydrology_vars 
+   use elm_instMod, only : lnd2atm_vars 
    use decompMod, only : bounds_type, get_clump_bounds, procinfo 
    use elm_varcon 
    use elm_varpar 
@@ -291,64 +299,174 @@ subroutine duplicate_clumps(mode,unique_sites,num_sites)
          begl=bounds%begl; endl=bounds%endl
          begc=bounds%begc; endc=bounds%endc
          begp=bounds%begp; endp=bounds%endp
+         canopystate_vars%elai_patch(begp:endp) &
+            = canopystate_vars%elai_patch(begp_copy:endp_copy)
+         top_as%tbot(begt:endt) &
+            = top_as%tbot(begt_copy:endt_copy)
+         top_as%pbot(begt:endt) &
+            = top_as%pbot(begt_copy:endt_copy)
+         top_as%po2bot(begt:endt) &
+            = top_as%po2bot(begt_copy:endt_copy)
+         top_as%pco2bot(begt:endt) &
+            = top_as%pco2bot(begt_copy:endt_copy)
+         top_as%pch4bot(begt:endt) &
+            = top_as%pch4bot(begt_copy:endt_copy)
          col_es%t_soisno(begc:endc,:) &
             = col_es%t_soisno(begc_copy:endc_copy,:)
+         col_es%t_h2osfc(begc:endc) &
+            = col_es%t_h2osfc(begc_copy:endc_copy)
          col_es%t_grnd(begc:endc) &
             = col_es%t_grnd(begc_copy:endc_copy)
-         col_es%t_lake(begc:endc,:) &
-            = col_es%t_lake(begc_copy:endc_copy,:)
          col_ws%h2osoi_liq(begc:endc,:) &
             = col_ws%h2osoi_liq(begc_copy:endc_copy,:)
          col_ws%h2osoi_ice(begc:endc,:) &
             = col_ws%h2osoi_ice(begc_copy:endc_copy,:)
-         col_ws%h2osno(begc:endc) &
-            = col_ws%h2osno(begc_copy:endc_copy)
-         col_ws%snow_depth(begc:endc) &
-            = col_ws%snow_depth(begc_copy:endc_copy)
-         col_wf%qflx_snofrz(begc:endc) &
-            = col_wf%qflx_snofrz(begc_copy:endc_copy)
-         veg_ef%eflx_sh_grnd(begp:endp) &
-            = veg_ef%eflx_sh_grnd(begp_copy:endp_copy)
-         veg_ef%eflx_sh_tot(begp:endp) &
-            = veg_ef%eflx_sh_tot(begp_copy:endp_copy)
-         veg_ef%eflx_soil_grnd(begp:endp) &
-            = veg_ef%eflx_soil_grnd(begp_copy:endp_copy)
-         veg_ef%eflx_gnet(begp:endp) &
-            = veg_ef%eflx_gnet(begp_copy:endp_copy)
+         col_ws%h2osoi_vol(begc:endc,:) &
+            = col_ws%h2osoi_vol(begc_copy:endc_copy,:)
+         col_ws%h2osfc(begc:endc) &
+            = col_ws%h2osfc(begc_copy:endc_copy)
+         col_ws%frac_h2osfc(begc:endc) &
+            = col_ws%frac_h2osfc(begc_copy:endc_copy)
+         col_wf%qflx_surf(begc:endc) &
+            = col_wf%qflx_surf(begc_copy:endc_copy)
+         col_nf%pot_f_nit_vr(begc:endc,:) &
+            = col_nf%pot_f_nit_vr(begc_copy:endc_copy,:)
+         col_cf%hr_vr(begc:endc,:) &
+            = col_cf%hr_vr(begc_copy:endc_copy,:)
+         col_cf%o_scalar(begc:endc,:) &
+            = col_cf%o_scalar(begc_copy:endc_copy,:)
+         col_cf%fphr(begc:endc,:) &
+            = col_cf%fphr(begc_copy:endc_copy,:)
+         col_cf%lithr(begc:endc) &
+            = col_cf%lithr(begc_copy:endc_copy)
+         col_cf%somhr(begc:endc) &
+            = col_cf%somhr(begc_copy:endc_copy)
+         veg_wf%qflx_tran_veg(begp:endp) &
+            = veg_wf%qflx_tran_veg(begp_copy:endp_copy)
+         veg_cs%frootc(begp:endp) &
+            = veg_cs%frootc(begp_copy:endp_copy)
+         veg_cf%rr(begp:endp) &
+            = veg_cf%rr(begp_copy:endp_copy)
+         veg_cf%agnpp(begp:endp) &
+            = veg_cf%agnpp(begp_copy:endp_copy)
+         veg_cf%bgnpp(begp:endp) &
+            = veg_cf%bgnpp(begp_copy:endp_copy)
+         veg_cf%annsum_npp(begp:endp) &
+            = veg_cf%annsum_npp(begp_copy:endp_copy)
+         veg_cf%annavg_agnpp(begp:endp) &
+            = veg_cf%annavg_agnpp(begp_copy:endp_copy)
+         veg_cf%annavg_bgnpp(begp:endp) &
+            = veg_cf%annavg_bgnpp(begp_copy:endp_copy)
+         veg_cf%tempavg_agnpp(begp:endp) &
+            = veg_cf%tempavg_agnpp(begp_copy:endp_copy)
+         ch4_vars%ch4_prod_depth_sat_col(begc:endc,:) &
+            = ch4_vars%ch4_prod_depth_sat_col(begc_copy:endc_copy,:)
+         ch4_vars%ch4_prod_depth_unsat_col(begc:endc,:) &
+            = ch4_vars%ch4_prod_depth_unsat_col(begc_copy:endc_copy,:)
+         ch4_vars%ch4_oxid_depth_sat_col(begc:endc,:) &
+            = ch4_vars%ch4_oxid_depth_sat_col(begc_copy:endc_copy,:)
+         ch4_vars%ch4_oxid_depth_unsat_col(begc:endc,:) &
+            = ch4_vars%ch4_oxid_depth_unsat_col(begc_copy:endc_copy,:)
+         ch4_vars%ch4_aere_depth_sat_col(begc:endc,:) &
+            = ch4_vars%ch4_aere_depth_sat_col(begc_copy:endc_copy,:)
+         ch4_vars%ch4_aere_depth_unsat_col(begc:endc,:) &
+            = ch4_vars%ch4_aere_depth_unsat_col(begc_copy:endc_copy,:)
+         ch4_vars%ch4_ebul_depth_sat_col(begc:endc,:) &
+            = ch4_vars%ch4_ebul_depth_sat_col(begc_copy:endc_copy,:)
+         ch4_vars%ch4_ebul_depth_unsat_col(begc:endc,:) &
+            = ch4_vars%ch4_ebul_depth_unsat_col(begc_copy:endc_copy,:)
+         ch4_vars%ch4_ebul_total_sat_col(begc:endc) &
+            = ch4_vars%ch4_ebul_total_sat_col(begc_copy:endc_copy)
+         ch4_vars%ch4_ebul_total_unsat_col(begc:endc) &
+            = ch4_vars%ch4_ebul_total_unsat_col(begc_copy:endc_copy)
+         ch4_vars%ch4_surf_aere_sat_col(begc:endc) &
+            = ch4_vars%ch4_surf_aere_sat_col(begc_copy:endc_copy)
+         ch4_vars%ch4_surf_aere_unsat_col(begc:endc) &
+            = ch4_vars%ch4_surf_aere_unsat_col(begc_copy:endc_copy)
+         ch4_vars%ch4_surf_ebul_sat_col(begc:endc) &
+            = ch4_vars%ch4_surf_ebul_sat_col(begc_copy:endc_copy)
+         ch4_vars%ch4_surf_ebul_unsat_col(begc:endc) &
+            = ch4_vars%ch4_surf_ebul_unsat_col(begc_copy:endc_copy)
+         ch4_vars%o2_oxid_depth_sat_col(begc:endc,:) &
+            = ch4_vars%o2_oxid_depth_sat_col(begc_copy:endc_copy,:)
+         ch4_vars%o2_oxid_depth_unsat_col(begc:endc,:) &
+            = ch4_vars%o2_oxid_depth_unsat_col(begc_copy:endc_copy,:)
+         ch4_vars%o2_aere_depth_sat_col(begc:endc,:) &
+            = ch4_vars%o2_aere_depth_sat_col(begc_copy:endc_copy,:)
+         ch4_vars%o2_aere_depth_unsat_col(begc:endc,:) &
+            = ch4_vars%o2_aere_depth_unsat_col(begc_copy:endc_copy,:)
+         ch4_vars%conc_ch4_sat_col(begc:endc,:) &
+            = ch4_vars%conc_ch4_sat_col(begc_copy:endc_copy,:)
+         ch4_vars%conc_ch4_unsat_col(begc:endc,:) &
+            = ch4_vars%conc_ch4_unsat_col(begc_copy:endc_copy,:)
+         ch4_vars%ch4_surf_diff_sat_col(begc:endc) &
+            = ch4_vars%ch4_surf_diff_sat_col(begc_copy:endc_copy)
+         ch4_vars%ch4_surf_diff_unsat_col(begc:endc) &
+            = ch4_vars%ch4_surf_diff_unsat_col(begc_copy:endc_copy)
+         ch4_vars%fsat_bef_col(begc:endc) &
+            = ch4_vars%fsat_bef_col(begc_copy:endc_copy)
+         ch4_vars%lake_soilc_col(begc:endc,:) &
+            = ch4_vars%lake_soilc_col(begc_copy:endc_copy,:)
+         ch4_vars%totcolch4_col(begc:endc) &
+            = ch4_vars%totcolch4_col(begc_copy:endc_copy)
+         ch4_vars%annsum_counter_col(begc:endc) &
+            = ch4_vars%annsum_counter_col(begc_copy:endc_copy)
+         ch4_vars%annavg_finrw_col(begc:endc) &
+            = ch4_vars%annavg_finrw_col(begc_copy:endc_copy)
+         ch4_vars%qflx_surf_lag_col(begc:endc) &
+            = ch4_vars%qflx_surf_lag_col(begc_copy:endc_copy)
+         ch4_vars%finundated_lag_col(begc:endc) &
+            = ch4_vars%finundated_lag_col(begc_copy:endc_copy)
+         ch4_vars%layer_sat_lag_col(begc:endc,:) &
+            = ch4_vars%layer_sat_lag_col(begc_copy:endc_copy,:)
+         ch4_vars%zwt0_col(begc:endc) &
+            = ch4_vars%zwt0_col(begc_copy:endc_copy)
+         ch4_vars%f0_col(begc:endc) &
+            = ch4_vars%f0_col(begc_copy:endc_copy)
+         ch4_vars%p3_col(begc:endc) &
+            = ch4_vars%p3_col(begc_copy:endc_copy)
+         ch4_vars%c_atm_grc(begg:endg,:) &
+            = ch4_vars%c_atm_grc(begg_copy:endg_copy,:)
+         ch4_vars%ch4co2f_grc(begg:endg) &
+            = ch4_vars%ch4co2f_grc(begg_copy:endg_copy)
+         ch4_vars%ch4prodg_grc(begg:endg) &
+            = ch4_vars%ch4prodg_grc(begg_copy:endg_copy)
+         ch4_vars%finundated_col(begc:endc) &
+            = ch4_vars%finundated_col(begc_copy:endc_copy)
+         ch4_vars%conc_o2_sat_col(begc:endc,:) &
+            = ch4_vars%conc_o2_sat_col(begc_copy:endc_copy,:)
+         ch4_vars%conc_o2_unsat_col(begc:endc,:) &
+            = ch4_vars%conc_o2_unsat_col(begc_copy:endc_copy,:)
+         ch4_vars%o2_decomp_depth_sat_col(begc:endc,:) &
+            = ch4_vars%o2_decomp_depth_sat_col(begc_copy:endc_copy,:)
+         ch4_vars%o2_decomp_depth_unsat_col(begc:endc,:) &
+            = ch4_vars%o2_decomp_depth_unsat_col(begc_copy:endc_copy,:)
+         ch4_vars%grnd_ch4_cond_patch(begp:endp) &
+            = ch4_vars%grnd_ch4_cond_patch(begp_copy:endp_copy)
+         ch4_vars%grnd_ch4_cond_col(begc:endc) &
+            = ch4_vars%grnd_ch4_cond_col(begc_copy:endc_copy)
+         soilstate_vars%cellorg_col(begc:endc,:) &
+            = soilstate_vars%cellorg_col(begc_copy:endc_copy,:)
+         soilstate_vars%smp_l_col(begc:endc,:) &
+            = soilstate_vars%smp_l_col(begc_copy:endc_copy,:)
+         soilstate_vars%bsw_col(begc:endc,:) &
+            = soilstate_vars%bsw_col(begc_copy:endc_copy,:)
          soilstate_vars%watsat_col(begc:endc,:) &
             = soilstate_vars%watsat_col(begc_copy:endc_copy,:)
-         soilstate_vars%tkmg_col(begc:endc,:) &
-            = soilstate_vars%tkmg_col(begc_copy:endc_copy,:)
-         soilstate_vars%tkdry_col(begc:endc,:) &
-            = soilstate_vars%tkdry_col(begc_copy:endc_copy,:)
-         soilstate_vars%tksatu_col(begc:endc,:) &
-            = soilstate_vars%tksatu_col(begc_copy:endc_copy,:)
-         soilstate_vars%csol_col(begc:endc,:) &
-            = soilstate_vars%csol_col(begc_copy:endc_copy,:)
-         solarabs_vars%sabg_patch(begp:endp) &
-            = solarabs_vars%sabg_patch(begp_copy:endp_copy)
-         solarabs_vars%sabg_lyr_patch(begp:endp,:) &
-            = solarabs_vars%sabg_lyr_patch(begp_copy:endp_copy,:)
-         solarabs_vars%fsds_nir_d_patch(begp:endp) &
-            = solarabs_vars%fsds_nir_d_patch(begp_copy:endp_copy)
-         solarabs_vars%fsds_nir_i_patch(begp:endp) &
-            = solarabs_vars%fsds_nir_i_patch(begp_copy:endp_copy)
-         solarabs_vars%fsr_nir_d_patch(begp:endp) &
-            = solarabs_vars%fsr_nir_d_patch(begp_copy:endp_copy)
-         solarabs_vars%fsr_nir_i_patch(begp:endp) &
-            = solarabs_vars%fsr_nir_i_patch(begp_copy:endp_copy)
-         lakestate_vars%etal_col(begc:endc) &
-            = lakestate_vars%etal_col(begc_copy:endc_copy)
-         lakestate_vars%lake_raw_col(begc:endc) &
-            = lakestate_vars%lake_raw_col(begc_copy:endc_copy)
-         lakestate_vars%ks_col(begc:endc) &
-            = lakestate_vars%ks_col(begc_copy:endc_copy)
-         lakestate_vars%ws_col(begc:endc) &
-            = lakestate_vars%ws_col(begc_copy:endc_copy)
+         soilstate_vars%rootr_patch(begp:endp,:) &
+            = soilstate_vars%rootr_patch(begp_copy:endp_copy,:)
+         soilstate_vars%rootfr_col(begc:endc,:) &
+            = soilstate_vars%rootfr_col(begc_copy:endc_copy,:)
+         soilstate_vars%rootfr_patch(begp:endp,:) &
+            = soilstate_vars%rootfr_patch(begp_copy:endp_copy,:)
          lakestate_vars%lake_icefrac_col(begc:endc,:) &
             = lakestate_vars%lake_icefrac_col(begc_copy:endc_copy,:)
-         lakestate_vars%lake_icethick_col(begc:endc) &
-            = lakestate_vars%lake_icethick_col(begc_copy:endc_copy)
+         soilhydrology_vars%zwt_col(begc:endc) &
+            = soilhydrology_vars%zwt_col(begc_copy:endc_copy)
+         soilhydrology_vars%zwt_perched_col(begc:endc) &
+            = soilhydrology_vars%zwt_perched_col(begc_copy:endc_copy)
+         lnd2atm_vars%nem_grc(begg:endg) &
+            = lnd2atm_vars%nem_grc(begg_copy:endg_copy)
    end do
    end if 
 end subroutine duplicate_clumps 

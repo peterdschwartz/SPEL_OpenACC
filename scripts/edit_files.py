@@ -256,7 +256,7 @@ def modify_file(lines,casename,fn,verbose=False,overwrite=False):
             sub_start = ct+1
             #if(subname not in ["Init","InitAllocate","InitHistory"]):
              
-            fn1,startline,endline = find_file_for_subroutine(subname,fn)
+            fn1,startline,endline = find_file_for_subroutine(name=subname,fn=fn)
             # Consistency checks: 
             if(startline != sub_start): 
                 sys.exit(f"Subroutine start line-numbers do not match for {subname}: {sub_start},{startline}")

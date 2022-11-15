@@ -1,7 +1,13 @@
+import re 
 
 home_dir = "../"
 elm_files = home_dir+"SourceFiles/"
 unittests_dir = home_dir+"unit-tests/"
+
+dont_adjust = ['c2g','p2c','p2g','p2c','c2l','l2g','tridiagonal']
+
+dont_adjust_string = '|'.join(dont_adjust)
+regex_skip_string = re.compile(f"({dont_adjust_string})",re.IGNORECASE)
 
 default_mods = ['shr_kind_mod.F90', 'elm_varctl.F90', 'elm_varcon.F90', 'shr_const_mod.F90', 'elm_varpar.F90',
                  'decompMod.F90', 'CNDecompCascadeConType.F90', 'landunit_varcon.F90',"LakeCon.F90",

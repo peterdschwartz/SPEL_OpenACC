@@ -68,11 +68,12 @@ def generate_makefile(files,casename):
     MODEL_FLAGS = " -DMODAL_AER -DCPL_BYPASS"
 
     #Get complete preproccesor flags:
+    print(noF90)
     for f in noF90:
         if f in preproc_list:
             temp = f.upper()
             MODEL_FLAGS = MODEL_FLAGS + ' -D'+temp
-
+    
     MODEL_FLAGS = MODEL_FLAGS+'\n'
     object_file = open(f'{home_dir}list_of_object_files.txt','r')
     obj_list = object_file.readlines()
@@ -91,6 +92,7 @@ def generate_makefile(files,casename):
     ofile.write("FC_FLAGS_DEBUG = "+FC_FLAGS_DEBUG)
     ofile.write("MODEL_FLAGS= "+MODEL_FLAGS)
     ofile.write("FC_FLAGS = $(FC_FLAGS_DEBUG) $(MODEL_FLAGS)"+"\n")
+    ofile.write("TEST = $(findstring acc,$(FC_FLAGS))\n")
     objs = ' '.join(ordered_list)
     ofile.write("objects = "+objs+'\n')
 
@@ -103,10 +105,18 @@ def generate_makefile(files,casename):
     noopt_list = ["fileio_mod","readConstants","readMod","duplicateMod"]
     for f in noopt_list:
         ofile.write(f"{f}.o : {f}.F90"+"\n")
-        ofile.write("\t"+"$(FC) -O0 -c $<"+"\n")
+        ofile.write("\t"+f"$(FC) -O0 -c $({MODEL_FLAGS}) $<"+"\n")
 
     ofile.write("%.o : %.F90"+"\n")
     ofile.write("\t"+"$(FC) $(FC_FLAGS) -c $<"+"\n")
+
+    ofile.write("ifeq (,$(TEST))\n")
+    ofile.write("verificationMod.o : verificationMod.F90\n")
+    ofile.write("\t"+"$(FC) -O0 -c $<\n")
+    ofile.write("else\n")
+    ofile.write("\t"+"$(FC) -O0 -ta=tesla:deepcopy -acc -c $<\n")
+    ofile.write("endif\n")
+    
     ofile.write("\n\n"+".PHONY: clean"+"\n")
     ofile.write("clean:"+"\n")
     ofile.write("\t"+"rm -f *.mod *.o *.exe"+"\n")
