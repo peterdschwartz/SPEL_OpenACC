@@ -1,6 +1,6 @@
 module dynColumnStateUpdaterMod
 
-#include "shr_assert.h"
+!#py #include "shr_assert.h"
 
   !---------------------------------------------------------------------------
   !
@@ -90,8 +90,8 @@ module dynColumnStateUpdaterMod
   !
   ! !USES:
   use shr_kind_mod         , only : r8 => shr_kind_r8
-  use shr_log_mod     , only : errMsg => shr_log_errMsg
-  use abortutils           , only : endrun
+  !#py !#py use shr_log_mod     , only : errMsg => shr_log_errMsg
+  !#py use abortutils           , only : endrun
   use elm_varctl           , only : iulog
   use elm_varcon           , only : namec, spval
   use decompMod            , only : bounds_type, BOUNDS_LEVEL_PROC
@@ -213,7 +213,7 @@ contains
    ! Initialize a column_state_updater_type object
    !
    ! !USES:
-   use shr_infnan_mod , only : nan => shr_infnan_nan, assignment(=)
+   !#py use shr_infnan_mod , only : nan => shr_infnan_nan, assignment(=)
    !
    ! !ARGUMENTS:
    class(column_state_updater_type) :: this  ! function result
@@ -224,7 +224,7 @@ contains
    ! character(len=*), parameter :: subname = 'constructor'
    !-----------------------------------------------------------------------
 
-   SHR_ASSERT(bounds%level == BOUNDS_LEVEL_PROC, errMsg(sourcefile, __LINE__))
+   !#py SHR_ASSERT(bounds%level == BOUNDS_LEVEL_PROC, errMsg(sourcefile, __LINE__))
 
    allocate(this%cwtgcell_old(bounds%begc:bounds%endc))
    this%cwtgcell_old(:) = nan
@@ -771,11 +771,11 @@ contains
 
 #ifndef _OPENACC
     if (present(fractional_area_old) .and. .not. present(fractional_area_new)) then
-       call endrun(subname//' ERROR: If fractional_area_old is provided, then fractional_area_new must be provided, too')
+       !#py call endrun(subname//' ERROR: If fractional_area_old is provided, then fractional_area_new must be provided, too')
     end if
 
     if (present(fractional_area_new) .and. .not. present(fractional_area_old)) then
-       call endrun(subname//' ERROR: If fractional_area_new is provided, then fractional_area_old must be provided, too')
+       !#py call endrun(subname//' ERROR: If fractional_area_new is provided, then fractional_area_old must be provided, too')
     end if
 #endif 
 
@@ -903,8 +903,8 @@ contains
        if (this%area_gained_col(c) < 0._r8) then
           if (.not. vals_input_valid(c)) then
 #ifndef _OPENACC
-             write(iulog,*) ' ERROR: shrinking column without valid input value'
-             call endrun(decomp_index=c, elmlevel=namec, msg=errMsg(sourcefile, __LINE__))
+             !#py write(iulog,*) ' ERROR: shrinking column without valid input value'
+             !#py !#py call endrun(decomp_index=c, elmlevel=namec, msg=errMsg(sourcefile, __LINE__))
 #endif
           end if
           area_lost = -1._r8 * this%area_gained_col(c)

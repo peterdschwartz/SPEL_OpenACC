@@ -6,7 +6,7 @@ module EcosystemBalanceCheckMod
   !
   ! !USES:
   use shr_kind_mod        , only : r8 => shr_kind_r8
-  use shr_infnan_mod      , only : nan => shr_infnan_nan, assignment(=)
+  use shr_infnan_mod      , only : nan => shr_infnan_nan!, assignment(=)
   use shr_log_mod         , only : errMsg => shr_log_errMsg
   use decompMod           , only : bounds_type
   use abortutils          , only : endrun
@@ -41,10 +41,11 @@ module EcosystemBalanceCheckMod
   use ColumnDataType      , only : column_phosphorus_state, column_phosphorus_flux
   use VegetationType      , only : veg_pp
   use VegetationDataType  , only : veg_cf, veg_nf, veg_pf
-
+   
   use timeinfoMod
-  #define is_active_betr_bgc .false. 
+  use subgridAveMod , only : c2g_1d_parallel
   !
+  #define is_active_betr_bgc .false.  
   implicit none
   save
   private
@@ -774,7 +775,6 @@ contains
     ! !DESCRIPTION:
     ! Calculate the beginning carbon balance for mass conservation checks
     ! at grid cell level
-    !
     ! !ARGUMENTS:
     type(bounds_type)          , intent(in)  :: bounds
     type(column_carbon_state)  , intent(in)  :: col_cs
@@ -801,32 +801,32 @@ contains
          beg_cropseedc_deficit =>  grc_cs%beg_cropseedc_deficit   & ! Output: [real(r8) (:)] (gC/m2) column carbon pool for seeding new growth
          )
 
-      call c2g(bounds, totcolc(bounds%begc:bounds%endc), begcb_grc(bounds%begg:bounds%endg), &
-           c2l_scale_type = unity, l2g_scale_type = unity)
+      call c2g_1d_parallel(bounds, totcolc(bounds%begc:bounds%endc), begcb_grc(bounds%begg:bounds%endg), &
+           c2l_scale_type = unity, l2g_scale_type = unity,.true.)
 
-      call c2g(bounds, totcolc(bounds%begc:bounds%endc), beg_totc(bounds%begg:bounds%endg), &
-               c2l_scale_type = unity, l2g_scale_type = unity)
+      call c2g_1d_parallel(bounds, totcolc(bounds%begc:bounds%endc), beg_totc(bounds%begg:bounds%endg), &
+               c2l_scale_type = unity, l2g_scale_type = unity,.true.)
 
-      call c2g(bounds, totpftc(bounds%begc:bounds%endc), beg_totpftc(bounds%begg:bounds%endg), &
-               c2l_scale_type = unity, l2g_scale_type = unity)
+      call c2g_1d_parallel(bounds, totpftc(bounds%begc:bounds%endc), beg_totpftc(bounds%begg:bounds%endg), &
+               c2l_scale_type = unity, l2g_scale_type = unity,.true.)
 
-      call c2g(bounds, cwdc(bounds%begc:bounds%endc), beg_cwdc(bounds%begg:bounds%endg), &
-               c2l_scale_type = unity, l2g_scale_type = unity)
+      call c2g_1d_parallel(bounds, cwdc(bounds%begc:bounds%endc), beg_cwdc(bounds%begg:bounds%endg), &
+               c2l_scale_type = unity, l2g_scale_type = unity,.true.)
 
-      call c2g(bounds, totlitc(bounds%begc:bounds%endc), beg_totlitc(bounds%begg:bounds%endg), &
-               c2l_scale_type = unity, l2g_scale_type = unity)
+      call c2g_1d_parallel(bounds, totlitc(bounds%begc:bounds%endc), beg_totlitc(bounds%begg:bounds%endg), &
+               c2l_scale_type = unity, l2g_scale_type = unity,.true.)
 
-      call c2g(bounds, totsomc(bounds%begc:bounds%endc), beg_totsomc(bounds%begg:bounds%endg), &
-               c2l_scale_type = unity, l2g_scale_type = unity)
+      call c2g_1d_parallel(bounds, totsomc(bounds%begc:bounds%endc), beg_totsomc(bounds%begg:bounds%endg), &
+               c2l_scale_type = unity, l2g_scale_type = unity,.true.)
 
-      call c2g(bounds, totprodc(bounds%begc:bounds%endc), beg_totprodc(bounds%begg:bounds%endg), &
-               c2l_scale_type = unity, l2g_scale_type = unity)
+      call c2g_1d_parallel(bounds, totprodc(bounds%begc:bounds%endc), beg_totprodc(bounds%begg:bounds%endg), &
+               c2l_scale_type = unity, l2g_scale_type = unity,.true.)
 
-      call c2g(bounds, ctrunc(bounds%begc:bounds%endc), beg_ctrunc(bounds%begg:bounds%endg), &
-               c2l_scale_type = unity, l2g_scale_type = unity)
+      call c2g_1d_parallel(bounds, ctrunc(bounds%begc:bounds%endc), beg_ctrunc(bounds%begg:bounds%endg), &
+               c2l_scale_type = unity, l2g_scale_type = unity,.true.)
 
-      call c2g(bounds, cropseedc_deficit(bounds%begc:bounds%endc), beg_cropseedc_deficit(bounds%begg:bounds%endg), &
-               c2l_scale_type = unity, l2g_scale_type = unity)
+      call c2g_1d_parallel(bounds, cropseedc_deficit(bounds%begc:bounds%endc), beg_cropseedc_deficit(bounds%begg:bounds%endg), &
+               c2l_scale_type = unity, l2g_scale_type = unity,.true.)
 
     end associate
 
@@ -987,7 +987,6 @@ contains
     ! !DESCRIPTION:
     ! Calculate the beginning nitrogen balance for mass conservation checks
     ! at grid cell level
-    !
     ! !ARGUMENTS:
     type(bounds_type)             , intent(in)    :: bounds
     type(column_nitrogen_state)   , intent(in)    :: col_ns
@@ -999,8 +998,8 @@ contains
          begnb_grc => grc_ns%begnb     & ! Output: [real(r8) (:)]  nitrogen mass, beginning of time step (gN/m**2)
          )
 
-      call c2g(bounds, totcoln(bounds%begc:bounds%endc), begnb_grc(bounds%begg:bounds%endg), &
-           c2l_scale_type = 'unity', l2g_scale_type = 'unity')
+      call c2g_1d_parallel(bounds, totcoln(bounds%begc:bounds%endc), begnb_grc(bounds%begg:bounds%endg), &
+           c2l_scale_type=unity, l2g_scale_type=unity, .true.)
 
     end associate
 
@@ -1012,7 +1011,6 @@ contains
     ! !DESCRIPTION:
     ! Calculate the beginning phosphorus balance for mass conservation checks
     ! at grid cell level
-    !
     ! !ARGUMENTS:
     type(bounds_type)               , intent(in)    :: bounds
     type(column_phosphorus_state)   , intent(in)    :: col_ps
@@ -1025,8 +1023,8 @@ contains
          begpb_grc => grc_ps%begpb     & ! Output: [real(r8) (:)]  phosphorus mass, beginning of time step (gP/m**2)
          )
 
-      call c2g(bounds, totcolp(bounds%begc:bounds%endc), begpb_grc(bounds%begg:bounds%endg), &
-           c2l_scale_type = 'unity', l2g_scale_type = 'unity')
+      call c2g_1d_parallel(bounds, totcolp(bounds%begc:bounds%endc), begpb_grc(bounds%begg:bounds%endg), &
+           c2l_scale_type=unity, l2g_scale_type=unity,.true.)
 
 
     end associate
@@ -1036,7 +1034,7 @@ contains
   !-----------------------------------------------------------------------
   subroutine EndGridCBalanceAfterDynSubgridDriver(bounds, &
        num_soilc, filter_soilc, col_cs, grc_cs, grc_cf)
-    !
+    !$acc routine seq 
     ! !DESCRIPTION:
     ! On the radiation time step, perform carbon mass conservation check
     ! at grid level after dynamic subgrid driver has been called
@@ -1122,6 +1120,7 @@ contains
   subroutine EndGridNBalanceAfterDynSubgridDriver(bounds, &
        num_soilc, filter_soilc, col_ns, grc_ns, grc_nf)
     !
+    !$acc routine seq 
     ! !DESCRIPTION:
     ! On the radiation time step, perform nitrogen mass conservation check
     ! at grid level after dynamic subgrid driver has been called
@@ -1213,6 +1212,7 @@ contains
   subroutine EndGridPBalanceAfterDynSubgridDriver(bounds, &
        num_soilc, filter_soilc, col_ps, grc_ps, grc_pf)
     !
+    !$acc routine seq 
     ! !DESCRIPTION:
     ! On the radiation time step, perform phosphorus mass conservation check
     ! at grid level after dynamic subgrid driver has been called

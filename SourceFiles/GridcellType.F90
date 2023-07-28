@@ -40,6 +40,8 @@ module GridcellType
      integer , pointer :: coli         (:) => null() ! beginning column index for each gridcell
      integer , pointer :: colf         (:) => null() ! ending column index for each gridcell
      integer , pointer :: ncolumns     (:) => null() ! number of columns for each gridcell
+     integer , pointer :: cols (:,:) => null() ! col index 
+
      integer , pointer :: pfti         (:) => null() ! beginning pft index for each gridcell
      integer , pointer :: pftf         (:) => null() ! ending pft index for each gridcell
      integer , pointer :: npfts        (:) => null() ! number of patches for each gridcell
@@ -92,6 +94,7 @@ contains
     allocate(this%nlandunits(begg:endg)) ; this%nlandunits(:) = ispval
     allocate(this%coli      (begg:endg)) ; this%coli      (:) = ispval
     allocate(this%colf      (begg:endg)) ; this%colf      (:) = ispval
+    
     allocate(this%ncolumns  (begg:endg)) ; this%ncolumns  (:) = ispval
     allocate(this%pfti      (begg:endg)) ; this%pfti      (:) = ispval
     allocate(this%pftf      (begg:endg)) ; this%pftf      (:) = ispval

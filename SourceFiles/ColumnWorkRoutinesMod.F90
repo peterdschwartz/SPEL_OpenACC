@@ -24,10 +24,8 @@ module ColumnWorkRoutinesMod
    use elm_varctl      , only : use_fates
    use elm_varcon      , only : secspday 
    use ColumnDataType  , only : nfix_timeconst 
-
-
-   #define is_active_betr_bgc .false. 
-
+   !#py use shr_sys_mod ,only : shr_sys_flush 
+   use Tracer_varcon , only : is_active_betr_bgc 
    implicit none
    public
    public :: col_cf_setvalues_acc 
@@ -40,9 +38,6 @@ module ColumnWorkRoutinesMod
    public :: col_nf_summary_acc
    public :: col_pf_summary_acc
    public :: col_cf_summary_for_ch4_acc
-   
-
-
 
 contains
 
@@ -634,16 +629,6 @@ contains
    end do
 
    if ( nlevdecomp > 1) then
-      ! vertically integrate each of the decomposing C pools to 1 meter
-      ! maxdepth = 1._r8
-      ! !$acc parallel loop independent collapse(2) gang vector default(present)
-      ! do l = 1, ndecomp_pools
-      !    do fc = 1,num_soilc
-      !       c = filter_soilc(fc)
-      !       this%decomp_cpools_1m(c,l) = 0._r8
-      !    end do
-      ! end do
-
       !$acc parallel loop independent gang worker collapse(2) default(present) private(sum1)
       do l = 1, ndecomp_pools
          do fc = 1,num_soilc
@@ -662,10 +647,6 @@ contains
       end do
 
       ! total litter carbon in the top meter (TOTLITC_1m)
-      ! do fc = 1,num_soilc
-      !    c = filter_soilc(fc)
-      !    this%totlitc_1m(c)         = 0._r8
-      ! end do
       !$acc parallel loop independent gang worker default(present) private(sum1,sum2)
       do fc = 1,num_soilc
          c = filter_soilc(fc)
@@ -687,30 +668,9 @@ contains
          this%totsomc_1m(c) = sum2 
       end do
 
-      ! ! total soil organic matter carbon in the top meter (TOTSOMC_1m)
-      ! do fc = 1,num_soilc
-      !    c = filter_soilc(fc)
-      !    this%totsomc_1m(c) = 0._r8
-      ! end do
-      ! do l = 1, ndecomp_pools
-      !    if ( decomp_cascade_con%is_soil(l) ) then
-      !       do fc = 1,num_soilc
-      !          c = filter_soilc(fc)
-      !          this%totsomc_1m(c) = &
-      !               this%totsomc_1m(c) + &
-      !               this%decomp_cpools_1m(c,l)
-      !       end do
-      !    end if
-      ! end do
-
-
    end if ! nlevdecomp>1
 
    ! total litter carbon (TOTLITC)
-   ! do fc = 1,num_soilc
-   !    c = filter_soilc(fc)
-   !    this%totlitc(c) = 0._r8
-   ! end do
    !$acc parallel loop independent gang worker default(present) private(sum1,sum2,sum3)
    do fc = 1,num_soilc
       c = filter_soilc(fc)
@@ -738,42 +698,7 @@ contains
    end do
 
    ! ! total soil organic matter carbon (TOTSOMC)
-   ! do fc = 1,num_soilc
-   !    c = filter_soilc(fc)
-   !    this%totsomc(c) = 0._r8
-   ! end do
-   ! do l = 1, ndecomp_pools
-   !    if ( decomp_cascade_con%is_soil(l) ) then
-   !       do fc = 1,num_soilc
-   !          c = filter_soilc(fc)
-   !          this%totsomc(c) = &
-   !               this%totsomc(c) + &
-   !               this%decomp_cpools(c,l)
-   !       end do
-   !    end if
-   ! end do
-
-   ! ! coarse woody debris carbon
-   ! do fc = 1,num_soilc
-   !    c = filter_soilc(fc)
-   !    this%cwdc(c) = 0._r8
-   ! end do
-   ! do l = 1, ndecomp_pools
-   !    if ( decomp_cascade_con%is_cwd(l) ) then
-   !       do fc = 1,num_soilc
-   !          c = filter_soilc(fc)
-   !          this%cwdc(c) = &
-   !               this%cwdc(c) + &
-   !               this%decomp_cpools(c,l)
-   !       end do
-   !    end if
-   ! end do
-
    ! truncation carbon
-   ! do fc = 1,num_soilc
-   !    c = filter_soilc(fc)
-   !    this%ctrunc(c) = 0._r8
-   ! end do
    !$acc parallel loop independent gang worker default(present) private(sum1)
    do fc = 1,num_soilc
       c = filter_soilc(fc)
@@ -1934,10 +1859,6 @@ contains
    end do
 
    ! add up all vertical transport tendency terms and calculate total som leaching loss as the sum of these
-      do fc = 1,num_soilc
-         c = filter_soilc(fc)
-         this%decomp_ppools_leached(c,l) = 0._r8
-      end do
 
    !$acc parallel loop independent gang worker default(present) private(c,sum1)
    do l = 1, ndecomp_pools

@@ -45,7 +45,6 @@ contains
     !$acc routine seq 
     use shr_const_mod    , only : SHR_CONST_TKFRZ
     use elm_varpar       , only : nlevgrnd
-   !  use clm_time_manager , only : get_curr_date, get_step_size
     use elm_varcon       , only : zsoi
     !
     ! !ARGUMENTS:
@@ -80,12 +79,12 @@ contains
       ! on a set annual timestep, update annual maxima
       ! make this 1 January for NH columns, 1 July for SH columns
       ! call get_curr_date(year, mon, day, sec)
-      dtime =  dtime_mod 
+      dtime =  int(dtime_mod)
       year = year_curr 
-      mon = mon_curr 
-      sec = secs_curr 
-      !get_step_size()
-      if ( (mon .eq. 1) .and. (day .eq. 1) .and. ( sec / dtime .eq. 1) ) then
+      mon = mon_curr
+      day = day_curr 
+      sec = secs_curr
+      if ( (mon .eq. 1) .and. (day .eq. 1) .and. ( sec / int(dtime) .eq. 1) ) then
          do fc = 1,num_soilc
             c = filter_soilc(fc)
             g = col_pp%gridcell(c)

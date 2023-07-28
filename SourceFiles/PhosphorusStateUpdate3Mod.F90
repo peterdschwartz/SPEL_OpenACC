@@ -61,7 +61,7 @@ contains
    real(r8):: smax_c       ! parameter(gP/m2), maximum amount of sorbed P in equilibrium with solution P
    real(r8):: ks_sorption_c ! parameter(gP/m2), empirical constant for sorbed P in equilibrium with solution P
    real(r8):: flux_mineralization(1:num_soilc,1:nlevdecomp)   !! local temperary variable
-   real(r8):: temp_solutionp!(bounds%begc:bounds%endc,1:nlevdecomp)
+   real(r8):: temp_solutionp
    real(r8):: aa,bb,cc ! solve quadratic function
    real(r8) :: sum1 
     !-----------------------------------------------------------------------
@@ -102,7 +102,7 @@ contains
                     sum1 = sum1 + col_pf%decomp_cascade_sminp_flux_vr(c,j,k)*dt
                   endif
                end do
-               flux_mineralization(c,j) = sum1 
+               flux_mineralization(fc,j) = sum1 
             end do
         end do
 
@@ -110,7 +110,7 @@ contains
         do j = 1, nlevdecomp
            do fc = 1,num_soilc
              c = filter_soilc(fc)
-             flux_mineralization(c,j) = flux_mineralization(c,j) + col_pf%biochem_pmin_vr(c,j)*dt
+             flux_mineralization(fc,j) = flux_mineralization(fc,j) + col_pf%biochem_pmin_vr(c,j)*dt
            end do
         end do
 
@@ -125,7 +125,7 @@ contains
                ks_sorption_c = ks_sorption( isoilorder(c) )
                temp_solutionp = col_ps%solutionp_vr(c,j)
 
-               col_ps%solutionp_vr(c,j)      = col_ps%solutionp_vr(c,j)  + ( flux_mineralization(c,j) &
+               col_ps%solutionp_vr(c,j)      = col_ps%solutionp_vr(c,j)  + ( flux_mineralization(fc,j) &
                     + col_pf%primp_to_labilep_vr(c,j)*dt &
                     + col_pf%secondp_to_labilep_vr(c,j)*dt &
                     + col_pf%supplement_to_sminp_vr(c,j)*dt - col_pf%sminp_to_plant_vr(c,j)*dt&
@@ -135,19 +135,19 @@ contains
 
                  col_ps%labilep_vr(c,j) = col_ps%labilep_vr(c,j) + ((smax_c*ks_sorption_c)&
                     /(ks_sorption_c+temp_solutionp)**2._r8 ) * &
-                    ( flux_mineralization(c,j) + col_pf%primp_to_labilep_vr(c,j)*dt + col_pf%secondp_to_labilep_vr(c,j)*dt &
+                    ( flux_mineralization(fc,j) + col_pf%primp_to_labilep_vr(c,j)*dt + col_pf%secondp_to_labilep_vr(c,j)*dt &
                     + col_pf%supplement_to_sminp_vr(c,j)*dt - col_pf%sminp_to_plant_vr(c,j)*dt &
                     - col_pf%labilep_to_secondp_vr(c,j)*dt - col_pf%sminp_leached_vr(c,j)*dt ) / &
                     ( 1._r8+(smax_c*ks_sorption_c)/(ks_sorption_c+temp_solutionp)**2._r8 )
 
-               col_pf%desorb_to_solutionp_vr(c,j) = ( flux_mineralization(c,j)/dt + col_pf%primp_to_labilep_vr(c,j) &
+               col_pf%desorb_to_solutionp_vr(c,j) = ( flux_mineralization(fc,j)/dt + col_pf%primp_to_labilep_vr(c,j) &
                                 + col_pf%secondp_to_labilep_vr(c,j) &
                                 + col_pf%supplement_to_sminp_vr(c,j) - col_pf%sminp_to_plant_vr(c,j) &
                                 - col_pf%labilep_to_secondp_vr(c,j) - col_pf%sminp_leached_vr(c,j) ) / &
                                 (1._r8+(smax_c*ks_sorption_c)/(ks_sorption_c+col_ps%solutionp_vr(c,j))**2._r8)
 
                col_pf%adsorb_to_labilep_vr(c,j) = ((smax_c*ks_sorption_c)/(ks_sorption_c+temp_solutionp)**2._r8 ) * &
-                             ( flux_mineralization(c,j)/dt + col_pf%primp_to_labilep_vr(c,j) + col_pf%secondp_to_labilep_vr(c,j) &
+                             ( flux_mineralization(fc,j)/dt + col_pf%primp_to_labilep_vr(c,j) + col_pf%secondp_to_labilep_vr(c,j) &
                              + col_pf%supplement_to_sminp_vr(c,j) - col_pf%sminp_to_plant_vr(c,j) &
                              - col_pf%labilep_to_secondp_vr(c,j) - col_pf%sminp_leached_vr(c,j) ) / &
                              ( 1._r8+(smax_c*ks_sorption_c)/(ks_sorption_c+temp_solutionp)**2._r8 )
@@ -163,7 +163,7 @@ contains
                 smax_c = vmax_minsurf_p_vr(isoilorder(c),j)
                 ks_sorption_c = km_minsurf_p_vr(isoilorder(c),j)
                 temp_solutionp = ( col_ps%solutionp_vr(c,j) + col_ps%labilep_vr(c,j) + &
-                            (flux_mineralization(c,j) + col_pf%primp_to_labilep_vr(c,j)*dt + &
+                            (flux_mineralization(fc,j) + col_pf%primp_to_labilep_vr(c,j)*dt + &
                             col_pf%secondp_to_labilep_vr(c,j)*dt + col_pf%supplement_to_sminp_vr(c,j)*dt - &
                             col_pf%sminp_to_plant_vr(c,j)*dt - col_pf%labilep_to_secondp_vr(c,j)*dt - &
                             col_pf%sminp_leached_vr(c,j)*dt ))

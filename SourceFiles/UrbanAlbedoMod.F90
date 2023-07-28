@@ -5,10 +5,9 @@ module UrbanAlbedoMod
   !
   ! !USES:
   use shr_kind_mod      , only : r8 => shr_kind_r8
-  use decompMod         , only : bounds_type
-  use clm_varpar        , only : numrad
-  use clm_varcon        , only : isecspday, degpsec, namel
-  use clm_varctl        , only : iulog
+  use elm_varpar        , only : numrad
+  use elm_varcon        , only : isecspday, degpsec, namel
+  use elm_varctl        , only : iulog
   use UrbanParamsType   , only : urbanparams_type
   use SolarAbsorbedType , only : solarabs_type
   use SurfaceAlbedoType , only : surfalb_type
@@ -35,7 +34,7 @@ module UrbanAlbedoMod
 contains
 
   !-----------------------------------------------------------------------
-  subroutine UrbanAlbedo (bounds, num_urbanl, filter_urbanl, &
+  subroutine UrbanAlbedo (num_urbanl, filter_urbanl, &
        num_urbanc, filter_urbanc, num_urbanp, filter_urbanp, &
        urbanparams_vars, solarabs_vars, surfalb_vars)
     !
@@ -49,12 +48,12 @@ contains
     !
     ! !USES:
     !$acc routine seq
-    use clm_varcon    , only : sb
+    use elm_varcon    , only : sb
     use column_varcon , only : icol_roof, icol_sunwall, icol_shadewall
     use column_varcon , only : icol_road_perv, icol_road_imperv
     !
     ! !ARGUMENTS:
-    type(bounds_type)      , intent(in)    :: bounds
+    !type(bounds_type)      , intent(in)    :: bounds
     integer                , intent(in)    :: num_urbanl       ! number of urban landunits in clump
     integer                , intent(in)    :: filter_urbanl(:) ! urban landunit filter
     integer                , intent(in)    :: num_urbanc       ! number of urban columns in clump
@@ -69,8 +68,8 @@ contains
     integer  :: fl,fp,fc,g,l,p,c,ib                          ! indices
     integer  :: ic                                           ! 0=unit incoming direct; 1=unit incoming diffuse
     integer  :: num_solar                                    ! counter
-    real(r8) :: coszen             (bounds%begl:bounds%endl) ! cosine solar zenith angle for next time step (landunit)
-    real(r8) :: zen                (bounds%begl:bounds%endl) ! solar zenith angle (radians)
+    real(r8) :: coszen              ! cosine solar zenith angle for next time step (landunit)
+    real(r8) :: zen                 ! solar zenith angle (radians)
     real(r8) :: sdir                ! direct beam solar radiation on horizontal surface
     real(r8) :: sdif                ! diffuse solar radiation on horizontal surface
     real(r8) :: sdir_road           ! direct beam solar radiation incident on road
@@ -143,10 +142,8 @@ contains
          albgrd             => surfalb_vars%albgrd_col              , & ! Output: [real(r8) (:,:) ]  urban col ground albedo (direct)
          albgri             => surfalb_vars%albgri_col              , & ! Output: [real(r8) (:,:) ]  urban col ground albedo (diffuse)
          albd               => surfalb_vars%albd_patch              , & ! Output  [real(r8) (:,:) ]  urban pft surface albedo (direct)
-         albi               => surfalb_vars%albi_patch              , & ! Output: [real(r8) (:,:) ]  urban pft surface albedo (diffuse)
+         albi               => surfalb_vars%albi_patch           & ! Output: [real(r8) (:,:) ]  urban pft surface albedo (diffuse)
 
-         begl               => bounds%begl                          , &
-         endl               => bounds%endl                            &
          )
 
       ! ----------------------------------------------------------------------------
@@ -154,12 +151,12 @@ contains
       ! next time step
       ! ----------------------------------------------------------------------------
 
-      do fl = 1,num_urbanl
-         l = filter_urbanl(fl)
-         g = lun_pp%gridcell(l)
-         coszen(l) = surfalb_vars%coszen_col(coli(l)) ! Assumes coszen for each column are the same
-         zen(l)    = acos(coszen(l))
-      end do
+      ! do fl = 1,num_urbanl
+      !    l = filter_urbanl(fl)
+      !    g = lun_pp%gridcell(l)
+      !    coszen(l) = surfalb_vars%coszen_col(coli(l)) ! Assumes coszen for each column are the same
+      !    zen(l)    = acos(coszen(l))
+      ! end do
 
        ! Initialize output because solar radiation only done if coszen > 0
        ! output is all global variables
@@ -174,6 +171,7 @@ contains
             p = filter_urbanp(fp)
             l = veg_pp%landunit(p)
             c = veg_pp%column(p)
+            coszen = surfalb_vars%coszen_col(coli(l))
 
             ! Initialize direct and diffuse albedo such that if the Sun is below
             ! the horizon, p2g scaling returns an albedo of 1.0.
@@ -198,13 +196,13 @@ contains
             fabi(p,ib)     = 0._r8
             fabi_sun(p,ib) = 0._r8
             fabi_sha(p,ib) = 0._r8
-            if (coszen(l) > 0._r8) then
+            if (coszen > 0._r8) then
                ftdd(p,ib)  = 1._r8
             else
                ftdd(p,ib)  = 0._r8
             end if
             ftid(p,ib)     = 0._r8
-            if (coszen(l) > 0._r8) then
+            if (coszen > 0._r8) then
                ftii(p,ib)  = 1._r8
             else
                ftii(p,ib)  = 0._r8
@@ -215,11 +213,10 @@ contains
       ! ----------------------------------------------------------------------------
       ! Urban Code
       ! ----------------------------------------------------------------------------
-
       num_solar = 0
       do fl = 1,num_urbanl
          l = filter_urbanl(fl)
-         if (coszen(l) > 0._r8) num_solar = num_solar + 1
+         if (surfalb_vars%coszen_col(coli(l)) > 0._r8) num_solar = num_solar + 1
       end do
 
       do ib = 1,numrad
@@ -252,6 +249,8 @@ contains
          do ib = 1,numrad
             do fl = 1,num_urbanl
                l = filter_urbanl(fl)
+               coszen = surfalb_vars%coszen_col(coli(l)) ! Assumes coszen for each column are the same
+               zen    = acos(coszen)
                sdir = 1._r8
                sdif = 1._r8
 
@@ -273,14 +272,14 @@ contains
                ! (a) roof and (b) road and both walls in urban canyon
 
                !if (coszen > 0._r8) then
-               if (num_urbanl > 0) then !!NOTE: Urban albedo is only called if num_urbanl >0??
+               !if (num_urbanl > 0) then !!NOTE: Urban albedo is only called if num_urbanl >0??
                   ! Incident direct beam radiation for
                   ! (a) roof and (b) road and both walls in urban canyon
 
                   call incident_direct ( &
                        canyon_hwr(l), &
-                       coszen(l)    , &
-                       zen(l)       , &
+                       coszen    , &
+                       zen       , &
                        sdir         , &
                        sdir_road    , &
                        sdir_sunwall , &
@@ -301,7 +300,7 @@ contains
                   !NOTE: Get rid of SnowAlbedo routine and merge
                   !! with below?
                   call SnowAlbedo(l, ib,&
-                      coszen(l), &
+                      coszen, &
                       ic, &
                       albsnd_roof    , &
                       albsnd_improad , &
@@ -309,13 +308,13 @@ contains
 
                   ic = 1
                   call SnowAlbedo( l,ib, &
-                      coszen(l)      , &
+                      coszen      , &
                       ic             , &
                       albsni_roof    , &
                       albsni_improad , &
                       albsni_perroad  )
 
-               end if
+               !end if
 
                ! Combine snow-free and snow albedos
                do c = lun_pp%coli(l), lun_pp%colf(l)
@@ -344,9 +343,9 @@ contains
                ! for road and both walls in urban canyon allowing for multiple reflection
                ! Reflected and absorbed solar radiation per unit incident radiation for roof
 
-               if (num_urbanl > 0) then
+               !if (num_urbanl > 0) then
                   call net_solar (l, ib, &
-                       coszen             (l), &
+                       coszen             , &
                        canyon_hwr         (l), &
                        wtroad_perv        (l), &
                        sdir                  , &
@@ -376,7 +375,7 @@ contains
                        sref_shadewall_dif , &
                        sref_roof_dif      , &
                        urbanparams_vars, solarabs_vars)
-               end if
+               !end if
 
                do c = lun_pp%coli(l), lun_pp%colf(l)
                   if (ctype(c) == icol_roof) then
@@ -524,7 +523,7 @@ contains
     !
     ! !USES:
       !$acc routine seq
-    use clm_varcon, only : rpi
+    use elm_varcon, only : rpi
     !
     ! !ARGUMENTS:
     !type(bounds_type), intent(in) :: bounds

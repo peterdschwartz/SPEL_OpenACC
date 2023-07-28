@@ -24,7 +24,7 @@ module PhosphorusDynamicsMod
   use VegetationDataType  , only : veg_ns, veg_pf
   use VegetationPropertiesType      , only : veg_vp
   use elm_varctl          , only : NFIX_PTASE_plant
-  use elm_varctl          , only : use_fates
+  use elm_varctl          , only : use_fates, iulog
   use elm_instMod         , only : alm_fates
 
   !
@@ -47,8 +47,7 @@ module PhosphorusDynamicsMod
 
 contains
   !-----------------------------------------------------------------------
-  subroutine PhosphorusDeposition( num_soilc, filter_soilc, &
-       atm2lnd_vars )
+  subroutine PhosphorusDeposition( bounds, atm2lnd_vars )
     ! BY X. SHI
     ! !DESCRIPTION:
     ! On the radiation time step, update the phosphorus deposition rate
@@ -58,23 +57,24 @@ contains
     ! directly into the canopy and mineral P entering the soil pool.
     !
     ! !ARGUMENTS:
-    integer , intent(in)    :: num_soilc
-    integer , intent(in)    :: filter_soilc(:)
+    type(bounds_type)  , intent(in) :: bounds 
     type(atm2lnd_type)       , intent(in)    :: atm2lnd_vars
     !
     ! !LOCAL VARIABLES:
     integer :: g,c,fc                ! indices
+    integer :: begc ,endc 
     !-----------------------------------------------------------------------
 
     associate(&
-         forc_pdep     =>  atm2lnd_vars%forc_pdep_grc           , & ! Input:  [real(r8) (:)]  Phosphorus deposition rate (gP/m2/s)
+         forc_pdep     =>  atm2lnd_vars%forc_pdep_grc     , & ! Input:  [real(r8) (:)]  Phosphorus deposition rate (gP/m2/s)
          pdep_to_sminp =>  col_pf%pdep_to_sminp   & ! Output: [real(r8) (:)]
          )
 
+      begc = bounds%begc 
+      endc = bounds%endc 
       ! Loop through columns
       !$acc parallel loop independent gang vector private(c,g) default(present)
-      do fc = 1, num_soilc
-         c = filter_soilc(fc)
+      do c = begc, endc
          g = col_pp%gridcell(c)
          pdep_to_sminp(c) = forc_pdep(g)
       end do
@@ -90,41 +90,27 @@ contains
    integer                  , intent(in)    :: filter_soilc(:)   ! filter for soil columns
    type(cnstate_type)       , intent(in)    :: cnstate_vars
    real(r8)                 , intent(in)    :: dt 
-   ! Local Variables 
-   integer :: j, fc , c 
-   associate(&
-      isoilorder => cnstate_vars%isoilorder &
-      )
-      
-      !$acc parallel loop independent gang vector collapse(2) default(present) private(c)
-      do j = 1, nlevdecomp
-         do fc = 1, num_soilc 
-            c = filter_soilc(fc) 
-            call PhosphorusWeathering(c,fc,j, isoilorder(c), dt)
-            call PhosphorusAdsportion(c,fc,j, isoilorder(c), dt)
-            call PhosphorusDesoprtion(c,fc,j, isoilorder(c), dt)
-            call PhosphorusOcclusion (c,fc,j, isoilorder(c), dt)
-         end do 
-      end do 
+   
+   write(iulog,*) "Occlusion : "  
+   call PhosphorusWeathering(num_soilc, filter_soilc,cnstate_vars, dt)
+   call PhosphorusAdsportion(num_soilc, filter_soilc,cnstate_vars, dt)
+   call PhosphorusDesoprtion(num_soilc, filter_soilc,cnstate_vars, dt)
+   call PhosphorusOcclusion (num_soilc, filter_soilc,cnstate_vars, dt)
 
-
-   end associate
   end subroutine PhosphorusMinFluxes
 
   !-----------------------------------------------------------------------
-  subroutine PhosphorusWeathering(c,fc,j, isoilorder, dt)
+  subroutine PhosphorusWeathering(num_soilc, filter_soilc, cnstate_vars, dt)
     !
     !
     ! !USES:
-      !$acc routine seq
     use elm_varcon       , only : secspday, spval
     use soilorder_varcon, only: r_weather
     !
     ! !ARGUMENTS:
-    integer, value, intent(IN)  :: c,fc,j,isoilorder             ! indices
-   !  integer                 , intent(in)    :: num_soilc       ! number of soil columns in filter
-   !  integer                 , intent(in)    :: filter_soilc(:) ! filter for soil columns
-   !  type(cnstate_type)       , intent(in)    :: cnstate_vars
+    integer                 , intent(in)    :: num_soilc       ! number of soil columns in filter
+    integer                 , intent(in)    :: filter_soilc(:) ! filter for soil columns
+    type(cnstate_type)      , intent(in)    :: cnstate_vars
     real(r8), intent(in):: dt           !decomp timestep (seconds)
 
     !
@@ -132,129 +118,125 @@ contains
     real(r8)     :: r_weather_c
     real(r8)     :: rr
     real(r8):: dtd          !decomp timestep (days)
+    integer :: fc, c ,j 
 
     !-----------------------------------------------------------------------
 
     associate(&
 
-         ! isoilorder     => cnstate_vars%isoilorder                 ,&
+         isoilorder     => cnstate_vars%isoilorder                 ,&
          primp          => col_ps%primp_vr       ,&
          primp_to_labilep => col_pf%primp_to_labilep_vr  &
          )
 
       ! set time steps
-      dtd = dt/(30._r8*secspday)
-
-      !do j = 1,nlevdecomp
-      !   do fc = 1,num_soilc
-      !      c = filter_soilc(fc)
+      !$acc parallel loop independent gang vector default(present) collapse(2) 
+      do j = 1,nlevdecomp
+        do fc = 1,num_soilc
+           c = filter_soilc(fc)
+           dtd = dt/(30._r8*secspday)
             !! read in monthly rate is converted to that in half hour
-            r_weather_c = r_weather( isoilorder )
+            r_weather_c = r_weather( isoilorder(c) )
             rr=-log(1._r8-r_weather_c)
             r_weather_c=1._r8-exp(-rr*dtd)
             primp_to_labilep(c,j) = primp(c,j)*r_weather_c/dt
-      !   end do
-      !enddo
+        end do
+      enddo
     end associate
 
   end subroutine PhosphorusWeathering
  
   !-----------------------------------------------------------------------
  
-  subroutine PhosphorusAdsportion( c,fc,j, isoilorder,dt)
+  subroutine PhosphorusAdsportion( num_soilc, filter_soilc, cnstate_vars,dt)
     !
     !
     ! !USES:
-      !$acc routine seq
     use elm_varcon       , only : secspday, spval
     use soilorder_varcon , only : r_adsorp
     !
     ! !ARGUMENTS:
-    integer, value,  intent(in)   :: c,fc,j,isoilorder                 ! indices
-   !  integer                 , intent(in)    :: num_soilc       ! number of soil columns in filter
-   !  integer                 , intent(in)    :: filter_soilc(:) ! filter for soil columns
-   !  type(cnstate_type)       , intent(in)    :: cnstate_vars
+    integer                 , intent(in)    :: num_soilc       ! number of soil columns in filter
+    integer                 , intent(in)    :: filter_soilc(:) ! filter for soil columns
+    type(cnstate_type)       , intent(in)    :: cnstate_vars
     real(r8), intent(in)    :: dt           !decomp timestep (seconds)
 
 !   !OTHER LOCAL VARIABLES
     real(r8)     :: r_adsorp_c
     real(r8)     :: rr
     real(r8):: dtd          !decomp timestep (days)
+    integer :: fc, c ,j 
     !-----------------------------------------------------------------------
 
     associate(&
 
-         ! isoilorder     => cnstate_vars%isoilorder                 ,&
+         isoilorder     => cnstate_vars%isoilorder                 ,&
          solutionp   => col_ps%solutionp_vr      ,&
          labilep     => col_ps%labilep_vr        ,&
          labilep_to_secondp => col_pf%labilep_to_secondp_vr &
 
          )
 
-
       ! set time steps
-      dtd = dt/(30._r8*secspday)
+      !$acc parallel loop independent gang vector default(present) collapse(2) 
+      do j = 1,nlevdecomp
+        do fc = 1,num_soilc
+           c = filter_soilc(fc)
+           dtd = dt/(30._r8*secspday)
 
-      !do j = 1,nlevdecomp
-      !   do fc = 1,num_soilc
-      !      c = filter_soilc(fc)
-            ! calculate rate at half-hour time step
-            r_adsorp_c = r_adsorp( isoilorder )
-            rr=-log(1._r8-r_adsorp_c)
-            r_adsorp_c = 1._r8-exp(-rr*dtd)
+           ! calculate rate at half-hour time step
+           r_adsorp_c = r_adsorp( isoilorder(c) )
+           rr=-log(1._r8-r_adsorp_c)
+           r_adsorp_c = 1._r8-exp(-rr*dtd)
+           if(labilep(c,j) > 0._r8)then
+              labilep_to_secondp(c,j) = ( labilep(c,j) )*r_adsorp_c/dt
+           else
+              labilep_to_secondp(c,j) = 0._r8
+           end if
 
-            if(labilep(c,j) > 0._r8)then
-               labilep_to_secondp(c,j) = ( labilep(c,j) )*r_adsorp_c/dt
-            else
-               labilep_to_secondp(c,j) = 0._r8
-            end if
-
-      !   end do
-      ! end do
+        end do
+      end do
     end associate
 
   end subroutine PhosphorusAdsportion
 
 
   !-----------------------------------------------------------------------
-  subroutine PhosphorusDesoprtion(c,fc,j,isoilorder, dt)
+  subroutine PhosphorusDesoprtion(num_soilc, filter_soilc, cnstate_vars, dt)
     !
     !
     ! !USES:
-      !$acc routine seq
     use elm_varcon       , only : secspday, spval
     use soilorder_varcon , only : r_desorp
     !
     ! !ARGUMENTS:
-    integer, value,intent(in)  :: c,fc,j,isoilorder               ! indices
-   !  integer                 , intent(in)    :: num_soilc       ! number of soil columns in filter
-   !  integer                 , intent(in)    :: filter_soilc(:) ! filter for soil columns
-   !  type(cnstate_type)       , intent(in)    :: cnstate_vars
+    integer                 , intent(in)    :: num_soilc       ! number of soil columns in filter
+    integer                 , intent(in)    :: filter_soilc(:) ! filter for soil columns
+    type(cnstate_type)       , intent(in)   :: cnstate_vars
     real(r8)                 ,  intent(in)   :: dt           !decomp timestep (seconds)
 
     !OTHER LOCAL VARIABLES
     real(r8)     :: r_desorp_c
     real(r8)     :: rr
     real(r8)     :: dtd          !decomp timestep (days)
-
+    integer :: fc, c ,j 
     !-----------------------------------------------------------------------
 
     associate(&
-         ! isoilorder     => cnstate_vars%isoilorder              ,&
+         isoilorder     => cnstate_vars%isoilorder              ,&
          secondp     => col_ps%secondp_vr     ,&
          secondp_to_labilep => col_pf%secondp_to_labilep_vr &
          )
 
 
       ! set time steps
-      dtd = dt/(30._r8*secspday)
-
-      !do j = 1,nlevdecomp
-      !   do fc = 1,num_soilc
-      !      c = filter_soilc(fc)
-
+      !$acc parallel loop independent gang vector default(present) collapse(2) 
+      do j = 1,nlevdecomp
+        do fc = 1,num_soilc
+           c = filter_soilc(fc)
+           dtd = dt/(30._r8*secspday)
             ! calculate rate at half-hour time step
-            r_desorp_c = r_desorp( isoilorder )
+            r_desorp_c = r_desorp( isoilorder(c) )
             rr=-log(1._r8-r_desorp_c)
             r_desorp_c = 1._r8-exp(-rr*dtd)
 
@@ -264,8 +246,8 @@ contains
               secondp_to_labilep(c,j) = 0._r8
             endif
 
-       !  end do
-       !end do
+        end do
+       end do
     end associate
 
   end subroutine PhosphorusDesoprtion
@@ -273,21 +255,18 @@ contains
 
 
   !-----------------------------------------------------------------------
-  subroutine PhosphorusOcclusion( fc,c,j, isoilorder, dt)
+  subroutine PhosphorusOcclusion( num_soilc,filter_soilc, cnstate_vars, dt)
     !
     !
     ! !USES:
-      !$acc routine seq
     use elm_varcon       , only : secspday, spval
     use soilorder_varcon , only : r_occlude
     !
     ! !ARGUMENTS:
-    integer, value, intent(in)  :: c,fc,j             ! indices
-    integer, value, intent(in)  :: isoilorder
-   !  integer                 , intent(in)    :: num_soilc       ! number of soil columns in filter
-   !  integer                 , intent(in)    :: filter_soilc(:) ! filter for soil columns
-   !  type(cnstate_type)       , intent(in)    :: cnstate_vars
-    real(r8)                , intent(in)   :: dt      !decomp timestep (seconds)
+    integer                 , intent(in)    :: num_soilc       ! number of soil columns in filter
+    integer                 , intent(in)    :: filter_soilc(:) ! filter for soil columns
+    type(cnstate_type)      , intent(in)    :: cnstate_vars
+    real(r8)                , intent(in)    :: dt      !decomp timestep (seconds)
 
     !
     ! !LOCAL VARIABLES:
@@ -297,41 +276,41 @@ contains
     real(r8)     :: r_occlude_c
     real(r8)     :: rr
     real(r8):: dtd          !decomp timestep (days)
+    integer :: fc, c ,j 
 
     !-----------------------------------------------------------------------
 
     associate(&
-         ! isoilorder     => cnstate_vars%isoilorder                      ,&
+         isoilorder     => cnstate_vars%isoilorder                      ,&
          secondp     => col_ps%secondp_vr             ,&
          secondp_to_occlp => col_pf%secondp_to_occlp_vr &
-
          )
 
-      ! set time steps
-      dtd = dt/(30._r8*secspday)
-      !do j = 1,nlevdecomp
-      !   do fc = 1,num_soilc
-      !      c = filter_soilc(fc)
+      !$acc parallel loop independent gang vector default(present) collapse(2) 
+      do j = 1,nlevdecomp
+         do fc = 1,num_soilc
+            dtd = dt/(30._r8*secspday)
+            c = filter_soilc(fc)
             ! calculate rate at half-hour time step
-            r_occlude_c = r_occlude( isoilorder )
+            r_occlude_c = r_occlude( isoilorder(c) )
             rr=-log(1._r8-r_occlude_c)
             r_occlude_c = 1._r8-exp(-rr*dtd)
-
+            if(c==52) write(iulog,*),j,secondp(c,j),r_occlude_c
             if(secondp(c,j) > 0._r8)then
                secondp_to_occlp(c,j) = secondp(c,j)*r_occlude_c/dt
             else
                secondp_to_occlp(c,j) =0._r8
             endif
 
-      !   end do
-      ! end do
+        end do
+      end do
     end associate
 
   end subroutine PhosphorusOcclusion
 
 
   !-----------------------------------------------------------------------
-  subroutine PhosphorusLeaching(num_soilc, filter_soilc, dt, tot_water)
+  subroutine PhosphorusLeaching(num_soilc, filter_soilc, dt)
     !
     ! !DESCRIPTION:
     ! On the radiation time step, update the phosphorus leaching rate
@@ -344,7 +323,6 @@ contains
     integer                  , intent(in)    :: num_soilc       ! number of soil columns in filter
     integer                  , intent(in)    :: filter_soilc(:) ! filter for soil columns
     real(r8) ,intent(in)    :: dt                                     ! radiation time step(seconds)
-    real(r8) , intent(in)   :: tot_water(1:num_soilc)     ! total column liquid water (kg water/m2)
 
     !
     ! !LOCAL VARIABLES:
@@ -352,6 +330,8 @@ contains
     integer  :: nlevbed				       ! number of layers to bedrock
     real(r8) :: disp_conc                              ! dissolved mineral N concentration (gP/kg water)
     real(r8), parameter :: depth_runoff_Ploss = 0.05   ! (m) depth over which runoff mixes with soil water for P loss to runoff
+    real(r8)  :: tot_water(num_soilc)     ! total column liquid water (kg water/m2)
+    real :: sum1 
     !-----------------------------------------------------------------------
 
     associate(&
@@ -364,7 +344,23 @@ contains
          solutionp_vr        => col_ps%solutionp_vr       , & !Input:  [real(r8) (:,:) ]  (gP/m3) soil mineral N
          sminp_leached_vr    => col_pf%sminp_leached_vr     & !Output: [real(r8) (:,:) ]  rate of mineral N leaching (gP/m3/s)
          )
+   
+      !$acc data create(tot_water(:), sum1)  
 
+         
+      ! calculate the total soil water
+      !$acc parallel loop independent gang worker  private(sum1,c,nlevbed) default(present) 
+      do fc = 1,num_soilc
+         c = filter_soilc(fc)
+         nlevbed = col_pp%nlevbed(c)
+         sum1 = 0._r8 
+         !$acc loop vector reduction(+:sum1)
+         do j = 1,nlevbed
+            sum1 = sum1 + col_ws%h2osoi_liq(c,j)
+         end do
+         tot_water(fc) = sum1
+      end do
+       
          !$acc parallel loop independent gang vector collapse(2) default(present) 
          do j = 1,nlevdecomp
             do fc = 1,num_soilc
@@ -399,7 +395,7 @@ contains
                sminp_leached_vr(c,j) = max(sminp_leached_vr(c,j), 0._r8)
             end do
          end do
-
+      !$acc end data  
 
     end associate
   end subroutine PhosphorusLeaching

@@ -6,9 +6,9 @@ module lnd2atmMod
   !
   ! !USES:
   use shr_kind_mod         , only : r8 => shr_kind_r8
-  !#py !#py use shr_log_mod            , only : errMsg => shr_log_errMsg
-  !#py use abortutils             , only : endrun
-  !#py use shr_megan_mod        , only : shr_megan_mechcomps_n
+  use shr_log_mod            , only : errMsg => shr_log_errMsg
+  use abortutils             , only : endrun
+  use shr_megan_mod        , only : shr_megan_mechcomps_n
   use elm_varpar           , only : numrad, ndst, nlevgrnd, nlevsno, nlevsoi !ndst = number of dust bins.
   use elm_varcon           , only : rair, grav, cpair, hfus, tfrz, spval
   use elm_varctl           , only : iulog, use_c13, use_cn, use_lch4, use_voc, use_fates
@@ -30,6 +30,7 @@ module lnd2atmMod
   use ColumnDataType       , only : col_ws, col_wf, col_cf, col_es
   use VegetationDataType   , only : veg_es, veg_ef, veg_ws, veg_wf
   use SoilHydrologyType    , only : soilhydrology_type
+  use subgridAveMod , only : unity, urbanf, urbans, natveg, veg, ice, nonurb, lake 
   #define is_active_betr_bgc .false. 
   !
   ! !PUBLIC TYPES:
@@ -40,14 +41,7 @@ module lnd2atmMod
   ! !PUBLIC MEMBER FUNCTIONS:
   public :: lnd2atm
   public :: lnd2atm_minimal
-
-  integer, parameter :: unity = 0, urbanf = 1, urbans = 2
-  integer, parameter :: natveg = 3, veg =4, ice=5, nonurb=6, lake=7
   !------------------------------------------------------------------------
-  type, public :: lnd2atm_pointer_type
-   real(r8) :: 
-
-  end type 
 
 contains
 
@@ -134,8 +128,8 @@ contains
     ! Compute lnd2atm_vars component of gridcell derived type
     !
     ! !USES:
-      !$acc routine seq
     use CH4varcon  , only : ch4offline
+    use shr_sys_mod, only : shr_sys_flush
     !
     ! !ARGUMENTS:
     type(bounds_type)      , intent(in)     :: bounds
@@ -419,10 +413,12 @@ contains
          t_grnd_grc(bounds%begg:bounds%endg)   , &
          c2l_scale_type= urbans, l2g_scale_type=unity )
 
-   call c2g( bounds, nlevgrnd+nlevsno, &
-       t_soisno    (bounds%begc:bounds%endc,:), &
-       t_soisno_grc(bounds%begg:bounds%endg,:), &
-       c2l_scale_type= urbans, l2g_scale_type=unity )
+    !do lvl = -nlevsno+1, nlevgrnd
+        call c2g( bounds, nlevgrnd+nlevsno, &
+            t_soisno    (bounds%begc:bounds%endc,:), &
+            t_soisno_grc(bounds%begg:bounds%endg,:), &
+            c2l_scale_type= urbans, l2g_scale_type=unity )
+    !enddo
 
     call c2g( bounds, &
          zwt_col(bounds%begc:bounds%endc)   , &
@@ -479,7 +475,7 @@ contains
 
     function avg_tsoil(zwt_, Tsoil_) result(avgT_)
       !$acc routine seq
-    ! Function for estimating average soil temperature within the saturated soil zone (which produces subsurface runoff)
+      ! Function for estimating average soil temperature within the saturated soil zone (which produces subsurface runoff)
         implicit none
         real(r8), intent(in) :: zwt_, Tsoil_(-nlevsno+1:nlevgrnd)       ! water table depth, soil temperature
         real(r8) :: avgT_             ! average soil temperature within the saturated layers

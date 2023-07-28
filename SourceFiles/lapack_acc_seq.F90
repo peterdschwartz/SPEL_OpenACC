@@ -1,16 +1,3 @@
-      !$acc routine seq 
-      !$acc routine seq 
-      !$acc routine seq 
-      !$acc routine seq 
-      !$acc routine seq 
-      !$acc routine seq 
-      !$acc routine seq 
-      !$acc routine seq 
-      !$acc routine seq 
-      !$acc routine seq 
-      !$acc routine seq 
-      !$acc routine seq 
-      !$acc routine seq 
 module lapack_acc_seq
   !! This module contains the needed LAPACK/BLAS routines that need
   !! to be called on the GPU.  As of CUDA 10.1, cuBLAS being called in

@@ -17,15 +17,15 @@ module dynPatchStateUpdaterMod
   !    - call patch_state_updater%update_patch_state
   !
   ! !USES:
-#include "shr_assert.h"
+!#py #include "shr_assert.h"
   use shr_kind_mod         , only : r8 => shr_kind_r8
-  use shr_infnan_mod       , only : nan => shr_infnan_nan
-  use shr_log_mod          , only : errMsg => shr_log_errMsg
+  !#py use shr_infnan_mod       , only : nan => shr_infnan_nan
+  !#py !#py use shr_log_mod          , only : errMsg => shr_log_errMsg
   use decompMod            , only : bounds_type, BOUNDS_LEVEL_PROC
   use VegetationType       , only : veg_pp
   use ColumnType           , only : col_pp
   use elm_varpar           , only : mxpft
-  use abortutils           , only : endrun
+  !#py use abortutils           , only : endrun
   use elm_varcon           , only : spval
   !
   implicit none
@@ -160,7 +160,7 @@ contains
 
     character(len=*), parameter :: subname = 'constructor'
     !-----------------------------------------------------------------------
-    SHR_ASSERT(bounds%level == BOUNDS_LEVEL_PROC, errMsg(sourcefile, __LINE__))
+    !#py SHR_ASSERT(bounds%level == BOUNDS_LEVEL_PROC, errMsg(sourcefile, __LINE__))
 
     begp = bounds%begp
     endp = bounds%endp
@@ -196,6 +196,7 @@ contains
     !
     ! !ARGUMENTS:
     class(patch_state_updater_type), intent(inout) :: this
+      !$acc routine seq 
     type(bounds_type), intent(in) :: bounds
     !
     ! !LOCAL VARIABLES:

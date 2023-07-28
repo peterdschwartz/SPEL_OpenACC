@@ -6,8 +6,8 @@ module PrecisionControlMod
   !
   ! !USES:
   use shr_kind_mod        , only : r8 => shr_kind_r8
-  use shr_log_mod         , only : errMsg => shr_log_errMsg
-  use abortutils          , only : endrun
+  !#py !#py use shr_log_mod         , only : errMsg => shr_log_errMsg
+  !#py use abortutils          , only : endrun
   use elm_varctl          , only : nu_com
   use elm_varpar          , only : ndecomp_pools
   use ColumnType          , only : col_pp
@@ -619,8 +619,8 @@ contains
                if (abs(col_ns%smin_no3_vr(c,j)) < ncrit/1e4_r8) then
                   if ( col_ns%smin_no3_vr(c,j)  < 0._r8 ) then
 #ifndef _OPENACC
-                     write(iulog, *) '-10^-12 < smin_no3 < 0. resetting to zero.'
-                     write(iulog, *) 'smin_no3_vr_col(c,j), c, j: ', col_ns%smin_no3_vr(c,j), c, j
+                     !#py write(iulog, *) '-10^-12 < smin_no3 < 0. resetting to zero.'
+                     !#py write(iulog, *) 'smin_no3_vr_col(c,j), c, j: ', col_ns%smin_no3_vr(c,j), c, j
                      col_ns%smin_no3_vr(c,j) = 0._r8
 #endif
                   endif
@@ -628,8 +628,8 @@ contains
                if (abs(col_ns%smin_nh4_vr(c,j)) < ncrit/1e4_r8) then
                   if ( col_ns%smin_nh4_vr(c,j)  < 0._r8 ) then
 #ifndef _OPENACC
-                     write(iulog, *) '-10^-12 < smin_nh4 < 0. resetting to zero.'
-                     write(iulog, *) 'smin_nh4_vr_col(c,j), c, j: ', col_ns%smin_nh4_vr(c,j), c, j
+                     !#py write(iulog, *) '-10^-12 < smin_nh4 < 0. resetting to zero.'
+                     !#py write(iulog, *) 'smin_nh4_vr_col(c,j), c, j: ', col_ns%smin_nh4_vr(c,j), c, j
                      col_ns%smin_nh4_vr(c,j) = 0._r8
 #endif
                   endif
@@ -690,8 +690,8 @@ contains
                            col_ns%decomp_npools_vr(c,j,l) = ncrit
                         else
 #ifndef _OPENACC                                
-                           write(iulog, "(A,2I8,E8.1)") 'error decomp_npools is negative: ',j,l,col_ns%decomp_npools_vr(c,j,l)
-                           call endrun(msg=errMsg(__FILE__, __LINE__))
+                           !#py write(iulog, "(A,2I8,E8.1)") 'error decomp_npools is negative: ',j,l,col_ns%decomp_npools_vr(c,j,l)
+                           !#py !#py call endrun(msg=errMsg(__FILE__, __LINE__))
 #endif
                         end if
                      end if
@@ -701,8 +701,8 @@ contains
                            col_ps%decomp_ppools_vr(c,j,l) = ncrit/1e4_r8
                          else
 #ifndef _OPENACC
-                           write(iulog, "(A,2I8,E8.1)") 'error decomp_ppools is negative: ',j,l,col_ps%decomp_ppools_vr(c,j,l)
-                           call endrun(msg=errMsg(__FILE__, __LINE__))
+                           !#py write(iulog, "(A,2I8,E8.1)") 'error decomp_ppools is negative: ',j,l,col_ps%decomp_ppools_vr(c,j,l)
+                           !#py !#py call endrun(msg=errMsg(__FILE__, __LINE__))
 #endif
                          end if
                      end if
@@ -721,24 +721,24 @@ contains
 #ifndef _OPENACC
                if (veg_ns%retransn(p) < 0._r8) then
 
-                  write(iulog, *) 'error retransn_patch is negative: ',p
-                  write(iulog, *) 'retransn_patch: ', veg_ns%retransn(p)
-                  call endrun(msg=errMsg(__FILE__, __LINE__))
+                  !#py write(iulog, *) 'error retransn_patch is negative: ',p
+                  !#py write(iulog, *) 'retransn_patch: ', veg_ns%retransn(p)
+                  !#py !#py call endrun(msg=errMsg(__FILE__, __LINE__))
                end if
                if (veg_ns%npool(p) < 0._r8) then
-                  write(iulog, *) 'error npool_patch is negative: ',p
-                  write(iulog, *) 'npool_patch: ', veg_ns%npool(p)
-                  call endrun(msg=errMsg(__FILE__, __LINE__))
+                  !#py write(iulog, *) 'error npool_patch is negative: ',p
+                  !#py write(iulog, *) 'npool_patch: ', veg_ns%npool(p)
+                  !#py !#py call endrun(msg=errMsg(__FILE__, __LINE__))
                end if
                if (veg_ps%retransp(p) < 0._r8) then
-                  write(iulog, *) 'error retransp_patch is negative: ',p
-                  write(iulog, *) 'retransp_patch: ', veg_ps%retransp(p)
-                  call endrun(msg=errMsg(__FILE__, __LINE__))
+                  !#py write(iulog, *) 'error retransp_patch is negative: ',p
+                  !#py write(iulog, *) 'retransp_patch: ', veg_ps%retransp(p)
+                  !#py !#py call endrun(msg=errMsg(__FILE__, __LINE__))
                end if
                if (veg_ps%ppool(p) < 0._r8) then
-                  write(iulog, *) 'error ppool_patch is negative: ',p
-                  write(iulog, *) 'ppool_patch: ', veg_ps%ppool(p)
-                  call endrun(msg=errMsg(__FILE__, __LINE__))
+                  !#py write(iulog, *) 'error ppool_patch is negative: ',p
+                  !#py write(iulog, *) 'ppool_patch: ', veg_ps%ppool(p)
+                  !#py !#py call endrun(msg=errMsg(__FILE__, __LINE__))
                end if
 #endif
             end do

@@ -9,7 +9,7 @@ module histGPUMod
   use LandunitType  , only : lun_pp
   use ColumnType    , only : col_pp
   use VegetationType, only : veg_pp
-
+  use subgridAveMod, only : unity, urbanf, urbans, natveg, veg,ice,nonurb,lake 
   implicit None
 
   integer , private, parameter :: no_snow_MIN = 1                 ! minimum valid value for this flag
@@ -17,8 +17,6 @@ module histGPUMod
   integer , public , parameter :: no_snow_zero = 2    ! average in a 0 value for times when the snow layer isn't present
   integer , private, parameter :: no_snow_MAX = 2                 ! maximum valid value for this flag
   integer , private, parameter :: no_snow_unset = no_snow_MIN - 1 ! flag specifying that field is NOT a multi-layer snow field
-  integer , parameter :: unity = 0, urbanf = 1, urbans = 2
-  integer , parameter :: natveg = 3, veg =4, ice=5, nonurb=6, lake=7
 
   !!mappings that hold the tape and field position in the CPU tapes
   !!for a given field on the gpu tape
@@ -84,7 +82,6 @@ contains
     field = 1
     allocate(map_tapes(total_flds),map_fields(total_flds))
     allocate(tape_gpu(total_flds))
-   !  allocate(gpu_elmptr_rs(1:total_flds)) 
     do t = 1, ntapes
       do f = 1, tape(t)%nflds
         map_tapes(field) = t ; map_fields(field) = f
@@ -174,7 +171,7 @@ contains
   end subroutine htape_gpu_init
 
 !   !-----------------------------------------------------------------------
-  subroutine hist_update_hbuf_gpu(step,inc, nclumps )
+  subroutine hist_update_hbuf_gpu(step,transfer_tapes, nclumps )
     !
     ! !DESCRIPTION:
     ! Accumulate (or take min, max, etc. as appropriate) input field
@@ -184,7 +181,7 @@ contains
     use decompMod, only : get_proc_bounds,get_clump_bounds_gpu, bounds_type
     ! !ARGUMENTS:
     integer , intent(in) :: step
-    integer , intent(in) :: inc
+    logical , intent(in) :: transfer_tapes
     integer, value, intent(in) :: nclumps
     !
     ! !LOCAL VARIABLES:
@@ -195,7 +192,8 @@ contains
     integer :: num2d               ! size of second dimension (e.g. number of vertical levels)
     integer :: field 
     !----------------------------------------------------------------------
-
+      
+    print *, "History Buffer with ",total_flds,"fields" 
     !$acc parallel loop gang vector collapse(2) independent default(present) private(nc,f,hp,numdims,num2d,bounds)
     do nc = 1, nclumps
       do f = 1, total_flds
@@ -206,20 +204,20 @@ contains
         if ( numdims == 1) then
               hp = tape_gpu(f)%hpindex
               call hist_update_hbuf_field_1d_gpu( f, hp ,bounds,elmptr_rs(hp)%ptr)
-        !else
-        !      hp = tape_gpu(f)%hpindex
-        !      num2d = tape_gpu(f)%num2d
-        !      call hist_update_hbuf_field_2d_gpu( f, hp , bounds, num2d,elmptr_ra(hp)%ptr)
+        else
+              hp = tape_gpu(f)%hpindex
+              num2d = tape_gpu(f)%num2d
+              call hist_update_hbuf_field_2d_gpu( f, hp , bounds, num2d,elmptr_ra(hp)%ptr)
         end if
 
       enddo
     end do
-    !$acc end parallel
 
     !TODO: change inc to be end of hist interval?
-    if(mod(step,inc) == 0 .and. step .ne. 0) then
+    if(transfer_tapes .and. step .ne. 0) then
         print *, "transfering tape to cpu:"
         call transfer_tape_to_cpu()
+        !call set_gpu_tape
     endif
   end subroutine hist_update_hbuf_gpu
 
@@ -502,7 +500,6 @@ end subroutine hist_update_hbuf_field_1d_gpu
     c2l_scale_type      =>  tape_gpu(f)%c2l_scale_type  ,&
     l2g_scale_type      =>  tape_gpu(f)%l2g_scale_type  ,&
     no_snow_behavior    =>  tape_gpu(f)%no_snow_behavior &
-    !field               =>  elmptr_ra(hpindex)%ptr &
     )
 
     if (no_snow_behavior /= no_snow_unset) then
@@ -822,7 +819,7 @@ end subroutine hist_update_hbuf_field_1d_gpu
     integer :: size1,size2,t,f, field
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     print *, "updating tape_gpu on cpu:"
-    !$acc update self(tape_gpu)
+    !$acc update self(tape_gpu(:))
 
     !loop is done on cpu --- could accelerate using openACC cpu threading?
     print *, "update tape on cpu"
@@ -844,7 +841,6 @@ end subroutine hist_update_hbuf_field_1d_gpu
           do f = 1, total_flds
             t = map_tapes(f)
             if(tape(t)%is_endhist) then
-                print *,  "adjusting gpu tape after normalization/zeroing",t
                 tape_gpu(f)%hbuf(:,:) = 0d0
                 tape_gpu(f)%nacs(:,:) = 0
                 !$acc update device(tape_gpu(f))

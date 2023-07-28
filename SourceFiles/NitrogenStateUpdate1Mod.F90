@@ -285,21 +285,22 @@ module NitrogenStateUpdate1Mod
          
       end subroutine NitrogenStateUpdate_Phase1_col
       
-      subroutine NitrogenStateUpdate_Phase1_pft(p, dt)
-         !$acc routine seq 
+      subroutine NitrogenStateUpdate_Phase1_pft(num_soilp, filter_soilp,dt)
          implicit none 
 
-         integer , intent(in), value :: p 
+         integer , intent(in) :: num_soilp 
+         integer , intent(in) :: filter_soilp(:)
          real(r8), intent(in) :: dt 
-
+         !
+         integer :: p, fp 
          associate(                                   &
             ivt                   => veg_pp%itype    , & ! Input:  [integer  (:)     ]  pft vegetation type
             woody                 => veg_vp%woody      & ! Input:  [real(r8) (:)     ]  binary flag for woody lifeform (1=woody, 0=not woody)
             )
             
-            !!$acc parallel loop independent gang vector default(present) private(p) 
-            ! do fp = 1,num_soilp
-            !   p = filter_soilp(fp)
+            !$acc parallel loop independent gang vector default(present) private(p) 
+            do fp = 1,num_soilp
+              p = filter_soilp(fp)
                
                ! phenology: transfer growth fluxes
                veg_ns%leafn(p)       = veg_ns%leafn(p)       + veg_nf%leafn_xfer_to_leafn(p)*dt
@@ -430,7 +431,7 @@ module NitrogenStateUpdate1Mod
                   veg_ns%grainn_xfer(p)        = veg_ns%grainn_xfer(p)       + veg_nf%grainn_storage_to_xfer(p)*dt
                end if
                
-            ! end do  ! num_soilp
+            end do  ! num_soilp
 
        end associate 
             

@@ -143,34 +143,33 @@ contains
     integer               , intent(in)    :: filter_nosnowc(:) ! column filter for non-snow points
     type(atm2lnd_type)    , intent(in)    :: atm2lnd_vars
     type(aerosol_type)    , intent(inout) :: aerosol_vars
-    real(r8)   :: dtime
     !
     ! !LOCAL VARIABLES:
     integer  :: g                                                  ! gridcell loop index
     integer  :: c, j, fc, l                                        ! do loop/array indices
-    real(r8) :: qin         (bounds%begc:bounds%endc)                       ! water flow into the elmement (mm/s)
-    real(r8) :: qout        (bounds%begc:bounds%endc)                      ! water flow out of the elmement (mm/s)
-    real(r8) :: qin_bc_phi  (bounds%begc:bounds%endc)              ! flux of hydrophilic BC into   layer [kg]
-    real(r8) :: qout_bc_phi (bounds%begc:bounds%endc)              ! flux of hydrophilic BC out of layer [kg]
-    real(r8) :: qin_bc_pho  (bounds%begc:bounds%endc)              ! flux of hydrophobic BC into   layer [kg]
-    real(r8) :: qout_bc_pho (bounds%begc:bounds%endc)              ! flux of hydrophobic BC out of layer [kg]
-    real(r8) :: qin_oc_phi  (bounds%begc:bounds%endc)              ! flux of hydrophilic OC into   layer [kg]
-    real(r8) :: qout_oc_phi (bounds%begc:bounds%endc)              ! flux of hydrophilic OC out of layer [kg]
-    real(r8) :: qin_oc_pho  (bounds%begc:bounds%endc)              ! flux of hydrophobic OC into   layer [kg]
-    real(r8) :: qout_oc_pho (bounds%begc:bounds%endc)              ! flux of hydrophobic OC out of layer [kg]
-    real(r8) :: qin_dst1    (bounds%begc:bounds%endc)              ! flux of dust species 1 into   layer [kg]
-    real(r8) :: qout_dst1   (bounds%begc:bounds%endc)              ! flux of dust species 1 out of layer [kg]
-    real(r8) :: qin_dst2    (bounds%begc:bounds%endc)              ! flux of dust species 2 into   layer [kg]
-    real(r8) :: qout_dst2   (bounds%begc:bounds%endc)              ! flux of dust species 2 out of layer [kg]
-    real(r8) :: qin_dst3    (bounds%begc:bounds%endc)              ! flux of dust species 3 into   layer [kg]
-    real(r8) :: qout_dst3   (bounds%begc:bounds%endc)              ! flux of dust species 3 out of layer [kg]
-    real(r8) :: qin_dst4    (bounds%begc:bounds%endc)              ! flux of dust species 4 into   layer [kg]
-    real(r8) :: qout_dst4   (bounds%begc:bounds%endc)              ! flux of dust species 4 out of layer [kg]
+    real(r8) :: qin         (1:num_snowc)                       ! water flow into the elmement (mm/s)
+    real(r8) :: qout        (1:num_snowc)                      ! water flow out of the elmement (mm/s)
+    real(r8) :: qin_bc_phi  (1:num_snowc)              ! flux of hydrophilic BC into   layer [kg]
+    real(r8) :: qout_bc_phi (1:num_snowc)              ! flux of hydrophilic BC out of layer [kg]
+    real(r8) :: qin_bc_pho  (1:num_snowc)              ! flux of hydrophobic BC into   layer [kg]
+    real(r8) :: qout_bc_pho (1:num_snowc)              ! flux of hydrophobic BC out of layer [kg]
+    real(r8) :: qin_oc_phi  (1:num_snowc)              ! flux of hydrophilic OC into   layer [kg]
+    real(r8) :: qout_oc_phi (1:num_snowc)              ! flux of hydrophilic OC out of layer [kg]
+    real(r8) :: qin_oc_pho  (1:num_snowc)              ! flux of hydrophobic OC into   layer [kg]
+    real(r8) :: qout_oc_pho (1:num_snowc)              ! flux of hydrophobic OC out of layer [kg]
+    real(r8) :: qin_dst1    (1:num_snowc)              ! flux of dust species 1 into   layer [kg]
+    real(r8) :: qout_dst1   (1:num_snowc)              ! flux of dust species 1 out of layer [kg]
+    real(r8) :: qin_dst2    (1:num_snowc)              ! flux of dust species 2 into   layer [kg]
+    real(r8) :: qout_dst2   (1:num_snowc)              ! flux of dust species 2 out of layer [kg]
+    real(r8) :: qin_dst3    (1:num_snowc)              ! flux of dust species 3 into   layer [kg]
+    real(r8) :: qout_dst3   (1:num_snowc)              ! flux of dust species 3 out of layer [kg]
+    real(r8) :: qin_dst4    (1:num_snowc)              ! flux of dust species 4 into   layer [kg]
+    real(r8) :: qout_dst4   (1:num_snowc)              ! flux of dust species 4 out of layer [kg]
     real(r8) :: wgdif                                              ! ice mass after minus sublimation
-    real(r8) :: vol_liq(bounds%begc:bounds%endc,-nlevsno+1:0)      ! partial volume of liquid water in layer
-    real(r8) :: vol_ice(bounds%begc:bounds%endc,-nlevsno+1:0)      ! partial volume of ice lens in layer
-    real(r8) :: eff_porosity(bounds%begc:bounds%endc,-nlevsno+1:0) ! effective porosity = porosity - vol_ice
-    real(r8) :: mss_liqice(bounds%begc:bounds%endc,-nlevsno+1:0)   ! mass of liquid+ice in a layer
+    real(r8) :: vol_liq(1:num_snowc,-nlevsno+1:0)      ! partial volume of liquid water in layer
+    real(r8) :: vol_ice(1:num_snowc,-nlevsno+1:0)      ! partial volume of ice lens in layer
+    real(r8) :: eff_porosity(1:num_snowc,-nlevsno+1:0) ! effective porosity = porosity - vol_ice
+    real(r8) :: mss_liqice(1:num_snowc,-nlevsno+1:0)   ! mass of liquid+ice in a layer
     !-----------------------------------------------------------------------
     !mgf++
     real(r8) :: refrzsnow                   ! re-frozen snow [kg m-2]
@@ -202,7 +201,7 @@ contains
          qflx_dew_grnd  => col_wf%qflx_dew_grnd  , & ! Input:  [real(r8) (:)   ] ground surface dew formation (mm H2O /s) [+]
          qflx_snow_melt => col_wf%qflx_snow_melt , & ! Output: [real(r8) (:)   ] net snow melt
          qflx_top_soil  => col_wf%qflx_top_soil  , & ! Output: [real(r8) (:)   ] net water input into soil from top (mm/s)
-!         qflx_snofrz_lyr => cwf%qflx_snofrz_lyr     , & ! HW+++ snow freezing rate (col,lyr) [kg m-2 s-1]
+         ! qflx_snofrz_lyr => cwf%qflx_snofrz_lyr     , & ! HW+++ snow freezing rate (col,lyr) [kg m-2 s-1]
 
          mflx_neg_snow_col_1d =>  col_wf%mflx_neg_snow_1d , & ! Output:  [real(r8) (:)   ]  mass flux from top soil layer due to negative water content in snow layers (kg H2O /s)
 
@@ -218,32 +217,31 @@ contains
          begc           => bounds%begc                       , &
          endc           => bounds%endc                         &
          )
+    !$acc enter data create(&
+    !$acc qin(:), &
+    !$acc qout(:), &
+    !$acc qin_bc_phi(:), &
+    !$acc qout_bc_phi(:), &
+    !$acc qin_bc_pho(:), &
+    !$acc qout_bc_pho(:), &
+    !$acc qin_oc_phi(:), &
+    !$acc qout_oc_phi(:), &
+    !$acc qin_oc_pho(:), &
+    !$acc qout_oc_pho(:), &
+    !$acc qin_dst1(:), &
+    !$acc qout_dst1(:), &
+    !$acc qin_dst2(:), &
+    !$acc qout_dst2(:), &
+    !$acc qin_dst3(:), &
+    !$acc qout_dst3(:), &
+    !$acc qin_dst4(:), &
+    !$acc qout_dst4(:), &
+    !$acc vol_liq(:,:), &
+    !$acc vol_ice(:,:), &
+    !$acc eff_porosity(:,:), &
+    !$acc mss_liqice(:,:))
 
-      ! Determine model time step
-      dtime = dtime_mod
-      !$acc enter data copyin( &
-      !$acc qin         (bounds%begc:bounds%endc),&
-      !$acc qout        (bounds%begc:bounds%endc),&
-      !$acc qin_bc_phi  (bounds%begc:bounds%endc),&
-      !$acc qout_bc_phi (bounds%begc:bounds%endc),&
-      !$acc qin_bc_pho  (bounds%begc:bounds%endc),&
-      !$acc qout_bc_pho (bounds%begc:bounds%endc),&
-      !$acc qin_oc_phi  (bounds%begc:bounds%endc),&
-      !$acc qout_oc_phi (bounds%begc:bounds%endc),&
-      !$acc qin_oc_pho  (bounds%begc:bounds%endc),&
-      !$acc qout_oc_pho (bounds%begc:bounds%endc),&
-      !$acc qin_dst1    (bounds%begc:bounds%endc),&
-      !$acc qout_dst1   (bounds%begc:bounds%endc),&
-      !$acc qin_dst2    (bounds%begc:bounds%endc),&
-      !$acc qout_dst2   (bounds%begc:bounds%endc),&
-      !$acc qin_dst3    (bounds%begc:bounds%endc),&
-      !$acc qout_dst3   (bounds%begc:bounds%endc),&
-      !$acc qin_dst4    (bounds%begc:bounds%endc),&
-      !$acc qout_dst4   (bounds%begc:bounds%endc),&
-      !$acc vol_liq(bounds%begc:bounds%endc,-nlevsno+1:0)     ,&
-      !$acc vol_ice(bounds%begc:bounds%endc,-nlevsno+1:0)     ,&
-      !$acc eff_porosity(bounds%begc:bounds%endc,-nlevsno+1:0),&
-      !$acc mss_liqice(bounds%begc:bounds%endc,-nlevsno+1:0)  ) 
+
 
       ! Renew the mass of ice lens (h2osoi_ice) and liquid (h2osoi_liq) in the
       ! surface snow layer resulting from sublimation (frost) / evaporation (condense)
@@ -257,17 +255,17 @@ contains
          l=col_pp%landunit(c)
 
          if (do_capsnow(c) .and. .not. use_extrasnowlayers) then
-            wgdif = h2osoi_ice(c,snl(c)+1) - frac_sno_eff(c)*qflx_sub_snow(c)*dtime
+            wgdif = h2osoi_ice(c,snl(c)+1) - frac_sno_eff(c)*qflx_sub_snow(c)*dtime_mod
             h2osoi_ice(c,snl(c)+1) = wgdif
             if (wgdif < 0._r8) then
                h2osoi_ice(c,snl(c)+1) = 0._r8
                h2osoi_liq(c,snl(c)+1) = h2osoi_liq(c,snl(c)+1) + wgdif
             end if
             h2osoi_liq(c,snl(c)+1) = h2osoi_liq(c,snl(c)+1) &
-                 - frac_sno_eff(c)*qflx_evap_grnd(c) * dtime
+                 - frac_sno_eff(c)*qflx_evap_grnd(c) * dtime_mod
          else
             wgdif = h2osoi_ice(c,snl(c)+1) &
-                 + frac_sno_eff(c) * (qflx_dew_snow(c) - qflx_sub_snow(c)) * dtime
+                 + frac_sno_eff(c) * (qflx_dew_snow(c) - qflx_sub_snow(c)) * dtime_mod
             h2osoi_ice(c,snl(c)+1) = wgdif
             if (wgdif < 0._r8) then
                h2osoi_ice(c,snl(c)+1) = 0._r8
@@ -275,7 +273,7 @@ contains
             end if
             h2osoi_liq(c,snl(c)+1) = h2osoi_liq(c,snl(c)+1) +  &
                  frac_sno_eff(c) * (qflx_rain_grnd(c) + qflx_dew_grnd(c) &
-                 - qflx_evap_grnd(c)) * dtime
+                 - qflx_evap_grnd(c)) * dtime_mod
          end if
          ! if negative, reduce deeper layer's liquid water content sequentially
          if(h2osoi_liq(c,snl(c)+1) < 0._r8) then
@@ -287,7 +285,7 @@ contains
                if (.not.(j+1 > 0 .and. use_vsfm)) then
                   h2osoi_liq(c,j+1) = h2osoi_liq(c,j+1) + wgdif
                else
-                  mflx_neg_snow_col_1d(c-bounds%begc+1) = wgdif/dtime
+                  mflx_neg_snow_col_1d(c-bounds%begc+1) = wgdif/dtime_mod
                endif
             enddo
          end if
@@ -301,9 +299,9 @@ contains
             c = filter_snowc(fc)
             if (j >= snl(c)+1) then
                ! need to scale dz by frac_sno to convert to grid cell average depth
-               vol_ice(c,j)      = min(1._r8, h2osoi_ice(c,j)/(dz(c,j)*frac_sno_eff(c)*denice))
-               eff_porosity(c,j) = 1._r8 - vol_ice(c,j)
-               vol_liq(c,j)      = min(eff_porosity(c,j),h2osoi_liq(c,j)/(dz(c,j)*frac_sno_eff(c)*denh2o))
+               vol_ice(fc,j)      = min(1._r8, h2osoi_ice(c,j)/(dz(c,j)*frac_sno_eff(c)*denice))
+               eff_porosity(fc,j) = 1._r8 - vol_ice(fc,j)
+               vol_liq(fc,j)      = min(eff_porosity(fc,j),h2osoi_liq(c,j)/(dz(c,j)*frac_sno_eff(c)*denh2o))
             end if
          end do
       end do
@@ -326,137 +324,140 @@ contains
       ! 5) update mass concentration of aerosol accordingly
 
       !$acc parallel loop independent gang vector default(present)
-      do c = bounds%begc,bounds%endc
-         qin(c)         = 0._r8
-         qin_bc_phi (c) = 0._r8
-         qin_bc_pho (c) = 0._r8
-         qin_oc_phi (c) = 0._r8
-         qin_oc_pho (c) = 0._r8
-         qin_dst1   (c) = 0._r8
-         qin_dst2   (c) = 0._r8
-         qin_dst3   (c) = 0._r8
-         qin_dst4   (c) = 0._r8
+      do fc = 1,num_snowc
+         c = filter_snowc(fc)
+         qin(fc)         = 0._r8
+         qin_bc_phi(fc) = 0._r8
+         qin_bc_pho(fc) = 0._r8
+         qin_oc_phi(fc) = 0._r8
+         qin_oc_pho(fc) = 0._r8
+         qin_dst1(fc) = 0._r8
+         qin_dst2(fc) = 0._r8
+         qin_dst3(fc) = 0._r8
+         qin_dst4(fc) = 0._r8
       end do
 
       !NOTE : look into qout race condition?
-      !$acc parallel loop independent gang collapse(2) default(present)
-      do j = -nlevsno+1, 0
-         do fc = 1, num_snowc
-            c = filter_snowc(fc)
+
+      !$acc parallel loop independent gang vector default(present)
+      do fc = 1, num_snowc
+         c = filter_snowc(fc)
+         !$acc loop seq 
+         do j = -nlevsno+1, 0
             if (j >= snl(c)+1) then
 
-               h2osoi_liq(c,j) = h2osoi_liq(c,j) + qin(c)
+               h2osoi_liq(c,j) = h2osoi_liq(c,j) + qin(fc)  
 
-               mss_bcphi(c,j) = mss_bcphi(c,j) + qin_bc_phi(c)
-               mss_bcpho(c,j) = mss_bcpho(c,j) + qin_bc_pho(c)
-               mss_ocphi(c,j) = mss_ocphi(c,j) + qin_oc_phi(c)
-               mss_ocpho(c,j) = mss_ocpho(c,j) + qin_oc_pho(c)
+               mss_bcphi(c,j) = mss_bcphi(c,j) + qin_bc_phi(fc)
+               mss_bcpho(c,j) = mss_bcpho(c,j) + qin_bc_pho(fc)
+               mss_ocphi(c,j) = mss_ocphi(c,j) + qin_oc_phi(fc)
+               mss_ocpho(c,j) = mss_ocpho(c,j) + qin_oc_pho(fc)
 
-               mss_dst1(c,j)  = mss_dst1(c,j) + qin_dst1(c)
-               mss_dst2(c,j)  = mss_dst2(c,j) + qin_dst2(c)
-               mss_dst3(c,j)  = mss_dst3(c,j) + qin_dst3(c)
-               mss_dst4(c,j)  = mss_dst4(c,j) + qin_dst4(c)
+               mss_dst1(c,j)  = mss_dst1(c,j) + qin_dst1(fc)
+               mss_dst2(c,j)  = mss_dst2(c,j) + qin_dst2(fc)
+               mss_dst3(c,j)  = mss_dst3(c,j) + qin_dst3(fc)
+               mss_dst4(c,j)  = mss_dst4(c,j) + qin_dst4(fc)
 
                if (j <= -1) then
                   ! No runoff over snow surface, just ponding on surface
-                  if (eff_porosity(c,j) < wimp .OR. eff_porosity(c,j+1) < wimp) then
-                     qout(c) = 0._r8
+                  if (eff_porosity(fc,j) < wimp .OR. eff_porosity(fc,j+1) < wimp) then
+                     qout(fc) = 0._r8
                   else
                      ! dz must be scaled by frac_sno to obtain gridcell average value
-                     qout(c) = max(0._r8,(vol_liq(c,j) &
-                          - ssi*eff_porosity(c,j))*dz(c,j)*frac_sno_eff(c))
-                     qout(c) = min(qout(c),(1._r8-vol_ice(c,j+1) &
-                          - vol_liq(c,j+1))*dz(c,j+1)*frac_sno_eff(c))
+                     qout(fc) = max(0._r8,(vol_liq(fc,j) &
+                          - ssi*eff_porosity(fc,j))*dz(c,j)*frac_sno_eff(c))
+                     qout(fc) = min(qout(fc),(1._r8-vol_ice(fc,j+1) &
+                          - vol_liq(fc,j+1))*dz(c,j+1)*frac_sno_eff(c))
                   end if
                else
-                  qout(c) = max(0._r8,(vol_liq(c,j) &
-                       - ssi*eff_porosity(c,j))*dz(c,j)*frac_sno_eff(c))
+                  qout(fc) = max(0._r8,(vol_liq(fc,j) &
+                       - ssi*eff_porosity(fc,j))*dz(c,j)*frac_sno_eff(c))
                end if
-               qout(c) = qout(c)*1000._r8
-               h2osoi_liq(c,j) = h2osoi_liq(c,j) - qout(c)
-               qin(c) = qout(c)
+               qout(fc) = qout(fc)*1000._r8
+               h2osoi_liq(c,j) = h2osoi_liq(c,j) - qout(fc)
+               qin(fc) = qout(fc)
 
                ! mass of ice+water: in extremely rare circumstances, this can
                ! be zero, even though there is a snow layer defined. In
                ! this case, set the mass to a very small value to
                ! prevent division by zero.
 
-               mss_liqice(c,j) = h2osoi_liq(c,j)+h2osoi_ice(c,j)
-               if (mss_liqice(c,j) < 1E-30_r8) then
-                  mss_liqice(c,j) = 1E-30_r8
+               mss_liqice(fc,j) = h2osoi_liq(c,j)+h2osoi_ice(c,j)
+               if (mss_liqice(fc,j) < 1E-30_r8) then
+                  mss_liqice(fc,j) = 1E-30_r8
                endif
 
                ! BCPHI:
                ! 1. flux with meltwater:
-               qout_bc_phi(c) = qout(c)*scvng_fct_mlt_bcphi*(mss_bcphi(c,j)/mss_liqice(c,j))
-               if (qout_bc_phi(c) > mss_bcphi(c,j)) then
-                  qout_bc_phi(c) = mss_bcphi(c,j)
+               qout_bc_phi(fc) = qout(fc)*scvng_fct_mlt_bcphi*(mss_bcphi(c,j)/mss_liqice(fc,j))
+               if (qout_bc_phi(fc) > mss_bcphi(c,j)) then
+                  qout_bc_phi(fc) = mss_bcphi(c,j)
                endif
-               mss_bcphi(c,j) = mss_bcphi(c,j) - qout_bc_phi(c)
-               qin_bc_phi(c) = qout_bc_phi(c)
+               mss_bcphi(c,j) = mss_bcphi(c,j) - qout_bc_phi(fc)
+               qin_bc_phi(fc) = qout_bc_phi(fc)
 
                ! BCPHO:
                ! 1. flux with meltwater:
-               qout_bc_pho(c) = qout(c)*scvng_fct_mlt_bcpho*(mss_bcpho(c,j)/mss_liqice(c,j))
-               if (qout_bc_pho(c) > mss_bcpho(c,j)) then
-                  qout_bc_pho(c) = mss_bcpho(c,j)
+               qout_bc_pho(fc) = qout(fc)*scvng_fct_mlt_bcpho*(mss_bcpho(c,j)/mss_liqice(fc,j))
+               if (qout_bc_pho(fc) > mss_bcpho(c,j)) then
+                  qout_bc_pho(fc) = mss_bcpho(c,j)
                endif
-               mss_bcpho(c,j) = mss_bcpho(c,j) - qout_bc_pho(c)
-               qin_bc_pho(c) = qout_bc_pho(c)
+               mss_bcpho(c,j) = mss_bcpho(c,j) - qout_bc_pho(fc)
+               qin_bc_pho(fc) = qout_bc_pho(fc)
 
                ! OCPHI:
                ! 1. flux with meltwater:
-               qout_oc_phi(c) = qout(c)*scvng_fct_mlt_ocphi*(mss_ocphi(c,j)/mss_liqice(c,j))
-               if (qout_oc_phi(c) > mss_ocphi(c,j)) then
-                  qout_oc_phi(c) = mss_ocphi(c,j)
+               qout_oc_phi(fc) = qout(fc)*scvng_fct_mlt_ocphi*(mss_ocphi(c,j)/mss_liqice(fc,j))
+               if (qout_oc_phi(fc) > mss_ocphi(c,j)) then
+                  qout_oc_phi(fc) = mss_ocphi(c,j)
                endif
-               mss_ocphi(c,j) = mss_ocphi(c,j) - qout_oc_phi(c)
-               qin_oc_phi(c) = qout_oc_phi(c)
+               mss_ocphi(c,j) = mss_ocphi(c,j) - qout_oc_phi(fc)
+               qin_oc_phi(fc) = qout_oc_phi(fc)
 
                ! OCPHO:
                ! 1. flux with meltwater:
-               qout_oc_pho(c) = qout(c)*scvng_fct_mlt_ocpho*(mss_ocpho(c,j)/mss_liqice(c,j))
-               if (qout_oc_pho(c) > mss_ocpho(c,j)) then
-                  qout_oc_pho(c) = mss_ocpho(c,j)
+               qout_oc_pho(fc) = qout(fc)*scvng_fct_mlt_ocpho*(mss_ocpho(c,j)/mss_liqice(fc,j))
+               if (qout_oc_pho(fc) > mss_ocpho(c,j)) then
+                  qout_oc_pho(fc) = mss_ocpho(c,j)
                endif
-               mss_ocpho(c,j) = mss_ocpho(c,j) - qout_oc_pho(c)
-               qin_oc_pho(c) = qout_oc_pho(c)
+               mss_ocpho(c,j) = mss_ocpho(c,j) - qout_oc_pho(fc)
+               qin_oc_pho(fc) = qout_oc_pho(fc)
 
                ! DUST 1:
                ! 1. flux with meltwater:
-               qout_dst1(c) = qout(c)*scvng_fct_mlt_dst1*(mss_dst1(c,j)/mss_liqice(c,j))
-               if (qout_dst1(c) > mss_dst1(c,j)) then
-                  qout_dst1(c) = mss_dst1(c,j)
+               qout_dst1(fc) = qout(fc)*scvng_fct_mlt_dst1*(mss_dst1(c,j)/mss_liqice(fc,j))
+               if (qout_dst1(fc) > mss_dst1(c,j)) then
+                  qout_dst1(fc) = mss_dst1(c,j)
                endif
-               mss_dst1(c,j) = mss_dst1(c,j) - qout_dst1(c)
-               qin_dst1(c) = qout_dst1(c)
+               mss_dst1(c,j) = mss_dst1(c,j) - qout_dst1(fc)
+               qin_dst1(fc) = qout_dst1(fc)
 
                ! DUST 2:
                ! 1. flux with meltwater:
-               qout_dst2(c) = qout(c)*scvng_fct_mlt_dst2*(mss_dst2(c,j)/mss_liqice(c,j))
-               if (qout_dst2(c) > mss_dst2(c,j)) then
-                  qout_dst2(c) = mss_dst2(c,j)
+               qout_dst2(fc) = qout(fc)*scvng_fct_mlt_dst2*(mss_dst2(c,j)/mss_liqice(fc,j))
+               if (qout_dst2(fc) > mss_dst2(c,j)) then
+                  qout_dst2(fc) = mss_dst2(c,j)
                endif
-               mss_dst2(c,j) = mss_dst2(c,j) - qout_dst2(c)
-               qin_dst2(c) = qout_dst2(c)
+               mss_dst2(c,j) = mss_dst2(c,j) - qout_dst2(fc)
+               qin_dst2(fc) = qout_dst2(fc)
 
                ! DUST 3:
                ! 1. flux with meltwater:
-               qout_dst3(c) = qout(c)*scvng_fct_mlt_dst3*(mss_dst3(c,j)/mss_liqice(c,j))
-               if (qout_dst3(c) > mss_dst3(c,j)) then
-                  qout_dst3(c) = mss_dst3(c,j)
+               qout_dst3(fc) = qout(fc)*scvng_fct_mlt_dst3*(mss_dst3(c,j)/mss_liqice(fc,j))
+               if (qout_dst3(fc) > mss_dst3(c,j)) then
+                  qout_dst3(fc) = mss_dst3(c,j)
                endif
-               mss_dst3(c,j) = mss_dst3(c,j) - qout_dst3(c)
-               qin_dst3(c) = qout_dst3(c)
+               mss_dst3(c,j) = mss_dst3(c,j) - qout_dst3(fc)
+               qin_dst3(fc) = qout_dst3(fc)
 
                ! DUST 4:
                ! 1. flux with meltwater:
-               qout_dst4(c) = qout(c)*scvng_fct_mlt_dst4*(mss_dst4(c,j)/mss_liqice(c,j))
-               if (qout_dst4(c) > mss_dst4(c,j)) then
-                  qout_dst4(c) = mss_dst4(c,j)
+               qout_dst4(fc) = qout(fc)*scvng_fct_mlt_dst4*(mss_dst4(c,j)/mss_liqice(fc,j))
+               if (qout_dst4(fc) > mss_dst4(c,j)) then
+                  qout_dst4(fc) = mss_dst4(c,j)
                endif
-               mss_dst4(c,j) = mss_dst4(c,j) - qout_dst4(c)
-               qin_dst4(c) = qout_dst4(c)
+               mss_dst4(c,j) = mss_dst4(c,j) - qout_dst4(fc)
+               qin_dst4(fc) = qout_dst4(fc)
 
             end if
          end do
@@ -486,12 +487,12 @@ contains
       do fc = 1, num_snowc
          c = filter_snowc(fc)
          ! Qout from snow bottom
-         qflx_snow_melt(c) = qflx_snow_melt(c) + (qout(c) / dtime)
+         qflx_snow_melt(c) = qflx_snow_melt(c) + (qout(fc) / dtime_mod)
 
-         qflx_top_soil(c) = (qout(c) / dtime) &
+         qflx_top_soil(c) = (qout(fc) / dtime_mod) &
               + (1.0_r8 - frac_sno_eff(c)) * qflx_rain_grnd(c)
          int_snow(c) = int_snow(c) + frac_sno_eff(c) &
-                       * (qflx_dew_snow(c) + qflx_dew_grnd(c) + qflx_rain_grnd(c)) * dtime
+                       * (qflx_dew_snow(c) + qflx_dew_grnd(c) + qflx_rain_grnd(c)) * dtime_mod
       end do
 
       !$acc parallel loop independent gang vector default(present)
@@ -518,7 +519,7 @@ contains
           c = filter_snowc(fc)
           if (j >= snl(c)+1) then
              !! snow that has re-frozen [kg/m2]
-             !refrzsnow = max(0._r8, (qflx_snofrz_lyr(c,j)*dtime))
+             !refrzsnow = max(0._r8, (qflx_snofrz_lyr(c,j)*dtime_mod))
              !
              !! fraction of layer mass that is re-frozen
              !if ((h2osoi_liq(c,j) + h2osoi_ice(c,j)) > 0._r8) then
@@ -529,7 +530,7 @@ contains
 
              if (j == snl(c)+1) then
                 ! snow that has sublimated [kg/m2] (top layer only)
-                subsnow = max(0._r8, (qflx_sub_snow(c)*dtime))
+                subsnow = max(0._r8, (qflx_sub_snow(c)*dtime_mod))
 
                 ! fraction of layer mass that has sublimated:
                 if ((h2osoi_liq(c,j) + h2osoi_ice(c,j)) > 0._r8) then
@@ -567,29 +568,32 @@ contains
     !mgf--
 #endif
 
-    !$acc exit data delete( &
-      !$acc qin         (bounds%begc:bounds%endc),&
-      !$acc qout        (bounds%begc:bounds%endc),&
-      !$acc qin_bc_phi  (bounds%begc:bounds%endc),&
-      !$acc qout_bc_phi (bounds%begc:bounds%endc),&
-      !$acc qin_bc_pho  (bounds%begc:bounds%endc),&
-      !$acc qout_bc_pho (bounds%begc:bounds%endc),&
-      !$acc qin_oc_phi  (bounds%begc:bounds%endc),&
-      !$acc qout_oc_phi (bounds%begc:bounds%endc),&
-      !$acc qin_oc_pho  (bounds%begc:bounds%endc),&
-      !$acc qout_oc_pho (bounds%begc:bounds%endc),&
-      !$acc qin_dst1    (bounds%begc:bounds%endc),&
-      !$acc qout_dst1   (bounds%begc:bounds%endc),&
-      !$acc qin_dst2    (bounds%begc:bounds%endc),&
-      !$acc qout_dst2   (bounds%begc:bounds%endc),&
-      !$acc qin_dst3    (bounds%begc:bounds%endc),&
-      !$acc qout_dst3   (bounds%begc:bounds%endc),&
-      !$acc qin_dst4    (bounds%begc:bounds%endc),&
-      !$acc qout_dst4   (bounds%begc:bounds%endc),&
-      !$acc vol_liq(bounds%begc:bounds%endc,-nlevsno+1:0)     ,&
-      !$acc vol_ice(bounds%begc:bounds%endc,-nlevsno+1:0)     ,&
-      !$acc eff_porosity(bounds%begc:bounds%endc,-nlevsno+1:0),&
-      !$acc mss_liqice(bounds%begc:bounds%endc,-nlevsno+1:0)  ) 
+
+
+
+    !$acc exit data delete(&
+    !$acc qin(:), &
+    !$acc qout(:), &
+    !$acc qin_bc_phi(:), &
+    !$acc qout_bc_phi(:), &
+    !$acc qin_bc_pho(:), &
+    !$acc qout_bc_pho(:), &
+    !$acc qin_oc_phi(:), &
+    !$acc qout_oc_phi(:), &
+    !$acc qin_oc_pho(:), &
+    !$acc qout_oc_pho(:), &
+    !$acc qin_dst1(:), &
+    !$acc qout_dst1(:), &
+    !$acc qin_dst2(:), &
+    !$acc qout_dst2(:), &
+    !$acc qin_dst3(:), &
+    !$acc qout_dst3(:), &
+    !$acc qin_dst4(:), &
+    !$acc qout_dst4(:), &
+    !$acc vol_liq(:,:), &
+    !$acc vol_ice(:,:), &
+    !$acc eff_porosity(:,:), &
+    !$acc mss_liqice(:,:))
 
     end associate
 
@@ -675,11 +679,20 @@ contains
           snw_rds      => col_ws%snw_rds      , & ! Output: [real(r8) (:,:) ] effective snow grain radius (col,lyr) [microns, m^-6]
           dz           => col_pp%dz                             & ! Output: [real(r8) (: ,:) ] layer depth (m)                        
           )
+     !$acc enter data create(&
+     !$acc burden(:), &
+     !$acc zpseudo(:), &
+     !$acc mobile(:), &
+     !$acc ddz1_fresh, &
+     !$acc ddz1, &
+     !$acc ddz3, &
+     !$acc burden_noextra)
+
+
+
 
        ! Begin calculation - note that the following column loops are only invoked if snl(c) < 0
           if (use_extrasnowlayers) then
-          !!! !$acc enter data create(burden(:),zpseudo(:),mobile(:) )
-          !!! !$acc parallel loop independent gang vector default(present)
           do fc = 1, num_snowc
              burden(fc) = 0._r8
              zpseudo(fc) = 0._r8
@@ -883,7 +896,17 @@ contains
             end do !j loop now 
          end do  ! filter loop 
       end if
-     !!! !$acc exit data delete(burden(:),zpseudo(:),mobile(:) )
+
+
+
+     !$acc exit data delete(&
+     !$acc burden(:), &
+     !$acc zpseudo(:), &
+     !$acc mobile(:), &
+     !$acc ddz1_fresh, &
+     !$acc ddz1, &
+     !$acc ddz3, &
+     !$acc burden_noextra)
 
      end associate
    end subroutine SnowCompaction
@@ -914,12 +937,12 @@ contains
      integer :: c, fc                            ! column indices
      integer :: i,k                              ! loop indices
      integer :: j,l                              ! node indices
-     integer :: msn_old(bounds%begc:bounds%endc) ! number of top snow layer
-     integer :: mssi   (bounds%begc:bounds%endc)    ! node index
+     integer :: msn_old(1:num_snowc) ! number of top snow layer
+     integer :: mssi   (1:num_snowc)    ! node index
      integer :: neibor                           ! adjacent node selected for combination
      real(r8):: dzminloc_mssi_c                  ! dzminloc evaluated at mssi(c)
-     real(r8):: zwice (bounds%begc:bounds%endc)   ! total ice mass in snow
-     real(r8):: zwliq (bounds%begc:bounds%endc)  ! total liquid water in snow
+     real(r8):: zwice (1:num_snowc)   ! total ice mass in snow
+     real(r8):: zwliq (1:num_snowc)  ! total liquid water in snow
      real(r8):: dzmin(5)                         ! minimum of top snow layer
      real(r8):: dzminloc(5)                ! minimum of top snow layer (local)
      real(r8):: dzminloc16(16)             ! minimum of top snow layer (local)
@@ -962,6 +985,21 @@ contains
           zi               => col_pp%zi                              , & ! Output: [real(r8) (:,:) ] interface level below a "z" level (m)
           z                => col_pp%z                                 & ! Output: [real(r8) (:,:) ] layer thickness (m)
           )
+     !$acc enter data create(&
+     !$acc msn_old(:), &
+     !$acc mssi(:), &
+     !$acc zwice(:), &
+     !$acc zwliq(:), &
+     !$acc dzmin(:), &
+     !$acc dzminloc(:), &
+     !$acc dzminloc16(:), &
+     !$acc sum1, &
+     !$acc sum2, &
+     !$acc sum3, &
+     !$acc sum4)
+
+
+
 
 
        ! Check the mass of ice lens of snow, when the total is less than a small value,
@@ -989,14 +1027,12 @@ contains
             end if
           end if
        end if
-       !$acc enter data create(msn_old(:),mssi(:),zwice(:),zwliq(:),sum1,sum2,sum3,sum4) &
-       !$acc  copyin(dzmin(1:5),dzminloc(:),dzminloc16(:))
 
        !$acc parallel loop independent gang vector default(present)
        do fc = 1, num_snowc
           c = filter_snowc(fc)
 
-          msn_old(c) = snl(c)
+          msn_old(fc) = snl(c)
           qflx_sl_top_soil(c) = 0._r8
           qflx_snow2topsoi(c) = 0._r8
           mflx_snowlyr_col(c) = 0._r8
@@ -1008,7 +1044,7 @@ contains
           c = filter_snowc(fc)
           l = col_pp%landunit(c)
           !$acc loop vector independent 
-          do j = msn_old(c)+1,0
+          do j = msn_old(fc)+1,0
              ! use 0.01 to avoid runaway ice buildup
              if (h2osoi_ice(c,j) <= .01_r8) then
                 if (ltype(l) == istsoil .or. urbpoi(l) .or. ltype(l) == istcrop) then
@@ -1106,8 +1142,8 @@ contains
          end do
          h2osno(c) = sum1 
          snow_depth(c) = sum2
-         zwice(c)  = sum3 
-         zwliq(c) = sum4  
+         zwice(fc)  = sum3 
+         zwliq(fc) = sum4  
        end do
 
        ! Check the snow depth - all snow gone
@@ -1123,7 +1159,7 @@ contains
                   .or. (h2osno(c)/(frac_sno_eff(c)*snow_depth(c)) < 50._r8)))) then
 
                 snl(c) = 0
-                h2osno(c) = zwice(c)
+                h2osno(c) = zwice(fc)
 
                 mss_bcphi(c,:) = 0._r8
                 mss_bcpho(c,:) = 0._r8
@@ -1138,9 +1174,9 @@ contains
                 ! this is where water is transfered from layer 0 (snow) to layer 1 (soil)
                 if (ltype(l) == istsoil .or. urbpoi(l) .or. ltype(l) == istcrop) then
                    h2osoi_liq(c,0) = 0.0_r8
-                   h2osoi_liq(c,1) = h2osoi_liq(c,1) + zwliq(c)
-                   qflx_snow2topsoi(c) = zwliq(c)/dtime
-                   mflx_snowlyr_col(c) = mflx_snowlyr_col(c) + zwliq(c)/dtime
+                   h2osoi_liq(c,1) = h2osoi_liq(c,1) + zwliq(fc)
+                   qflx_snow2topsoi(c) = zwliq(fc)/dtime
+                   mflx_snowlyr_col(c) = mflx_snowlyr_col(c) + zwliq(fc)/dtime
                 end if
                 if (ltype(l) == istwet) then
                    h2osoi_liq(c,0) = 0.0_r8
@@ -1168,14 +1204,14 @@ contains
 
           if (snl(c) < -1) then
 
-             msn_old(c) = snl(c)
-             mssi(c) = 1
+             msn_old(fc) = snl(c)
+             mssi(fc) = 1
 
-             do i = msn_old(c)+1,0
+             do i = msn_old(fc)+1,0
                 if (.not. use_extrasnowlayers) then
-                    dzminloc_mssi_c = dzminloc(mssi(c))
+                    dzminloc_mssi_c = dzminloc(mssi(fc))
                 else
-                    dzminloc_mssi_c = dzminloc16(mssi(c))
+                    dzminloc_mssi_c = dzminloc16(mssi(fc))
                 end if
                 if ((frac_sno_eff(c)*dz(c,i) < dzminloc_mssi_c) .or. &
                      ((h2osoi_ice(c,i) + h2osoi_liq(c,i))/(frac_sno_eff(c)*dz(c,i)) < 50._r8)) then
@@ -1249,7 +1285,7 @@ contains
                 else
 
                    ! The layer thickness is greater than the prescribed minimum value
-                   mssi(c) = mssi(c) + 1
+                   mssi(fc) = mssi(fc) + 1
 
                 end if
              end do
@@ -1283,9 +1319,24 @@ contains
          end do
       end do
        !$acc end parallel 
-       !$acc exit data delete(msn_old(:),mssi(:),zwice(:),zwliq(:),& 
-       !$acc  dzminloc(:),dzminloc16(:),dzmin(:),sum1,sum2,sum3,sum4)
+    
+
+
+     !$acc exit data delete(&
+     !$acc msn_old(:), &
+     !$acc mssi(:), &
+     !$acc zwice(:), &
+     !$acc zwliq(:), &
+     !$acc dzmin(:), &
+     !$acc dzminloc(:), &
+     !$acc dzminloc16(:), &
+     !$acc sum1, &
+     !$acc sum2, &
+     !$acc sum3, &
+     !$acc sum4)
+
     end associate
+
    end subroutine CombineSnowLayers
 
    !-----------------------------------------------------------------------
@@ -1310,38 +1361,39 @@ contains
      integer  :: j, c, fc, k                              ! indices
      real(r8) :: drr                                      ! thickness of the combined [m]
      integer  :: msno                                     ! number of snow layer 1 (top) to msno (bottom)
-     real(r8) :: dzsno(bounds%begc:bounds%endc,nlevsno)   ! Snow layer thickness [m]
-     real(r8) :: swice(bounds%begc:bounds%endc,nlevsno)   ! Partial volume of ice [m3/m3]
-     real(r8) :: swliq(bounds%begc:bounds%endc,nlevsno)   ! Partial volume of liquid water [m3/m3]
-     real(r8) :: tsno(bounds%begc:bounds%endc ,nlevsno)   ! Nodel temperature [K]
+     real(r8) :: dzsno(1:num_snowc,nlevsno)   ! Snow layer thickness [m]
+     real(r8) :: swice(1:num_snowc,nlevsno)   ! Partial volume of ice [m3/m3]
+     real(r8) :: swliq(1:num_snowc,nlevsno)   ! Partial volume of liquid water [m3/m3]
+     real(r8) :: tsno(1:num_snowc ,nlevsno)   ! Nodel temperature [K]
      real(r8) :: zwice                                    ! temporary
      real(r8) :: zwliq                                    ! temporary
      real(r8) :: propor                                   ! temporary
      real(r8) :: dtdz                                     ! temporary
      ! temporary variables mimicking the structure of other layer division variables
-     real(r8) :: mbc_phi(bounds%begc:bounds%endc,nlevsno) ! mass of BC in each snow layer
+     real(r8) :: mbc_phi(1:num_snowc,nlevsno) ! mass of BC in each snow layer
      real(r8) :: zmbc_phi                                 ! temporary
-     real(r8) :: mbc_pho(bounds%begc:bounds%endc,nlevsno) ! mass of BC in each snow layer
+     real(r8) :: mbc_pho(1:num_snowc,nlevsno) ! mass of BC in each snow layer
      real(r8) :: zmbc_pho                                 ! temporary
-     real(r8) :: moc_phi(bounds%begc:bounds%endc,nlevsno) ! mass of OC in each snow layer
+     real(r8) :: moc_phi(1:num_snowc,nlevsno) ! mass of OC in each snow layer
      real(r8) :: zmoc_phi                                 ! temporary
-     real(r8) :: moc_pho(bounds%begc:bounds%endc,nlevsno) ! mass of OC in each snow layer
+     real(r8) :: moc_pho(1:num_snowc,nlevsno) ! mass of OC in each snow layer
      real(r8) :: zmoc_pho                                 ! temporary
-     real(r8) :: mdst1(bounds%begc:bounds%endc,nlevsno)   ! mass of dust 1 in each snow layer
+     real(r8) :: mdst1(1:num_snowc,nlevsno)   ! mass of dust 1 in each snow layer
      real(r8) :: zmdst1                                   ! temporary
-     real(r8) :: mdst2(bounds%begc:bounds%endc,nlevsno)   ! mass of dust 2 in each snow layer
+     real(r8) :: mdst2(1:num_snowc,nlevsno)   ! mass of dust 2 in each snow layer
      real(r8) :: zmdst2                                   ! temporary
-     real(r8) :: mdst3(bounds%begc:bounds%endc,nlevsno)   ! mass of dust 3 in each snow layer
+     real(r8) :: mdst3(1:num_snowc,nlevsno)   ! mass of dust 3 in each snow layer
      real(r8) :: zmdst3                                   ! temporary
-     real(r8) :: mdst4(bounds%begc:bounds%endc,nlevsno)   ! mass of dust 4 in each snow layer
+     real(r8) :: mdst4(1:num_snowc,nlevsno)   ! mass of dust 4 in each snow layer
      real(r8) :: zmdst4                                   ! temporary
-     real(r8) :: rds(bounds%begc:bounds%endc,nlevsno)
+     real(r8) :: rds(1:num_snowc,nlevsno)
      ! Variables for consistency check
-     real(r8) :: dztot(bounds%begc:bounds%endc)
-     real(r8) :: snwicetot(bounds%begc:bounds%endc)
-     real(r8) :: snwliqtot(bounds%begc:bounds%endc)
+     real(r8) :: dztot(1:num_snowc)
+     real(r8) :: snwicetot(1:num_snowc)
+     real(r8) :: snwliqtot(1:num_snowc)
      real(r8) :: offset ! temporary
      real(r8) :: sum1, sum2, sum3 
+     integer :: snl_idx
      !-----------------------------------------------------------------------
 
      associate(                                            &
@@ -1366,11 +1418,29 @@ contains
           zi         => col_pp%zi                           , & ! Output: [real(r8) (:,:) ] interface level below a "z" level (m)
           z          => col_pp%z                              & ! Output: [real(r8) (:,:) ] layer thickness (m)
           )
+     !$acc enter data create(&
+     !$acc dzsno(:,:), &
+     !$acc swice(:,:), &
+     !$acc swliq(:,:), &
+     !$acc tsno(:,:), &
+     !$acc mbc_phi(:,:), &
+     !$acc mbc_pho(:,:), &
+     !$acc moc_phi(:,:), &
+     !$acc moc_pho(:,:), &
+     !$acc mdst1(:,:), &
+     !$acc mdst2(:,:), &
+     !$acc mdst3(:,:), &
+     !$acc mdst4(:,:), &
+     !$acc rds(:,:), &
+     !$acc dztot(:), &
+     !$acc snwicetot(:), &
+     !$acc snwliqtot(:), &
+     !$acc sum1, &
+     !$acc sum2, &
+     !$acc sum3)
 
-      !$acc enter data create(dzsno(:,:),swice(:,:),swliq(:,:),tsno(:,:), &
-      !$acc  mbc_phi(:,:), mbc_pho(:,:),moc_phi(:,:),moc_pho(:,:),& 
-      !$acc  mdst1(:,:),mdst2(:,:),mdst3(:,:),mdst4(:,:),rds(:,:),dztot(:),& 
-      !$acc  snwicetot(:), snwliqtot(:), sum1,sum2,sum3 )
+
+
        if ( is_lake ) then
           ! Initialize for consistency check
          !$acc parallel loop independent gang vector default(present) private(sum1,sum2,sum3)
@@ -1385,9 +1455,9 @@ contains
                    sum3 = sum3 + h2osoi_liq(c,j)
                 end if
              end do
-             dztot(c)    = sum1  
-            snwicetot(c) = sum2 
-            snwliqtot(c) = sum3
+             dztot(fc)    = sum1  
+            snwicetot(fc) = sum2 
+            snwliqtot(fc) = sum3
           end do
        end if
 
@@ -1395,28 +1465,32 @@ contains
        ! for snow-covered columns
 
        !$acc parallel loop independent gang vector default(present) collapse(2) 
+       !!!$acc present(mss_bcphi(:,:),mss_bcpho(:,:),mss_ocphi(:,:),mss_ocpho(:,:) &
+       !!!$acc ,mss_dst1(:,:),mss_dst2(:,:),mss_dst3(:,:),mss_dst4(:,:) ,snw_rds(:,:), &
+       !!!$acc  h2osoi_ice(:,:),h2osoi_liq(:,:), t_soisno(:,:),dz(:,:),snl(:))
        do j = 1,nlevsno
           do fc = 1, num_snowc
              c = filter_snowc(fc)
+             snl_idx = j+snl(c)
              if (j <= abs(snl(c))) then
                 if (is_lake) then
-                   dzsno(c,j) = dz(c,j+snl(c))
+                   dzsno(fc,j) = dz(c,snl_idx)
                 else
-                   dzsno(c,j) = frac_sno(c)*dz(c,j+snl(c))
+                   dzsno(fc,j) = frac_sno(c)*dz(c,snl_idx)
                 end if
-                swice(c,j) = h2osoi_ice(c,j+snl(c))
-                swliq(c,j) = h2osoi_liq(c,j+snl(c))
-                tsno(c,j)  = t_soisno(c,j+snl(c))
+                swice(fc,j) = h2osoi_ice(c,snl_idx)
+                swliq(fc,j) = h2osoi_liq(c,snl_idx)
+                tsno(fc,j)  = t_soisno(c,snl_idx)
 
-                mbc_phi(c,j) = mss_bcphi(c,j+snl(c))
-                mbc_pho(c,j) = mss_bcpho(c,j+snl(c))
-                moc_phi(c,j) = mss_ocphi(c,j+snl(c))
-                moc_pho(c,j) = mss_ocpho(c,j+snl(c))
-                mdst1(c,j)   = mss_dst1(c,j+snl(c))
-                mdst2(c,j)   = mss_dst2(c,j+snl(c))
-                mdst3(c,j)   = mss_dst3(c,j+snl(c))
-                mdst4(c,j)   = mss_dst4(c,j+snl(c))
-                rds(c,j)     = snw_rds(c,j+snl(c))
+                mbc_phi(fc,j) = mss_bcphi(c,snl_idx)
+                mbc_pho(fc,j) = mss_bcpho(c,snl_idx)
+                moc_phi(fc,j) = mss_ocphi(c,snl_idx)
+                moc_pho(fc,j) = mss_ocpho(c,snl_idx)
+                mdst1(fc,j)   = mss_dst1(c,snl_idx)
+                mdst2(fc,j)   = mss_dst2(c,snl_idx)
+                mdst3(fc,j)   = mss_dst3(c,snl_idx)
+                mdst4(fc,j)   = mss_dst4(c,snl_idx)
+                rds(fc,j)     = snw_rds(fc,snl_idx)
              end if
           end do
        end do
@@ -1434,33 +1508,33 @@ contains
               else
                  offset = 0._r8
               end if
-              if (dzsno(c,1) > 0.03_r8 + offset) then
+              if (dzsno(fc,1) > 0.03_r8 + offset) then
                  msno = 2
-                 dzsno(c,1) = dzsno(c,1)/2._r8
-                 swice(c,1) = swice(c,1)/2._r8
-                 swliq(c,1) = swliq(c,1)/2._r8
-                 dzsno(c,2) = dzsno(c,1)
-                 swice(c,2) = swice(c,1)
-                 swliq(c,2) = swliq(c,1)
-                 tsno(c,2)  = tsno(c,1)
+                 dzsno(fc,1) = dzsno(fc,1)/2._r8
+                 swice(fc,1) = swice(fc,1)/2._r8
+                 swliq(fc,1) = swliq(fc,1)/2._r8
+                 dzsno(fc,2) = dzsno(fc,1)
+                 swice(fc,2) = swice(fc,1)
+                 swliq(fc,2) = swliq(fc,1)
+                 tsno(fc,2)  = tsno(fc,1)
 
-                 mbc_phi(c,1) = mbc_phi(c,1)/2._r8
-                 mbc_phi(c,2) = mbc_phi(c,1)
-                 mbc_pho(c,1) = mbc_pho(c,1)/2._r8
-                 mbc_pho(c,2) = mbc_pho(c,1)
-                 moc_phi(c,1) = moc_phi(c,1)/2._r8
-                 moc_phi(c,2) = moc_phi(c,1)
-                 moc_pho(c,1) = moc_pho(c,1)/2._r8
-                 moc_pho(c,2) = moc_pho(c,1)
-                 mdst1(c,1) = mdst1(c,1)/2._r8
-                 mdst1(c,2) = mdst1(c,1)
-                 mdst2(c,1) = mdst2(c,1)/2._r8
-                 mdst2(c,2) = mdst2(c,1)
-                 mdst3(c,1) = mdst3(c,1)/2._r8
-                 mdst3(c,2) = mdst3(c,1)
-                 mdst4(c,1) = mdst4(c,1)/2._r8
-                 mdst4(c,2) = mdst4(c,1)
-                 rds(c,2) = rds(c,1)
+                 mbc_phi(fc,1) = mbc_phi(fc,1)/2._r8
+                 mbc_phi(fc,2) = mbc_phi(fc,1)
+                 mbc_pho(fc,1) = mbc_pho(fc,1)/2._r8
+                 mbc_pho(fc,2) = mbc_pho(fc,1)
+                 moc_phi(fc,1) = moc_phi(fc,1)/2._r8
+                 moc_phi(fc,2) = moc_phi(fc,1)
+                 moc_pho(fc,1) = moc_pho(fc,1)/2._r8
+                 moc_pho(fc,2) = moc_pho(fc,1)
+                 mdst1(fc,1) = mdst1(fc,1)/2._r8
+                 mdst1(fc,2) = mdst1(fc,1)
+                 mdst2(fc,1) = mdst2(fc,1)/2._r8
+                 mdst2(fc,2) = mdst2(fc,1)
+                 mdst3(fc,1) = mdst3(fc,1)/2._r8
+                 mdst3(fc,2) = mdst3(fc,1)
+                 mdst4(fc,1) = mdst4(fc,1)/2._r8
+                 mdst4(fc,2) = mdst4(fc,1)
+                 rds(fc,2) = rds(fc,1)
 
               end if
            end if
@@ -1471,72 +1545,72 @@ contains
               else
                  offset = 0._r8
               end if
-              if (dzsno(c,1) > 0.02_r8 + offset) then
+              if (dzsno(fc,1) > 0.02_r8 + offset) then
                  if (is_lake) then
-                    drr = dzsno(c,1) - 0.02_r8 - lsadz
+                    drr = dzsno(fc,1) - 0.02_r8 - lsadz
                  else
-                    drr = dzsno(c,1) - 0.02_r8
+                    drr = dzsno(fc,1) - 0.02_r8
                  end if
-                 propor = drr/dzsno(c,1)
-                 zwice = propor*swice(c,1)
-                 zwliq = propor*swliq(c,1)
+                 propor = drr/dzsno(fc,1)
+                 zwice = propor*swice(fc,1)
+                 zwliq = propor*swliq(fc,1)
 
-                 zmbc_phi = propor*mbc_phi(c,1)
-                 zmbc_pho = propor*mbc_pho(c,1)
-                 zmoc_phi = propor*moc_phi(c,1)
-                 zmoc_pho = propor*moc_pho(c,1)
-                 zmdst1 = propor*mdst1(c,1)
-                 zmdst2 = propor*mdst2(c,1)
-                 zmdst3 = propor*mdst3(c,1)
-                 zmdst4 = propor*mdst4(c,1)
+                 zmbc_phi = propor*mbc_phi(fc,1)
+                 zmbc_pho = propor*mbc_pho(fc,1)
+                 zmoc_phi = propor*moc_phi(fc,1)
+                 zmoc_pho = propor*moc_pho(fc,1)
+                 zmdst1 = propor*mdst1(fc,1)
+                 zmdst2 = propor*mdst2(fc,1)
+                 zmdst3 = propor*mdst3(fc,1)
+                 zmdst4 = propor*mdst4(fc,1)
 
                  if (is_lake) then
-                    propor = (0.02_r8+lsadz)/dzsno(c,1)
+                    propor = (0.02_r8+lsadz)/dzsno(fc,1)
                  else
-                    propor = 0.02_r8/dzsno(c,1)
+                    propor = 0.02_r8/dzsno(fc,1)
                  endif 
 
-                 swice(c,1) = propor*swice(c,1)
-                 swliq(c,1) = propor*swliq(c,1)
+                 swice(fc,1) = propor*swice(fc,1)
+                 swliq(fc,1) = propor*swliq(fc,1)
 
-                 mbc_phi(c,1) = propor*mbc_phi(c,1)
-                 mbc_pho(c,1) = propor*mbc_pho(c,1)
-                 moc_phi(c,1) = propor*moc_phi(c,1)
-                 moc_pho(c,1) = propor*moc_pho(c,1)
-                 mdst1(c,1) = propor*mdst1(c,1)
-                 mdst2(c,1) = propor*mdst2(c,1)
-                 mdst3(c,1) = propor*mdst3(c,1)
-                 mdst4(c,1) = propor*mdst4(c,1)
+                 mbc_phi(fc,1) = propor*mbc_phi(fc,1)
+                 mbc_pho(fc,1) = propor*mbc_pho(fc,1)
+                 moc_phi(fc,1) = propor*moc_phi(fc,1)
+                 moc_pho(fc,1) = propor*moc_pho(fc,1)
+                 mdst1(fc,1) = propor*mdst1(fc,1)
+                 mdst2(fc,1) = propor*mdst2(fc,1)
+                 mdst3(fc,1) = propor*mdst3(fc,1)
+                 mdst4(fc,1) = propor*mdst4(fc,1)
 
                  if (is_lake) then
-                    dzsno(c,1) = 0.02_r8 + lsadz
+                    dzsno(fc,1) = 0.02_r8 + lsadz
                  else
-                    dzsno(c,1) = 0.02_r8
+                    dzsno(fc,1) = 0.02_r8
                  end if
 
-                 mbc_phi(c,2) = mbc_phi(c,2)+zmbc_phi  ! (combo)
-                 mbc_pho(c,2) = mbc_pho(c,2)+zmbc_pho  ! (combo)
-                 moc_phi(c,2) = moc_phi(c,2)+zmoc_phi  ! (combo)
-                 moc_pho(c,2) = moc_pho(c,2)+zmoc_pho  ! (combo)
-                 mdst1(c,2) = mdst1(c,2)+zmdst1  ! (combo)
-                 mdst2(c,2) = mdst2(c,2)+zmdst2  ! (combo)
-                 mdst3(c,2) = mdst3(c,2)+zmdst3  ! (combo)
-                 mdst4(c,2) = mdst4(c,2)+zmdst4  ! (combo)
+                 mbc_phi(fc,2) = mbc_phi(fc,2)+zmbc_phi  ! (combo)
+                 mbc_pho(fc,2) = mbc_pho(fc,2)+zmbc_pho  ! (combo)
+                 moc_phi(fc,2) = moc_phi(fc,2)+zmoc_phi  ! (combo)
+                 moc_pho(fc,2) = moc_pho(fc,2)+zmoc_pho  ! (combo)
+                 mdst1(fc,2) = mdst1(fc,2)+zmdst1  ! (combo)
+                 mdst2(fc,2) = mdst2(fc,2)+zmdst2  ! (combo)
+                 mdst3(fc,2) = mdst3(fc,2)+zmdst3  ! (combo)
+                 mdst4(fc,2) = mdst4(fc,2)+zmdst4  ! (combo)
 #ifdef MODAL_AER
               !mgf++ bugfix
-              rds(c,2) = (rds(c,2)*(swliq(c,2)+swice(c,2)) + rds(c,1)*(zwliq+zwice))/(swliq(c,2)+swice(c,2)+zwliq+zwice)
-                if ((rds(c,2) < 30.) .or. (rds(c,2) > 1500.)) then
+              rds(fc,2) = (rds(fc,2)*(swliq(fc,2)+swice(fc,2)) + rds(fc,1)*(zwliq+zwice))/(swliq(fc,2)+swice(fc,2)+zwliq+zwice)
+                if ((rds(fc,2) < 30.) .or. (rds(fc,2) > 1500.)) then
                    !#py write (iulog,*) "2. SNICAR ERROR: snow grain radius of",rds(c,2),rds(c,1)
                    !#py write (iulog,*) "swliq, swice, zwliq, zwice", swliq(c,2), swice(c,2),zwliq, zwice
                    !#py write (iulog,*) "layers ", msno
                 endif
               !mgf--
 #else
-              rds(c,2) = rds(c,1) ! (combo)
+              rds(fc,2) = rds(fc,1) ! (combo)
 #endif
 
-                 call Combo (dzsno(c,2), swliq(c,2), swice(c,2), tsno(c,2), drr, &
-                      zwliq, zwice, tsno(c,1))
+                 call Combo (dzsno(fc,2), swliq(fc,2), swice(fc,2), tsno(fc,2), drr, &
+                      zwliq, zwice, tsno(fc,1))
 
                  ! Subdivide a new layer
                  if (is_lake) then
@@ -1544,39 +1618,39 @@ contains
                  else
                     offset = 0._r8
                  end if
-                 if (msno <= 2 .and. dzsno(c,2) > 0.07_r8 + offset) then
+                 if (msno <= 2 .and. dzsno(fc,2) > 0.07_r8 + offset) then
                     msno = 3
-                    dtdz = (tsno(c,1) - tsno(c,2))/((dzsno(c,1)+dzsno(c,2))/2._r8) 
-                    dzsno(c,2) = dzsno(c,2)/2._r8
-                    swice(c,2) = swice(c,2)/2._r8
-                    swliq(c,2) = swliq(c,2)/2._r8
-                    dzsno(c,3) = dzsno(c,2)
-                    swice(c,3) = swice(c,2)
-                    swliq(c,3) = swliq(c,2)
-                    tsno(c,3) = tsno(c,2) - dtdz*dzsno(c,2)/2._r8
-                    if (tsno(c,3) >= tfrz) then 
-                       tsno(c,3)  = tsno(c,2)
+                    dtdz = (tsno(fc,1) - tsno(fc,2))/((dzsno(fc,1)+dzsno(fc,2))/2._r8) 
+                    dzsno(fc,2) = dzsno(fc,2)/2._r8
+                    swice(fc,2) = swice(fc,2)/2._r8
+                    swliq(fc,2) = swliq(fc,2)/2._r8
+                    dzsno(fc,3) = dzsno(fc,2)
+                    swice(fc,3) = swice(fc,2)
+                    swliq(fc,3) = swliq(fc,2)
+                    tsno(fc,3) = tsno(fc,2) - dtdz*dzsno(fc,2)/2._r8
+                    if (tsno(fc,3) >= tfrz) then 
+                       tsno(fc,3)  = tsno(fc,2)
                     else
-                       tsno(c,2) = tsno(c,2) + dtdz*dzsno(c,2)/2._r8 
+                       tsno(fc,2) = tsno(fc,2) + dtdz*dzsno(fc,2)/2._r8 
                     endif
 
-                    mbc_phi(c,2) = mbc_phi(c,2)/2._r8
-                    mbc_phi(c,3) = mbc_phi(c,2)
-                    mbc_pho(c,2) = mbc_pho(c,2)/2._r8
-                    mbc_pho(c,3) = mbc_pho(c,2)
-                    moc_phi(c,2) = moc_phi(c,2)/2._r8
-                    moc_phi(c,3) = moc_phi(c,2)
-                    moc_pho(c,2) = moc_pho(c,2)/2._r8
-                    moc_pho(c,3) = moc_pho(c,2)
-                    mdst1(c,2) = mdst1(c,2)/2._r8
-                    mdst1(c,3) = mdst1(c,2)
-                    mdst2(c,2) = mdst2(c,2)/2._r8
-                    mdst2(c,3) = mdst2(c,2)
-                    mdst3(c,2) = mdst3(c,2)/2._r8
-                    mdst3(c,3) = mdst3(c,2)
-                    mdst4(c,2) = mdst4(c,2)/2._r8
-                    mdst4(c,3) = mdst4(c,2)
-                    rds(c,3) = rds(c,2)
+                    mbc_phi(fc,2) = mbc_phi(fc,2)/2._r8
+                    mbc_phi(fc,3) = mbc_phi(fc,2)
+                    mbc_pho(fc,2) = mbc_pho(fc,2)/2._r8
+                    mbc_pho(fc,3) = mbc_pho(fc,2)
+                    moc_phi(fc,2) = moc_phi(fc,2)/2._r8
+                    moc_phi(fc,3) = moc_phi(fc,2)
+                    moc_pho(fc,2) = moc_pho(fc,2)/2._r8
+                    moc_pho(fc,3) = moc_pho(fc,2)
+                    mdst1(fc,2) = mdst1(fc,2)/2._r8
+                    mdst1(fc,3) = mdst1(fc,2)
+                    mdst2(fc,2) = mdst2(fc,2)/2._r8
+                    mdst2(fc,3) = mdst2(fc,2)
+                    mdst3(fc,2) = mdst3(fc,2)/2._r8
+                    mdst3(fc,3) = mdst3(fc,2)
+                    mdst4(fc,2) = mdst4(fc,2)/2._r8
+                    mdst4(fc,3) = mdst4(fc,2)
+                    rds(fc,3) = rds(fc,2)
 
                  end if
               end if
@@ -1588,60 +1662,60 @@ contains
               else
                  offset = 0._r8
               end if
-              if (dzsno(c,2) > 0.05_r8+offset) then
+              if (dzsno(fc,2) > 0.05_r8+offset) then
                  if (is_lake) then
-                    drr = dzsno(c,2) - 0.05_r8 - lsadz
+                    drr = dzsno(fc,2) - 0.05_r8 - lsadz
                  else
-                    drr = dzsno(c,2) - 0.05_r8
+                    drr = dzsno(fc,2) - 0.05_r8
                  end if
-                 propor = drr/dzsno(c,2)
-                 zwice = propor*swice(c,2)
-                 zwliq = propor*swliq(c,2)
+                 propor = drr/dzsno(fc,2)
+                 zwice = propor*swice(fc,2)
+                 zwliq = propor*swliq(fc,2)
 
-                 zmbc_phi = propor*mbc_phi(c,2)
-                 zmbc_pho = propor*mbc_pho(c,2)
-                 zmoc_phi = propor*moc_phi(c,2)
-                 zmoc_pho = propor*moc_pho(c,2)
-                 zmdst1 = propor*mdst1(c,2)
-                 zmdst2 = propor*mdst2(c,2)
-                 zmdst3 = propor*mdst3(c,2)
-                 zmdst4 = propor*mdst4(c,2)
-
-                 if (is_lake) then
-                    propor = (0.05_r8+lsadz)/dzsno(c,2)
-                 else
-                    propor = 0.05_r8/dzsno(c,2)
-                 end if
-                 swice(c,2) = propor*swice(c,2)
-                 swliq(c,2) = propor*swliq(c,2)
-
-                 mbc_phi(c,2) = propor*mbc_phi(c,2)
-                 mbc_pho(c,2) = propor*mbc_pho(c,2)
-                 moc_phi(c,2) = propor*moc_phi(c,2)
-                 moc_pho(c,2) = propor*moc_pho(c,2)
-                 mdst1(c,2) = propor*mdst1(c,2)
-                 mdst2(c,2) = propor*mdst2(c,2)
-                 mdst3(c,2) = propor*mdst3(c,2)
-                 mdst4(c,2) = propor*mdst4(c,2)
+                 zmbc_phi = propor*mbc_phi(fc,2)
+                 zmbc_pho = propor*mbc_pho(fc,2)
+                 zmoc_phi = propor*moc_phi(fc,2)
+                 zmoc_pho = propor*moc_pho(fc,2)
+                 zmdst1 = propor*mdst1(fc,2)
+                 zmdst2 = propor*mdst2(fc,2)
+                 zmdst3 = propor*mdst3(fc,2)
+                 zmdst4 = propor*mdst4(fc,2)
 
                  if (is_lake) then
-                    dzsno(c,2) = 0.05_r8+lsadz
+                    propor = (0.05_r8+lsadz)/dzsno(fc,2)
                  else
-                    dzsno(c,2) = 0.05_r8
+                    propor = 0.05_r8/dzsno(fc,2)
+                 end if
+                 swice(fc,2) = propor*swice(fc,2)
+                 swliq(fc,2) = propor*swliq(fc,2)
+
+                 mbc_phi(fc,2) = propor*mbc_phi(fc,2)
+                 mbc_pho(fc,2) = propor*mbc_pho(fc,2)
+                 moc_phi(fc,2) = propor*moc_phi(fc,2)
+                 moc_pho(fc,2) = propor*moc_pho(fc,2)
+                 mdst1(fc,2) = propor*mdst1(fc,2)
+                 mdst2(fc,2) = propor*mdst2(fc,2)
+                 mdst3(fc,2) = propor*mdst3(fc,2)
+                 mdst4(fc,2) = propor*mdst4(fc,2)
+
+                 if (is_lake) then
+                    dzsno(fc,2) = 0.05_r8+lsadz
+                 else
+                    dzsno(fc,2) = 0.05_r8
                  end if
 
-                 mbc_phi(c,3) = mbc_phi(c,3)+zmbc_phi  ! (combo)
-                 mbc_pho(c,3) = mbc_pho(c,3)+zmbc_pho  ! (combo)
-                 moc_phi(c,3) = moc_phi(c,3)+zmoc_phi  ! (combo)
-                 moc_pho(c,3) = moc_pho(c,3)+zmoc_pho  ! (combo)
-                 mdst1(c,3) = mdst1(c,3)+zmdst1  ! (combo)
-                 mdst2(c,3) = mdst2(c,3)+zmdst2  ! (combo)
-                 mdst3(c,3) = mdst3(c,3)+zmdst3  ! (combo)
-                 mdst4(c,3) = mdst4(c,3)+zmdst4  ! (combo)
+                 mbc_phi(fc,3) = mbc_phi(fc,3)+zmbc_phi  ! (combo)
+                 mbc_pho(fc,3) = mbc_pho(fc,3)+zmbc_pho  ! (combo)
+                 moc_phi(fc,3) = moc_phi(fc,3)+zmoc_phi  ! (combo)
+                 moc_pho(fc,3) = moc_pho(fc,3)+zmoc_pho  ! (combo)
+                 mdst1(fc,3) = mdst1(fc,3)+zmdst1  ! (combo)
+                 mdst2(fc,3) = mdst2(fc,3)+zmdst2  ! (combo)
+                 mdst3(fc,3) = mdst3(fc,3)+zmdst3  ! (combo)
+                 mdst4(fc,3) = mdst4(fc,3)+zmdst4  ! (combo)
 #ifdef MODAL_AER
               !mgf++ bugfix
-              rds(c,3) = (rds(c,3)*(swliq(c,3)+swice(c,3)) + rds(c,2)*(zwliq+zwice))/(swliq(c,3)+swice(c,3)+zwliq+zwice)
-                if ((rds(c,3) < 30.) .or. (rds(c,3) > 1500.)) then
+              rds(fc,3) = (rds(fc,3)*(swliq(fc,3)+swice(fc,3)) + rds(fc,2)*(zwliq+zwice))/(swliq(fc,3)+swice(fc,3)+zwliq+zwice)
+                if ((rds(fc,3) < 30.) .or. (rds(fc,3) > 1500.)) then
 #ifndef _OPENACC
                    !#py write (iulog,*) "3. SNICAR ERROR: snow grain radius of",rds(c,3),rds(c,2)
                    !#py write (iulog,*) "swliq, swice, zwliq, zwice", swliq(c,3), swice(c,3),zwliq, zwice
@@ -1650,11 +1724,11 @@ contains
                 endif
               !mgf--
 #else
-              rds(c,3) = rds(c,2) ! (combo)
+              rds(fc,3) = rds(fc,2) ! (combo)
 #endif
 
-                 call Combo (dzsno(c,3), swliq(c,3), swice(c,3), tsno(c,3), drr, &
-                      zwliq, zwice, tsno(c,2))
+                 call Combo (dzsno(fc,3), swliq(fc,3), swice(fc,3), tsno(fc,3), drr, &
+                      zwliq, zwice, tsno(fc,2))
 
                  ! Subdivided a new layer
                  if (is_lake) then
@@ -1662,39 +1736,39 @@ contains
                  else
                     offset = 0._r8
                  end if
-                 if (msno <= 3 .and. dzsno(c,3) > 0.18_r8+offset) then
+                 if (msno <= 3 .and. dzsno(fc,3) > 0.18_r8+offset) then
                     msno =  4
-                    dtdz = (tsno(c,2) - tsno(c,3))/((dzsno(c,2)+dzsno(c,3))/2._r8) 
-                    dzsno(c,3) = dzsno(c,3)/2._r8
-                    swice(c,3) = swice(c,3)/2._r8
-                    swliq(c,3) = swliq(c,3)/2._r8
-                    dzsno(c,4) = dzsno(c,3)
-                    swice(c,4) = swice(c,3)
-                    swliq(c,4) = swliq(c,3)
-                    tsno(c,4) = tsno(c,3) - dtdz*dzsno(c,3)/2._r8
-                    if (tsno(c,4) >= tfrz) then 
-                       tsno(c,4)  = tsno(c,3)
+                    dtdz = (tsno(fc,2) - tsno(fc,3))/((dzsno(fc,2)+dzsno(fc,3))/2._r8) 
+                    dzsno(fc,3) = dzsno(fc,3)/2._r8
+                    swice(fc,3) = swice(fc,3)/2._r8
+                    swliq(fc,3) = swliq(fc,3)/2._r8
+                    dzsno(fc,4) = dzsno(fc,3)
+                    swice(fc,4) = swice(fc,3)
+                    swliq(fc,4) = swliq(fc,3)
+                    tsno(fc,4) = tsno(fc,3) - dtdz*dzsno(fc,3)/2._r8
+                    if (tsno(fc,4) >= tfrz) then 
+                       tsno(fc,4)  = tsno(fc,3)
                     else
-                       tsno(c,3) = tsno(c,3) + dtdz*dzsno(c,3)/2._r8 
+                       tsno(fc,3) = tsno(fc,3) + dtdz*dzsno(fc,3)/2._r8 
                     endif
 
-                    mbc_phi(c,3) = mbc_phi(c,3)/2._r8
-                    mbc_phi(c,4) = mbc_phi(c,3)
-                    mbc_pho(c,3) = mbc_pho(c,3)/2._r8
-                    mbc_pho(c,4) = mbc_pho(c,3)
-                    moc_phi(c,3) = moc_phi(c,3)/2._r8
-                    moc_phi(c,4) = moc_phi(c,3)
-                    moc_pho(c,3) = moc_pho(c,3)/2._r8
-                    moc_pho(c,4) = moc_pho(c,3)
-                    mdst1(c,3) = mdst1(c,3)/2._r8
-                    mdst1(c,4) = mdst1(c,3)
-                    mdst2(c,3) = mdst2(c,3)/2._r8
-                    mdst2(c,4) = mdst2(c,3)
-                    mdst3(c,3) = mdst3(c,3)/2._r8
-                    mdst3(c,4) = mdst3(c,3)
-                    mdst4(c,3) = mdst4(c,3)/2._r8
-                    mdst4(c,4) = mdst4(c,3)
-                    rds(c,4) = rds(c,3)
+                    mbc_phi(fc,3) = mbc_phi(fc,3)/2._r8
+                    mbc_phi(fc,4) = mbc_phi(fc,3)
+                    mbc_pho(fc,3) = mbc_pho(fc,3)/2._r8
+                    mbc_pho(fc,4) = mbc_pho(fc,3)
+                    moc_phi(fc,3) = moc_phi(fc,3)/2._r8
+                    moc_phi(fc,4) = moc_phi(fc,3)
+                    moc_pho(fc,3) = moc_pho(fc,3)/2._r8
+                    moc_pho(fc,4) = moc_pho(fc,3)
+                    mdst1(fc,3) = mdst1(fc,3)/2._r8
+                    mdst1(fc,4) = mdst1(fc,3)
+                    mdst2(fc,3) = mdst2(fc,3)/2._r8
+                    mdst2(fc,4) = mdst2(fc,3)
+                    mdst3(fc,3) = mdst3(fc,3)/2._r8
+                    mdst3(fc,4) = mdst3(fc,3)
+                    mdst4(fc,3) = mdst4(fc,3)/2._r8
+                    mdst4(fc,4) = mdst4(fc,3)
+                    rds(fc,4) = rds(fc,3)
 
                  end if
               end if
@@ -1706,71 +1780,71 @@ contains
               else
                  offset = 0._r8
               end if
-              if (dzsno(c,3) > 0.11_r8 + offset) then
+              if (dzsno(fc,3) > 0.11_r8 + offset) then
                  if (is_lake) then
-                    drr = dzsno(c,3) - 0.11_r8 - lsadz
+                    drr = dzsno(fc,3) - 0.11_r8 - lsadz
                  else
-                    drr = dzsno(c,3) - 0.11_r8
+                    drr = dzsno(fc,3) - 0.11_r8
                  end if
-                 propor = drr/dzsno(c,3)
-                 zwice = propor*swice(c,3)
-                 zwliq = propor*swliq(c,3)
+                 propor = drr/dzsno(fc,3)
+                 zwice = propor*swice(fc,3)
+                 zwliq = propor*swliq(fc,3)
 
-                 zmbc_phi = propor*mbc_phi(c,3)
-                 zmbc_pho = propor*mbc_pho(c,3)
-                 zmoc_phi = propor*moc_phi(c,3)
-                 zmoc_pho = propor*moc_pho(c,3)
-                 zmdst1 = propor*mdst1(c,3)
-                 zmdst2 = propor*mdst2(c,3)
-                 zmdst3 = propor*mdst3(c,3)
-                 zmdst4 = propor*mdst4(c,3)
-
-                 if (is_lake) then
-                    propor = (0.11_r8+lsadz)/dzsno(c,3)
-                 else
-                    propor = 0.11_r8/dzsno(c,3)
-                 end if
-                 swice(c,3) = propor*swice(c,3)
-                 swliq(c,3) = propor*swliq(c,3)
-
-                 mbc_phi(c,3) = propor*mbc_phi(c,3)
-                 mbc_pho(c,3) = propor*mbc_pho(c,3)
-                 moc_phi(c,3) = propor*moc_phi(c,3)
-                 moc_pho(c,3) = propor*moc_pho(c,3)
-                 mdst1(c,3) = propor*mdst1(c,3)
-                 mdst2(c,3) = propor*mdst2(c,3)
-                 mdst3(c,3) = propor*mdst3(c,3)
-                 mdst4(c,3) = propor*mdst4(c,3)
+                 zmbc_phi = propor*mbc_phi(fc,3)
+                 zmbc_pho = propor*mbc_pho(fc,3)
+                 zmoc_phi = propor*moc_phi(fc,3)
+                 zmoc_pho = propor*moc_pho(fc,3)
+                 zmdst1 = propor*mdst1(fc,3)
+                 zmdst2 = propor*mdst2(fc,3)
+                 zmdst3 = propor*mdst3(fc,3)
+                 zmdst4 = propor*mdst4(fc,3)
 
                  if (is_lake) then
-                    dzsno(c,3) = 0.11_r8 + lsadz
+                    propor = (0.11_r8+lsadz)/dzsno(fc,3)
                  else
-                    dzsno(c,3) = 0.11_r8
+                    propor = 0.11_r8/dzsno(fc,3)
+                 end if
+                 swice(fc,3) = propor*swice(fc,3)
+                 swliq(fc,3) = propor*swliq(fc,3)
+
+                 mbc_phi(fc,3) = propor*mbc_phi(fc,3)
+                 mbc_pho(fc,3) = propor*mbc_pho(fc,3)
+                 moc_phi(fc,3) = propor*moc_phi(fc,3)
+                 moc_pho(fc,3) = propor*moc_pho(fc,3)
+                 mdst1(fc,3) = propor*mdst1(fc,3)
+                 mdst2(fc,3) = propor*mdst2(fc,3)
+                 mdst3(fc,3) = propor*mdst3(fc,3)
+                 mdst4(fc,3) = propor*mdst4(fc,3)
+
+                 if (is_lake) then
+                    dzsno(fc,3) = 0.11_r8 + lsadz
+                 else
+                    dzsno(fc,3) = 0.11_r8
                  end if
 
-                 mbc_phi(c,4) = mbc_phi(c,4)+zmbc_phi  ! (combo)
-                 mbc_pho(c,4) = mbc_pho(c,4)+zmbc_pho  ! (combo)
-                 moc_phi(c,4) = moc_phi(c,4)+zmoc_phi  ! (combo)
-                 moc_pho(c,4) = moc_pho(c,4)+zmoc_pho  ! (combo)
-                 mdst1(c,4) = mdst1(c,4)+zmdst1  ! (combo)
-                 mdst2(c,4) = mdst2(c,4)+zmdst2  ! (combo)
-                 mdst3(c,4) = mdst3(c,4)+zmdst3  ! (combo)
-                 mdst4(c,4) = mdst4(c,4)+zmdst4  ! (combo)
+                 mbc_phi(fc,4) = mbc_phi(fc,4)+zmbc_phi  ! (combo)
+                 mbc_pho(fc,4) = mbc_pho(fc,4)+zmbc_pho  ! (combo)
+                 moc_phi(fc,4) = moc_phi(fc,4)+zmoc_phi  ! (combo)
+                 moc_pho(fc,4) = moc_pho(fc,4)+zmoc_pho  ! (combo)
+                 mdst1(fc,4) = mdst1(fc,4)+zmdst1  ! (combo)
+                 mdst2(fc,4) = mdst2(fc,4)+zmdst2  ! (combo)
+                 mdst3(fc,4) = mdst3(fc,4)+zmdst3  ! (combo)
+                 mdst4(fc,4) = mdst4(fc,4)+zmdst4  ! (combo)
 #ifdef MODAL_AER
               !mgf++ bugfix
-              rds(c,4) = (rds(c,4)*(swliq(c,4)+swice(c,4)) + rds(c,3)*(zwliq+zwice))/(swliq(c,4)+swice(c,4)+zwliq+zwice)
-                if ((rds(c,4) < 30.) .or. (rds(c,4) > 1500.)) then
+              rds(fc,4) = (rds(fc,4)*(swliq(fc,4)+swice(fc,4)) + rds(fc,3)*(zwliq+zwice))/(swliq(fc,4)+swice(fc,4)+zwliq+zwice)
+                if ((rds(fc,4) < 30.) .or. (rds(fc,4) > 1500.)) then
                    !#py write (iulog,*) "4. SNICAR ERROR: snow grain radius of",rds(c,4),rds(c,3)
                    !#py write (iulog,*) "swliq, swice, zwliq, zwice", swliq(c,4), swice(c,4),zwliq, zwice
                    !#py write (iulog,*) "layers ", msno
                 endif
               !mgf--
 #else
-              rds(c,4) = rds(c,3) ! (combo)
+              rds(fc,4) = rds(fc,3) ! (combo)
 #endif
 
-                 call Combo (dzsno(c,4), swliq(c,4), swice(c,4), tsno(c,4), drr, &
-                      zwliq, zwice, tsno(c,3))
+                 call Combo (dzsno(fc,4), swliq(fc,4), swice(fc,4), tsno(fc,4), drr, &
+                      zwliq, zwice, tsno(fc,3))
 
                  ! Subdivided a new layer
                  if (is_lake) then
@@ -1778,39 +1852,39 @@ contains
                  else
                     offset = 0._r8
                  end if
-                 if (msno <= 4 .and. dzsno(c,4) > 0.41_r8 + offset) then
+                 if (msno <= 4 .and. dzsno(fc,4) > 0.41_r8 + offset) then
                     msno = 5
-                    dtdz = (tsno(c,3) - tsno(c,4))/((dzsno(c,3)+dzsno(c,4))/2._r8) 
-                    dzsno(c,4) = dzsno(c,4)/2._r8
-                    swice(c,4) = swice(c,4)/2._r8
-                    swliq(c,4) = swliq(c,4)/2._r8
-                    dzsno(c,5) = dzsno(c,4)
-                    swice(c,5) = swice(c,4)
-                    swliq(c,5) = swliq(c,4)
-                    tsno(c,5) = tsno(c,4) - dtdz*dzsno(c,4)/2._r8 
-                    if (tsno(c,5) >= tfrz) then 
-                       tsno(c,5)  = tsno(c,4)
+                    dtdz = (tsno(fc,3) - tsno(fc,4))/((dzsno(fc,3)+dzsno(fc,4))/2._r8) 
+                    dzsno(fc,4) = dzsno(fc,4)/2._r8
+                    swice(fc,4) = swice(fc,4)/2._r8
+                    swliq(fc,4) = swliq(fc,4)/2._r8
+                    dzsno(fc,5) = dzsno(fc,4)
+                    swice(fc,5) = swice(fc,4)
+                    swliq(fc,5) = swliq(fc,4)
+                    tsno(fc,5) = tsno(fc,4) - dtdz*dzsno(fc,4)/2._r8 
+                    if (tsno(fc,5) >= tfrz) then 
+                       tsno(fc,5)  = tsno(fc,4)
                     else
-                       tsno(c,4) = tsno(c,4) + dtdz*dzsno(c,4)/2._r8 
+                       tsno(fc,4) = tsno(fc,4) + dtdz*dzsno(fc,4)/2._r8 
                     endif
 
-                    mbc_phi(c,4) = mbc_phi(c,4)/2._r8
-                    mbc_phi(c,5) = mbc_phi(c,4)
-                    mbc_pho(c,4) = mbc_pho(c,4)/2._r8
-                    mbc_pho(c,5) = mbc_pho(c,4)              
-                    moc_phi(c,4) = moc_phi(c,4)/2._r8
-                    moc_phi(c,5) = moc_phi(c,4)
-                    moc_pho(c,4) = moc_pho(c,4)/2._r8
-                    moc_pho(c,5) = moc_pho(c,4)
-                    mdst1(c,4) = mdst1(c,4)/2._r8
-                    mdst1(c,5) = mdst1(c,4)
-                    mdst2(c,4) = mdst2(c,4)/2._r8
-                    mdst2(c,5) = mdst2(c,4)
-                    mdst3(c,4) = mdst3(c,4)/2._r8
-                    mdst3(c,5) = mdst3(c,4)
-                    mdst4(c,4) = mdst4(c,4)/2._r8
-                    mdst4(c,5) = mdst4(c,4)
-                    rds(c,5) = rds(c,4)
+                    mbc_phi(fc,4) = mbc_phi(fc,4)/2._r8
+                    mbc_phi(fc,5) = mbc_phi(fc,4)
+                    mbc_pho(fc,4) = mbc_pho(fc,4)/2._r8
+                    mbc_pho(fc,5) = mbc_pho(fc,4)              
+                    moc_phi(fc,4) = moc_phi(fc,4)/2._r8
+                    moc_phi(fc,5) = moc_phi(fc,4)
+                    moc_pho(fc,4) = moc_pho(fc,4)/2._r8
+                    moc_pho(fc,5) = moc_pho(fc,4)
+                    mdst1(fc,4) = mdst1(fc,4)/2._r8
+                    mdst1(fc,5) = mdst1(fc,4)
+                    mdst2(fc,4) = mdst2(fc,4)/2._r8
+                    mdst2(fc,5) = mdst2(fc,4)
+                    mdst3(fc,4) = mdst3(fc,4)/2._r8
+                    mdst3(fc,5) = mdst3(fc,4)
+                    mdst4(fc,4) = mdst4(fc,4)/2._r8
+                    mdst4(fc,5) = mdst4(fc,4)
+                    rds(fc,5) = rds(fc,4)
 
                  end if
               end if
@@ -1822,71 +1896,71 @@ contains
               else
                  offset = 0._r8
               end if
-              if (dzsno(c,4) > 0.23_r8+offset) then
+              if (dzsno(fc,4) > 0.23_r8+offset) then
                  if (is_lake) then
-                    drr = dzsno(c,4) - 0.23_r8 - lsadz
+                    drr = dzsno(fc,4) - 0.23_r8 - lsadz
                  else
-                    drr = dzsno(c,4) - 0.23_r8
+                    drr = dzsno(fc,4) - 0.23_r8
                  end if
-                 propor = drr/dzsno(c,4)
-                 zwice = propor*swice(c,4)
-                 zwliq = propor*swliq(c,4)
+                 propor = drr/dzsno(fc,4)
+                 zwice = propor*swice(fc,4)
+                 zwliq = propor*swliq(fc,4)
 
-                 zmbc_phi = propor*mbc_phi(c,4)
-                 zmbc_pho = propor*mbc_pho(c,4)
-                 zmoc_phi = propor*moc_phi(c,4)
-                 zmoc_pho = propor*moc_pho(c,4)
-                 zmdst1 = propor*mdst1(c,4)
-                 zmdst2 = propor*mdst2(c,4)
-                 zmdst3 = propor*mdst3(c,4)
-                 zmdst4 = propor*mdst4(c,4)
-
-                 if (is_lake) then
-                    propor = (0.23_r8+lsadz)/dzsno(c,4)
-                 else
-                    propor = 0.23_r8/dzsno(c,4)
-                 end if
-                 swice(c,4) = propor*swice(c,4)
-                 swliq(c,4) = propor*swliq(c,4)
-
-                 mbc_phi(c,4) = propor*mbc_phi(c,4)
-                 mbc_pho(c,4) = propor*mbc_pho(c,4)
-                 moc_phi(c,4) = propor*moc_phi(c,4)
-                 moc_pho(c,4) = propor*moc_pho(c,4)
-                 mdst1(c,4) = propor*mdst1(c,4)
-                 mdst2(c,4) = propor*mdst2(c,4)
-                 mdst3(c,4) = propor*mdst3(c,4)
-                 mdst4(c,4) = propor*mdst4(c,4)
+                 zmbc_phi = propor*mbc_phi(fc,4)
+                 zmbc_pho = propor*mbc_pho(fc,4)
+                 zmoc_phi = propor*moc_phi(fc,4)
+                 zmoc_pho = propor*moc_pho(fc,4)
+                 zmdst1 = propor*mdst1(fc,4)
+                 zmdst2 = propor*mdst2(fc,4)
+                 zmdst3 = propor*mdst3(fc,4)
+                 zmdst4 = propor*mdst4(fc,4)
 
                  if (is_lake) then
-                    dzsno(c,4) = 0.23_r8 + lsadz
+                    propor = (0.23_r8+lsadz)/dzsno(fc,4)
                  else
-                    dzsno(c,4) = 0.23_r8
+                    propor = 0.23_r8/dzsno(fc,4)
+                 end if
+                 swice(fc,4) = propor*swice(fc,4)
+                 swliq(fc,4) = propor*swliq(fc,4)
+
+                 mbc_phi(fc,4) = propor*mbc_phi(fc,4)
+                 mbc_pho(fc,4) = propor*mbc_pho(fc,4)
+                 moc_phi(fc,4) = propor*moc_phi(fc,4)
+                 moc_pho(fc,4) = propor*moc_pho(fc,4)
+                 mdst1(fc,4) = propor*mdst1(fc,4)
+                 mdst2(fc,4) = propor*mdst2(fc,4)
+                 mdst3(fc,4) = propor*mdst3(fc,4)
+                 mdst4(fc,4) = propor*mdst4(fc,4)
+
+                 if (is_lake) then
+                    dzsno(fc,4) = 0.23_r8 + lsadz
+                 else
+                    dzsno(fc,4) = 0.23_r8
                  end if
 
-                 mbc_phi(c,5) = mbc_phi(c,5)+zmbc_phi  ! (combo)
-                 mbc_pho(c,5) = mbc_pho(c,5)+zmbc_pho  ! (combo)
-                 moc_phi(c,5) = moc_phi(c,5)+zmoc_phi  ! (combo)
-                 moc_pho(c,5) = moc_pho(c,5)+zmoc_pho  ! (combo)
-                 mdst1(c,5) = mdst1(c,5)+zmdst1  ! (combo)
-                 mdst2(c,5) = mdst2(c,5)+zmdst2  ! (combo)
-                 mdst3(c,5) = mdst3(c,5)+zmdst3  ! (combo)
-                 mdst4(c,5) = mdst4(c,5)+zmdst4  ! (combo)
+                 mbc_phi(fc,5) = mbc_phi(fc,5)+zmbc_phi  ! (combo)
+                 mbc_pho(fc,5) = mbc_pho(fc,5)+zmbc_pho  ! (combo)
+                 moc_phi(fc,5) = moc_phi(fc,5)+zmoc_phi  ! (combo)
+                 moc_pho(fc,5) = moc_pho(fc,5)+zmoc_pho  ! (combo)
+                 mdst1(fc,5) = mdst1(fc,5)+zmdst1  ! (combo)
+                 mdst2(fc,5) = mdst2(fc,5)+zmdst2  ! (combo)
+                 mdst3(fc,5) = mdst3(fc,5)+zmdst3  ! (combo)
+                 mdst4(fc,5) = mdst4(fc,5)+zmdst4  ! (combo)
 #ifdef MODAL_AER
               !mgf++ bugfix
-              rds(c,5) = (rds(c,5)*(swliq(c,5)+swice(c,5)) + rds(c,4)*(zwliq+zwice))/(swliq(c,5)+swice(c,5)+zwliq+zwice)
-                if ((rds(c,5) < 30.) .or. (rds(c,5) > 1500.)) then
+              rds(fc,5) = (rds(fc,5)*(swliq(fc,5)+swice(fc,5)) + rds(fc,4)*(zwliq+zwice))/(swliq(fc,5)+swice(fc,5)+zwliq+zwice)
+                if ((rds(fc,5) < 30.) .or. (rds(fc,5) > 1500.)) then
                    !#py write (iulog,*) "5. SNICAR ERROR: snow grain radius of",rds(c,5),rds(c,4)
                    !#py write (iulog,*) "swliq, swice, zwliq, zwice", swliq(c,5), swice(c,5),zwliq, zwice
                    !#py write (iulog,*) "layers ", msno
                 endif
               !mgf--
 #else
-              rds(c,5) = rds(c,4) ! (combo)
+              rds(fc,5) = rds(fc,4) ! (combo)
 #endif
 
-                 call Combo (dzsno(c,5), swliq(c,5), swice(c,5), tsno(c,5), drr, &
-                      zwliq, zwice, tsno(c,4))
+                 call Combo (dzsno(fc,5), swliq(fc,5), swice(fc,5), tsno(fc,5), drr, &
+                      zwliq, zwice, tsno(fc,4))
               end if
            end if
 
@@ -1900,22 +1974,22 @@ contains
              c = filter_snowc(fc)
              if (j >= snl(c)+1) then
                 if (is_lake) then
-                   dz(c,j) = dzsno(c,j-snl(c))
+                   dz(c,j) = dzsno(fc,j-snl(c))
                 else
-                   dz(c,j) = dzsno(c,j-snl(c))/frac_sno(c)
+                   dz(c,j) = dzsno(fc,j-snl(c))/frac_sno(c)
                 end if
-                h2osoi_ice(c,j) = swice(c,j-snl(c))
-                h2osoi_liq(c,j) = swliq(c,j-snl(c))
-                t_soisno(c,j)   = tsno(c,j-snl(c))
-                mss_bcphi(c,j)   = mbc_phi(c,j-snl(c))
-                mss_bcpho(c,j)   = mbc_pho(c,j-snl(c))
-                mss_ocphi(c,j)   = moc_phi(c,j-snl(c))
-                mss_ocpho(c,j)   = moc_pho(c,j-snl(c))
-                mss_dst1(c,j)    = mdst1(c,j-snl(c))
-                mss_dst2(c,j)    = mdst2(c,j-snl(c))
-                mss_dst3(c,j)    = mdst3(c,j-snl(c))
-                mss_dst4(c,j)    = mdst4(c,j-snl(c))
-                snw_rds(c,j)     = rds(c,j-snl(c))
+                h2osoi_ice(c,j) = swice(fc,j-snl(c))
+                h2osoi_liq(c,j) = swliq(fc,j-snl(c))
+                t_soisno(c,j)   = tsno(fc,j-snl(c))
+                mss_bcphi(c,j)   = mbc_phi(fc,j-snl(c))
+                mss_bcpho(c,j)   = mbc_pho(fc,j-snl(c))
+                mss_ocphi(c,j)   = moc_phi(fc,j-snl(c))
+                mss_ocpho(c,j)   = moc_pho(fc,j-snl(c))
+                mss_dst1(c,j)    = mdst1(fc,j-snl(c))
+                mss_dst2(c,j)    = mdst2(fc,j-snl(c))
+                mss_dst3(c,j)    = mdst3(fc,j-snl(c))
+                mss_dst4(c,j)    = mdst4(fc,j-snl(c))
+                snw_rds(fc,j)     = rds(fc,j-snl(c))
 
              end if
           end do
@@ -1930,14 +2004,14 @@ contains
             do j = -nlevsno + 1, 0
 
                 if (j >= snl(c)+1) then
-                   dztot(c) = dztot(c) - dz(c,j)
-                   snwicetot(c) = snwicetot(c) - h2osoi_ice(c,j)
-                   snwliqtot(c) = snwliqtot(c) - h2osoi_liq(c,j)
+                   dztot(fc) = dztot(fc) - dz(c,j)
+                   snwicetot(fc) = snwicetot(fc) - h2osoi_ice(c,j)
+                   snwliqtot(fc) = snwliqtot(fc) - h2osoi_liq(c,j)
                 end if
 
                 if (j == 0) then
-                   if ( abs(dztot(c)) > 1.e-10_r8 .or. abs(snwicetot(c)) > 1.e-7_r8 .or. &
-                        abs(snwliqtot(c)) > 1.e-7_r8 ) then
+                   if ( abs(dztot(fc)) > 1.e-10_r8 .or. abs(snwicetot(fc)) > 1.e-7_r8 .or. &
+                        abs(snwliqtot(fc)) > 1.e-7_r8 ) then
                       !#py write(iulog,*)'Inconsistency in SnowDivision_Lake! c, remainders', &
                            !#py 'dztot, snwicetot, snwliqtot = ',c,dztot(c),snwicetot(c),snwliqtot(c)
                       !#py !#py call endrun(decomp_index=c, elmlevel=namec, msg=errmsg(__FILE__, __LINE__))
@@ -1958,10 +2032,27 @@ contains
           end do
        end do
 
-       !$acc exit data delete(dzsno(:,:),swice(:,:),swliq(:,:),tsno(:,:), &
-      !$acc  mbc_phi(:,:), mbc_pho(:,:),moc_phi(:,:),moc_pho(:,:),& 
-      !$acc  mdst1(:,:),mdst2(:,:),mdst3(:,:),mdst4(:,:),rds(:,:),dztot(:),& 
-      !$acc  snwicetot(:), snwliqtot(:), sum1,sum2,sum3 )
+     !$acc exit data delete(&
+     !$acc dzsno(:,:), &
+     !$acc swice(:,:), &
+     !$acc swliq(:,:), &
+     !$acc tsno(:,:), &
+     !$acc mbc_phi(:,:), &
+     !$acc mbc_pho(:,:), &
+     !$acc moc_phi(:,:), &
+     !$acc moc_pho(:,:), &
+     !$acc mdst1(:,:), &
+     !$acc mdst2(:,:), &
+     !$acc mdst3(:,:), &
+     !$acc mdst4(:,:), &
+     !$acc rds(:,:), &
+     !$acc dztot(:), &
+     !$acc snwicetot(:), &
+     !$acc snwliqtot(:), &
+     !$acc sum1, &
+     !$acc sum2, &
+     !$acc sum3)
+
      end associate
 
    end subroutine DivideSnowLayers
@@ -1989,36 +2080,36 @@ contains
      integer  :: j, c, fc, k                              ! indices
      real(r8) :: drr                                      ! thickness of the combined [m]
      integer  :: msno                                     ! number of snow layer 1 (top) to msno (bottom)
-     real(r8) :: dzsno(bounds%begc:bounds%endc,nlevsno)   ! Snow layer thickness [m]
-     real(r8) :: swice(bounds%begc:bounds%endc,nlevsno)   ! Partial volume of ice [m3/m3]
-     real(r8) :: swliq(bounds%begc:bounds%endc,nlevsno)   ! Partial volume of liquid water [m3/m3]
-     real(r8) :: tsno(bounds%begc:bounds%endc ,nlevsno)   ! Nodel temperature [K]
+     real(r8) :: dzsno(1:num_snowc,nlevsno)   ! Snow layer thickness [m]
+     real(r8) :: swice(1:num_snowc,nlevsno)   ! Partial volume of ice [m3/m3]
+     real(r8) :: swliq(1:num_snowc,nlevsno)   ! Partial volume of liquid water [m3/m3]
+     real(r8) :: tsno(1:num_snowc ,nlevsno)   ! Nodel temperature [K]
      real(r8) :: zwice                                    ! temporary
      real(r8) :: zwliq                                    ! temporary
      real(r8) :: propor                                   ! temporary
      real(r8) :: dtdz                                     ! temporary
      ! temporary variables mimicking the structure of other layer division variables
-     real(r8) :: mbc_phi(bounds%begc:bounds%endc,nlevsno) ! mass of BC in each snow layer
+     real(r8) :: mbc_phi(1:num_snowc,nlevsno) ! mass of BC in each snow layer
      real(r8) :: zmbc_phi                                 ! temporary
-     real(r8) :: mbc_pho(bounds%begc:bounds%endc,nlevsno) ! mass of BC in each snow layer
+     real(r8) :: mbc_pho(1:num_snowc,nlevsno) ! mass of BC in each snow layer
      real(r8) :: zmbc_pho                                 ! temporary
-     real(r8) :: moc_phi(bounds%begc:bounds%endc,nlevsno) ! mass of OC in each snow layer
+     real(r8) :: moc_phi(1:num_snowc,nlevsno) ! mass of OC in each snow layer
      real(r8) :: zmoc_phi                                 ! temporary
-     real(r8) :: moc_pho(bounds%begc:bounds%endc,nlevsno) ! mass of OC in each snow layer
+     real(r8) :: moc_pho(1:num_snowc,nlevsno) ! mass of OC in each snow layer
      real(r8) :: zmoc_pho                                 ! temporary
-     real(r8) :: mdst1(bounds%begc:bounds%endc,nlevsno)   ! mass of dust 1 in each snow layer
+     real(r8) :: mdst1(1:num_snowc,nlevsno)   ! mass of dust 1 in each snow layer
      real(r8) :: zmdst1                                   ! temporary
-     real(r8) :: mdst2(bounds%begc:bounds%endc,nlevsno)   ! mass of dust 2 in each snow layer
+     real(r8) :: mdst2(1:num_snowc,nlevsno)   ! mass of dust 2 in each snow layer
      real(r8) :: zmdst2                                   ! temporary
-     real(r8) :: mdst3(bounds%begc:bounds%endc,nlevsno)   ! mass of dust 3 in each snow layer
+     real(r8) :: mdst3(1:num_snowc,nlevsno)   ! mass of dust 3 in each snow layer
      real(r8) :: zmdst3                                   ! temporary
-     real(r8) :: mdst4(bounds%begc:bounds%endc,nlevsno)   ! mass of dust 4 in each snow layer
+     real(r8) :: mdst4(1:num_snowc,nlevsno)   ! mass of dust 4 in each snow layer
      real(r8) :: zmdst4                                   ! temporary
-     real(r8) :: rds(bounds%begc:bounds%endc,nlevsno)
+     real(r8) :: rds(1:num_snowc,nlevsno)
      ! Variables for consistency check
-     real(r8) :: dztot(bounds%begc:bounds%endc)
-     real(r8) :: snwicetot(bounds%begc:bounds%endc)
-     real(r8) :: snwliqtot(bounds%begc:bounds%endc)
+     real(r8) :: dztot(1:num_snowc)
+     real(r8) :: snwicetot(1:num_snowc)
+     real(r8) :: snwliqtot(1:num_snowc)
      real(r8) :: offset ! temporary
      !-----------------------------------------------------------------------
      
@@ -2044,6 +2135,25 @@ contains
           zi         => col_pp%zi                           , & ! Output: [real(r8) (:,:) ] interface level below a "z" level (m)  
           z          => col_pp%z                              & ! Output: [real(r8) (:,:) ] layer thickness (m)                   
           )
+     !$acc enter data create(&
+     !$acc dzsno(:,:), &
+     !$acc swice(:,:), &
+     !$acc swliq(:,:), &
+     !$acc tsno(:,:), &
+     !$acc mbc_phi(:,:), &
+     !$acc mbc_pho(:,:), &
+     !$acc moc_phi(:,:), &
+     !$acc moc_pho(:,:), &
+     !$acc mdst1(:,:), &
+     !$acc mdst2(:,:), &
+     !$acc mdst3(:,:), &
+     !$acc mdst4(:,:), &
+     !$acc rds(:,:), &
+     !$acc dztot(:), &
+     !$acc snwicetot(:), &
+     !$acc snwliqtot(:), &
+     !$acc msno)
+
       
          
 
@@ -2054,15 +2164,15 @@ contains
                 c = filter_snowc(fc)
                 
                 if (j == -nlevsno+1) then
-                   dztot(c) = 0._r8
-                   snwicetot(c) = 0._r8
-                   snwliqtot(c) = 0._r8
+                   dztot(fc) = 0._r8
+                   snwicetot(fc) = 0._r8
+                   snwliqtot(fc) = 0._r8
                 end if
                 
                 if (j >= snl(c)+1) then
-                   dztot(c) = dztot(c) + dz(c,j)
-                   snwicetot(c) = snwicetot(c) + h2osoi_ice(c,j)
-                   snwliqtot(c) = snwliqtot(c) + h2osoi_liq(c,j)
+                   dztot(fc) = dztot(fc) + dz(c,j)
+                   snwicetot(fc) = snwicetot(fc) + h2osoi_ice(c,j)
+                   snwliqtot(fc) = snwliqtot(fc) + h2osoi_liq(c,j)
                 end if
              end do
           end do
@@ -2077,23 +2187,23 @@ contains
              c = filter_snowc(fc)
              if (j <= abs(snl(c))) then
                 if (is_lake) then
-                   dzsno(c,j) = dz(c,j+snl(c))
+                   dzsno(fc,j) = dz(c,j+snl(c))
                 else
-                   dzsno(c,j) = frac_sno(c)*dz(c,j+snl(c))
+                   dzsno(fc,j) = frac_sno(c)*dz(c,j+snl(c))
                 end if
-                swice(c,j) = h2osoi_ice(c,j+snl(c))
-                swliq(c,j) = h2osoi_liq(c,j+snl(c))
-                tsno(c,j)  = t_soisno(c,j+snl(c))
+                swice(fc,j) = h2osoi_ice(c,j+snl(c))
+                swliq(fc,j) = h2osoi_liq(c,j+snl(c))
+                tsno(fc,j)  = t_soisno(c,j+snl(c))
 
-                mbc_phi(c,j) = mss_bcphi(c,j+snl(c))
-                mbc_pho(c,j) = mss_bcpho(c,j+snl(c))
-                moc_phi(c,j) = mss_ocphi(c,j+snl(c))
-                moc_pho(c,j) = mss_ocpho(c,j+snl(c))
-                mdst1(c,j)   = mss_dst1(c,j+snl(c))
-                mdst2(c,j)   = mss_dst2(c,j+snl(c))
-                mdst3(c,j)   = mss_dst3(c,j+snl(c))
-                mdst4(c,j)   = mss_dst4(c,j+snl(c))
-                rds(c,j)     = snw_rds(c,j+snl(c))
+                mbc_phi(fc,j) = mss_bcphi(c,j+snl(c))
+                mbc_pho(fc,j) = mss_bcpho(c,j+snl(c))
+                moc_phi(fc,j) = mss_ocphi(c,j+snl(c))
+                moc_pho(fc,j) = mss_ocpho(c,j+snl(c))
+                mdst1(fc,j)   = mss_dst1(c,j+snl(c))
+                mdst2(fc,j)   = mss_dst2(c,j+snl(c))
+                mdst3(fc,j)   = mss_dst3(c,j+snl(c))
+                mdst4(fc,j)   = mss_dst4(c,j+snl(c))
+                rds(fc,j)     = snw_rds(fc,j+snl(c))
              end if
           end do
        end do
@@ -2120,49 +2230,49 @@ contains
                     offset = 0._r8
                  end if
 
-                 if (dzsno(c,k) > dzmax_l(k) + offset) then
+                 if (dzsno(fc,k) > dzmax_l(k) + offset) then
                     ! Subdivide layer into two layers with equal thickness, water
                     ! content, ice content and temperature
                     msno = msno + 1
-                    dzsno(c,k)     = dzsno(c,k) / 2.0_r8
-                    dzsno(c,k+1)   = dzsno(c,k)
-                    swice(c,k)     = swice(c,k) / 2.0_r8
-                    swice(c,k+1)   = swice(c,k)
-                    swliq(c,k)     = swliq(c,k) / 2.0_r8
-                    swliq(c,k+1)   = swliq(c,k)
+                    dzsno(fc,k)     = dzsno(fc,k) / 2.0_r8
+                    dzsno(fc,k+1)   = dzsno(fc,k)
+                    swice(fc,k)     = swice(fc,k) / 2.0_r8
+                    swice(fc,k+1)   = swice(fc,k)
+                    swliq(fc,k)     = swliq(fc,k) / 2.0_r8
+                    swliq(fc,k+1)   = swliq(fc,k)
 
                     if (k == 1) then
                        ! special case
-                       tsno(c,k+1)    = tsno(c,k)
+                       tsno(fc,k+1)    = tsno(fc,k)
                     else
                        ! use temperature gradient
-                       dtdz           = (tsno(c,k-1) - tsno(c,k))/((dzsno(c,k-1)+2*dzsno(c,k))/2.0_r8)
-                       tsno(c,k+1) = tsno(c,k) - dtdz*dzsno(c,k)/2.0_r8
-                       if (tsno(c,k+1) >= tfrz) then
-                          tsno(c,k+1)  = tsno(c,k)
+                       dtdz           = (tsno(fc,k-1) - tsno(fc,k))/((dzsno(fc,k-1)+2*dzsno(fc,k))/2.0_r8)
+                       tsno(fc,k+1) = tsno(fc,k) - dtdz*dzsno(fc,k)/2.0_r8
+                       if (tsno(fc,k+1) >= tfrz) then
+                          tsno(fc,k+1)  = tsno(fc,k)
                        else
-                          tsno(c,k) = tsno(c,k) + dtdz*dzsno(c,k)/2.0_r8
+                          tsno(fc,k) = tsno(fc,k) + dtdz*dzsno(fc,k)/2.0_r8
                        endif
                     end if
 
-                    mbc_phi(c,k)   = mbc_phi(c,k) / 2.0_r8
-                    mbc_phi(c,k+1) = mbc_phi(c,k)
-                    mbc_pho(c,k)   = mbc_pho(c,k) / 2.0_r8
-                    mbc_pho(c,k+1) = mbc_pho(c,k)
-                    moc_phi(c,k)   = moc_phi(c,k) / 2.0_r8
-                    moc_phi(c,k+1) = moc_phi(c,k)
-                    moc_pho(c,k)   = moc_pho(c,k) / 2.0_r8
-                    moc_pho(c,k+1) = moc_pho(c,k)
-                    mdst1(c,k)     = mdst1(c,k) / 2.0_r8
-                    mdst1(c,k+1)   = mdst1(c,k)
-                    mdst2(c,k)     = mdst2(c,k) / 2.0_r8
-                    mdst2(c,k+1)   = mdst2(c,k)
-                    mdst3(c,k)     = mdst3(c,k) / 2.0_r8
-                    mdst3(c,k+1)   = mdst3(c,k)
-                    mdst4(c,k)     = mdst4(c,k) / 2.0_r8
-                    mdst4(c,k+1)   = mdst4(c,k)
+                    mbc_phi(fc,k)   = mbc_phi(fc,k) / 2.0_r8
+                    mbc_phi(fc,k+1) = mbc_phi(fc,k)
+                    mbc_pho(fc,k)   = mbc_pho(fc,k) / 2.0_r8
+                    mbc_pho(fc,k+1) = mbc_pho(fc,k)
+                    moc_phi(fc,k)   = moc_phi(fc,k) / 2.0_r8
+                    moc_phi(fc,k+1) = moc_phi(fc,k)
+                    moc_pho(fc,k)   = moc_pho(fc,k) / 2.0_r8
+                    moc_pho(fc,k+1) = moc_pho(fc,k)
+                    mdst1(fc,k)     = mdst1(fc,k) / 2.0_r8
+                    mdst1(fc,k+1)   = mdst1(fc,k)
+                    mdst2(fc,k)     = mdst2(fc,k) / 2.0_r8
+                    mdst2(fc,k+1)   = mdst2(fc,k)
+                    mdst3(fc,k)     = mdst3(fc,k) / 2.0_r8
+                    mdst3(fc,k+1)   = mdst3(fc,k)
+                    mdst4(fc,k)     = mdst4(fc,k) / 2.0_r8
+                    mdst4(fc,k+1)   = mdst4(fc,k)
 
-                    rds(c,k+1)     = rds(c,k)
+                    rds(fc,k+1)     = rds(fc,k)
                  end if
               end if
 
@@ -2176,53 +2286,53 @@ contains
                     offset = 0._r8
                  end if
 
-                 if (dzsno(c,k) > dzmax_u(k) + offset ) then
+                 if (dzsno(fc,k) > dzmax_u(k) + offset ) then
                     ! Only dump excess snow to underlying layer in a conservative fashion.
                     ! Other quantities will depend on the height of the excess snow: a ratio is used for this.
-                    drr      = dzsno(c,k) - dzmax_u(k) - offset
+                    drr      = dzsno(fc,k) - dzmax_u(k) - offset
 
-                    propor   = drr/dzsno(c,k)
-                    zwice    = propor*swice(c,k)
-                    zwliq    = propor*swliq(c,k)
-                    zmbc_phi = propor*mbc_phi(c,k)
-                    zmbc_pho = propor*mbc_pho(c,k)
-                    zmoc_phi = propor*moc_phi(c,k)
-                    zmoc_pho = propor*moc_pho(c,k)
-                    zmdst1   = propor*mdst1(c,k)
-                    zmdst2   = propor*mdst2(c,k)
-                    zmdst3   = propor*mdst3(c,k)
-                    zmdst4   = propor*mdst4(c,k)
+                    propor   = drr/dzsno(fc,k)
+                    zwice    = propor*swice(fc,k)
+                    zwliq    = propor*swliq(fc,k)
+                    zmbc_phi = propor*mbc_phi(fc,k)
+                    zmbc_pho = propor*mbc_pho(fc,k)
+                    zmoc_phi = propor*moc_phi(fc,k)
+                    zmoc_pho = propor*moc_pho(fc,k)
+                    zmdst1   = propor*mdst1(fc,k)
+                    zmdst2   = propor*mdst2(fc,k)
+                    zmdst3   = propor*mdst3(fc,k)
+                    zmdst4   = propor*mdst4(fc,k)
 
-                    propor         = (dzmax_u(k)+offset)/dzsno(c,k)
-                    swice(c,k)     = propor*swice(c,k)
-                    swliq(c,k)     = propor*swliq(c,k)
-                    mbc_phi(c,k)   = propor*mbc_phi(c,k)
-                    mbc_pho(c,k)   = propor*mbc_pho(c,k)
-                    moc_phi(c,k)   = propor*moc_phi(c,k)
-                    moc_pho(c,k)   = propor*moc_pho(c,k)
-                    mdst1(c,k)     = propor*mdst1(c,k)
-                    mdst2(c,k)     = propor*mdst2(c,k)
-                    mdst3(c,k)     = propor*mdst3(c,k)
-                    mdst4(c,k)     = propor*mdst4(c,k)
+                    propor         = (dzmax_u(k)+offset)/dzsno(fc,k)
+                    swice(fc,k)     = propor*swice(fc,k)
+                    swliq(fc,k)     = propor*swliq(fc,k)
+                    mbc_phi(fc,k)   = propor*mbc_phi(fc,k)
+                    mbc_pho(fc,k)   = propor*mbc_pho(fc,k)
+                    moc_phi(fc,k)   = propor*moc_phi(fc,k)
+                    moc_pho(fc,k)   = propor*moc_pho(fc,k)
+                    mdst1(fc,k)     = propor*mdst1(fc,k)
+                    mdst2(fc,k)     = propor*mdst2(fc,k)
+                    mdst3(fc,k)     = propor*mdst3(fc,k)
+                    mdst4(fc,k)     = propor*mdst4(fc,k)
 
                     ! Set depth layer k to maximum allowed value
-                    dzsno(c,k)  = dzmax_u(k)  + offset
+                    dzsno(fc,k)  = dzmax_u(k)  + offset
 
-                    mbc_phi(c,k+1) = mbc_phi(c,k+1)+zmbc_phi  ! (combo)
-                    mbc_pho(c,k+1) = mbc_pho(c,k+1)+zmbc_pho  ! (combo)
-                    moc_phi(c,k+1) = moc_phi(c,k+1)+zmoc_phi  ! (combo)
-                    moc_pho(c,k+1) = moc_pho(c,k+1)+zmoc_pho  ! (combo)
-                    mdst1(c,k+1)   = mdst1(c,k+1)+zmdst1  ! (combo)
-                    mdst2(c,k+1)   = mdst2(c,k+1)+zmdst2  ! (combo)
-                    mdst3(c,k+1)   = mdst3(c,k+1)+zmdst3  ! (combo)
-                    mdst4(c,k+1)   = mdst4(c,k+1)+zmdst4  ! (combo)
+                    mbc_phi(fc,k+1) = mbc_phi(fc,k+1)+zmbc_phi  ! (combo)
+                    mbc_pho(fc,k+1) = mbc_pho(fc,k+1)+zmbc_pho  ! (combo)
+                    moc_phi(fc,k+1) = moc_phi(fc,k+1)+zmoc_phi  ! (combo)
+                    moc_pho(fc,k+1) = moc_pho(fc,k+1)+zmoc_pho  ! (combo)
+                    mdst1(fc,k+1)   = mdst1(fc,k+1)+zmdst1  ! (combo)
+                    mdst2(fc,k+1)   = mdst2(fc,k+1)+zmdst2  ! (combo)
+                    mdst3(fc,k+1)   = mdst3(fc,k+1)+zmdst3  ! (combo)
+                    mdst4(fc,k+1)   = mdst4(fc,k+1)+zmdst4  ! (combo)
 
                     ! Mass-weighted combination of radius
-                    rds(c,k+1) = MassWeightedSnowRadius( rds(c,k), rds(c,k+1), &
-                         (swliq(c,k+1)+swice(c,k+1)), (zwliq+zwice) )
+                    rds(fc,k+1) = MassWeightedSnowRadius( rds(fc,k), rds(fc,k+1), &
+                         (swliq(fc,k+1)+swice(fc,k+1)), (zwliq+zwice) )
 
-                    call Combo (dzsno(c,k+1), swliq(c,k+1), swice(c,k+1), tsno(c,k+1), drr, &
-                         zwliq, zwice, tsno(c,k))
+                    call Combo (dzsno(fc,k+1), swliq(fc,k+1), swice(fc,k+1), tsno(fc,k+1), drr, &
+                         zwliq, zwice, tsno(fc,k))
                  end if
               end if
               k = k+1
@@ -2238,22 +2348,22 @@ contains
              c = filter_snowc(fc)
              if (j >= snl(c)+1) then
                 if (is_lake) then
-                   dz(c,j) = dzsno(c,j-snl(c))
+                   dz(c,j) = dzsno(fc,j-snl(c))
                 else
-                   dz(c,j) = dzsno(c,j-snl(c))/frac_sno(c)
+                   dz(c,j) = dzsno(fc,j-snl(c))/frac_sno(c)
                 end if
-                h2osoi_ice(c,j) = swice(c,j-snl(c))
-                h2osoi_liq(c,j) = swliq(c,j-snl(c))
-                t_soisno(c,j)   = tsno(c,j-snl(c))
-                mss_bcphi(c,j)   = mbc_phi(c,j-snl(c))
-                mss_bcpho(c,j)   = mbc_pho(c,j-snl(c))
-                mss_ocphi(c,j)   = moc_phi(c,j-snl(c))
-                mss_ocpho(c,j)   = moc_pho(c,j-snl(c))
-                mss_dst1(c,j)    = mdst1(c,j-snl(c))
-                mss_dst2(c,j)    = mdst2(c,j-snl(c))
-                mss_dst3(c,j)    = mdst3(c,j-snl(c))
-                mss_dst4(c,j)    = mdst4(c,j-snl(c))
-                snw_rds(c,j)     = rds(c,j-snl(c))
+                h2osoi_ice(c,j) = swice(fc,j-snl(c))
+                h2osoi_liq(c,j) = swliq(fc,j-snl(c))
+                t_soisno(c,j)   = tsno(fc,j-snl(c))
+                mss_bcphi(c,j)   = mbc_phi(fc,j-snl(c))
+                mss_bcpho(c,j)   = mbc_pho(fc,j-snl(c))
+                mss_ocphi(c,j)   = moc_phi(fc,j-snl(c))
+                mss_ocpho(c,j)   = moc_pho(fc,j-snl(c))
+                mss_dst1(c,j)    = mdst1(fc,j-snl(c))
+                mss_dst2(c,j)    = mdst2(fc,j-snl(c))
+                mss_dst3(c,j)    = mdst3(fc,j-snl(c))
+                mss_dst4(c,j)    = mdst4(fc,j-snl(c))
+                snw_rds(fc,j)     = rds(fc,j-snl(c))
              end if
           end do
        end do
@@ -2265,17 +2375,17 @@ contains
                 c = filter_snowc(fc)
 
                 if (j >= snl(c)+1) then
-                   dztot(c) = dztot(c) - dz(c,j)
-                   snwicetot(c) = snwicetot(c) - h2osoi_ice(c,j)
-                   snwliqtot(c) = snwliqtot(c) - h2osoi_liq(c,j)
+                   dztot(fc) = dztot(fc) - dz(c,j)
+                   snwicetot(fc) = snwicetot(fc) - h2osoi_ice(c,j)
+                   snwliqtot(fc) = snwliqtot(fc) - h2osoi_liq(c,j)
                 end if
 
                 if (j == 0) then
-                   if ( abs(dztot(c)) > 1.e-10_r8 .or. abs(snwicetot(c)) > 1.e-7_r8 .or. &
-                        abs(snwliqtot(c)) > 1.e-7_r8 ) then
+                   if ( abs(dztot(fc)) > 1.e-10_r8 .or. abs(snwicetot(fc)) > 1.e-7_r8 .or. &
+                        abs(snwliqtot(fc)) > 1.e-7_r8 ) then
 #ifndef _OPENACC
                       !#py write(iulog,*)'Inconsistency in SnowDivision_Lake! c, remainders', &
-                           !#py 'dztot, snwicetot, snwliqtot = ',c,dztot(c),snwicetot(c),snwliqtot(c)
+                           !#py 'dztot, snwicetot, snwliqtot = ',c,dztot(fc),snwicetot(fc),snwliqtot(fc)
                       !#py !#py call endrun(decomp_index=c, elmlevel=namec, msg=errmsg(__FILE__, __LINE__))
 #endif
                    end if
@@ -2294,6 +2404,25 @@ contains
              end if
           end do
        end do
+
+     !$acc exit data delete(&
+     !$acc dzsno(:,:), &
+     !$acc swice(:,:), &
+     !$acc swliq(:,:), &
+     !$acc tsno(:,:), &
+     !$acc mbc_phi(:,:), &
+     !$acc mbc_pho(:,:), &
+     !$acc moc_phi(:,:), &
+     !$acc moc_pho(:,:), &
+     !$acc mdst1(:,:), &
+     !$acc mdst2(:,:), &
+     !$acc mdst3(:,:), &
+     !$acc mdst4(:,:), &
+     !$acc rds(:,:), &
+     !$acc dztot(:), &
+     !$acc snwicetot(:), &
+     !$acc snwliqtot(:), &
+     !$acc msno)
 
      end associate
 
@@ -2493,9 +2622,9 @@ contains
 
            ! Check that water capacity is still positive
            if (h2osoi_ice(c,0) < 0._r8 .or. h2osoi_liq(c,0) < 0._r8 ) then
-              !#py write(iulog,*)'ERROR: capping procedure failed (negative mass remaining) c = ',c
-              !#py write(iulog,*)'h2osoi_ice = ', h2osoi_ice(c,0), ' h2osoi_liq = ', h2osoi_liq(c,0)
-              !#py !#py call endrun(decomp_index=c, elmlevel=namec, msg=errmsg(__FILE__, __LINE__))
+            !  write(iulog,*)'ERROR: capping procedure failed (negative mass remaining) c = ',c
+            !  write(iulog,*)'h2osoi_ice = ', h2osoi_ice(c,0), ' h2osoi_liq = ', h2osoi_liq(c,0)
+            !   call endrun(decomp_index=c, elmlevel=namec, msg=errmsg(__FILE__, __LINE__))
            end if
 
            ! Correct the top layer aerosol mass to account for snow capping.
@@ -2749,29 +2878,38 @@ contains
      !
      ! !LOCAL VARIABLES:
      integer  :: fc, c, fsnow, fnosnow 
+     integer :: snow_tot, nosnow_tot
      !-----------------------------------------------------------------------
 
      ! Build snow/no-snow filters for other subroutines
-     num_snowc = 0
-     num_nosnowc = 0
+     !$acc enter data create(fsnow, fnosnow)
+
+     snow_tot = 0
+     nosnow_tot = 0
      !$acc parallel loop independent gang vector present(filter_snowc(:),filter_nosnowc(:),filter_nolakec(:)) &
-     !$acc private(fsnow,fnosnow) copy(num_snowc,num_nosnowc)
+     !$acc private(fsnow,fnosnow) copy(snow_tot, nosnow_tot)
      do fc = 1, num_nolakec
+      
         c = filter_nolakec(fc)
         if (col_pp%snl(c) < 0) then
-           !$acc atomic capture 
-           num_snowc = num_snowc + 1
-           fsnow = num_snowc 
-           !$acc end atomic 
-           filter_snowc(fsnow) = c
+            !$acc atomic capture 
+            snow_tot = snow_tot + 1
+            fsnow = snow_tot 
+            !$acc end atomic 
+            filter_snowc(fsnow) = c
         else
-           !$acc atomic capture 
-           num_nosnowc = num_nosnowc + 1
-           fnosnow = num_nosnowc 
-           !$acc end atomic 
-           filter_nosnowc(fnosnow) = c
+            !$acc atomic capture 
+            nosnow_tot = nosnow_tot + 1
+            fnosnow = nosnow_tot 
+            !$acc end atomic 
+            filter_nosnowc(fnosnow) = c
         end if
      end do
+
+     num_snowc = snow_tot 
+     num_nosnowc = nosnow_tot
+
+     !$acc exit data delete(fsnow, fnosnow)
 
    end subroutine BuildSnowFilter
 

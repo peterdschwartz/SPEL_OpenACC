@@ -20,11 +20,12 @@ module fileio_mod
                 module procedure fio_read_logical
                 module procedure fio_read_logical_array
                 module procedure fio_read_int_array
-    module procedure fio_read_int_2Darray
+                module procedure fio_read_int_2Darray
                 module procedure fio_read_real8_array
                 module procedure fio_read_real8_2Darray
                 module procedure fio_read_real8_3Darray
                 module procedure fio_read_string_array
+                module procedure fio_read_char
         end interface
 
 contains
@@ -135,7 +136,7 @@ contains
                         read(unit=funit_id(unitid), fmt="(A)", iostat=error) line
                         if (error/=0) then
                                 ! field not found
-                                write(*, "(A)") "not found"
+                                write(*, "(A,A)") "not found", fieldname
                                 error = 2
                                 exit
                         end if
@@ -179,7 +180,7 @@ contains
                         read(unit=funit_id(unitid), fmt="(A)", iostat=error) line
                         if (error/=0) then
                                 ! field not found
-                                write(*, "(A)") "not found"
+                                write(*, "(A,A)") "not found", fieldname
                                 error = 2
                                 exit
                         end if
@@ -222,7 +223,7 @@ contains
       read(unit=funit_id(unitid), fmt="(A)", iostat=error) line
       if (error/=0) then
         ! field not found
-        write(*, "(A)") "not found"
+        write(*, "(A,A)") "not found", fieldname
         error = 2
         exit
       end if
@@ -264,7 +265,7 @@ contains
                         read(unit=funit_id(unitid), fmt="(A)", iostat=error) line
                         if (error/=0) then
                                 ! field not found
-                                write(*, "(A)") "not found"
+                                write(*, "(A,A)") "not found", fieldname
                                 error = 2
                                 exit
                         end if
@@ -307,7 +308,7 @@ contains
                         read(unit=funit_id(unitid), fmt="(A)", iostat=error) line
                         if (error/=0) then
                                 ! field not found
-                                write(*, "(A)") "not found"
+                                write(*, "(A,A)") "not found", fieldname
                                 error = 2
                                 exit
                         end if
@@ -349,7 +350,7 @@ contains
                         read(unit=funit_id(unitid), fmt="(A)", iostat=error) line
                         if (error/=0) then
                                 ! field not found
-                                write(*, "(A)") "not found"
+                                write(*, "(A,A)") "not found", fieldname
                                 error = 2
                                 exit
                         end if
@@ -391,7 +392,7 @@ contains
                         read(unit=funit_id(unitid), fmt="(A)", iostat=error) line
                         if (error/=0) then
                                 ! field not found
-                                write(*, "(A)") "not found"
+                                write(*, "(A,A)") "not found", fieldname
                                 error = 2
                                 exit
                         end if
@@ -433,7 +434,7 @@ contains
                         read(unit=funit_id(unitid), fmt="(A)", iostat=error) line
                         if (error/=0) then
                                 ! field not found
-                                write(*, "(A)") "not found"
+                                write(*, "(A,A)") "not found", fieldname
                                 error = 2
                                 exit
                         end if
@@ -452,6 +453,47 @@ contains
                 end if
 
         end subroutine fio_read_string_array
+        subroutine fio_read_char(unitid, fieldname, vardata, errcode)
+                implicit none
+                ! input
+                integer,                        intent(in)              :: unitid
+                character(len=*),       intent(in)              :: fieldname
+                character(len=*),       intent(inout)   :: vardata
+                integer, optional,      intent(inout)   :: errcode
+
+                ! local var
+                integer                         :: ct
+                integer                         :: error
+                character(len=256)      :: line
+
+            rewind(unit=funit_id(unitid))
+#if defined(DEBUG)
+                write(*, "(A,A)") "fieldname: ", fieldname
+#endif
+                do while(.true.)
+                        read(unit=funit_id(unitid), fmt="(A)", iostat=error) line
+                        if (error/=0) then
+                                ! field not found
+                                write(*, "(A,A)") "not found", fieldname
+                                error = 2
+                                exit
+                        end if
+            ! found
+                        if (line(:) .eq. fieldname) then
+                                read(unit=funit_id(unitid), fmt=*, iostat=error) vardata
+#if defined(DEBUG)
+                                write (*, "((3(2X,A)))") vardata
+#endif
+                                error = 0
+                                exit
+                        end if
+                end do
+                if (present(errcode)) then
+                        errcode = error
+                end if
+
+        end subroutine fio_read_char
+
 
         ! write file
         subroutine fio_write()
@@ -480,7 +522,7 @@ contains
                         read(unit=funit_id(unitid), fmt="(A)", iostat=error) line
                         if (error/=0) then
                                 ! field not found
-                                write(*, "(A)") "not found"
+                                write(*, "(A,A)") "not found", fieldname
                                 error = 2
                                 exit
                         end if
@@ -523,7 +565,7 @@ contains
                         read(unit=funit_id(unitid), fmt="(A)", iostat=error) line
                         if (error/=0) then
                                 ! field not found
-                                write(*, "(A)") "not found"
+                                write(*, "(A,A)") "not found", fieldname
                                 error = 2
                                 exit
                         end if

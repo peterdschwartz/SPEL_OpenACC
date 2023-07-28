@@ -114,6 +114,7 @@ module ColumnDataType
     real(r8), pointer :: h2osfc             (:)   => null() ! surface water (kg/m2)
     real(r8), pointer :: h2ocan             (:)   => null() ! canopy water integrated to column (kg/m2)
     real(r8), pointer :: total_plant_stored_h2o(:)=> null() ! total water in plants (used??)
+    real(r8), pointer :: wslake_col         (:)   => null() ! col lake water storage (mm H2O)
     ! Derived water and ice state variables for soil/snow column, depth varying
     real(r8), pointer :: h2osoi_liqvol      (:,:) => null() ! volumetric liquid water content (-nlevsno+1:nlevgrnd) (m3/m3)
     real(r8), pointer :: h2osoi_icevol      (:,:) => null() ! volumetric ice content (-nlevsno+1:nlevgrnd) (m3/m3)
@@ -1233,6 +1234,7 @@ contains
     allocate(this%h2osoi_vol         (begc:endc, 1:nlevgrnd))         ; this%h2osoi_vol         (:,:) = nan
     allocate(this%h2osfc             (begc:endc))                     ; this%h2osfc             (:)   = nan
     allocate(this%h2ocan             (begc:endc))                     ; this%h2ocan             (:)   = nan
+    allocate(this%wslake_col         (begc:endc))                     ; this%wslake_col         (:)   = nan
     allocate(this%total_plant_stored_h2o(begc:endc))                  ; this%total_plant_stored_h2o(:)= nan
     allocate(this%h2osoi_liqvol      (begc:endc,-nlevsno+1:nlevgrnd)) ; this%h2osoi_liqvol      (:,:) = nan
     allocate(this%h2osoi_icevol      (begc:endc,-nlevsno+1:nlevgrnd)) ; this%h2osoi_icevol      (:,:) = nan
@@ -2754,7 +2756,7 @@ contains
     ! Column-level carbon state summary calculations
     !$acc routine seq
     ! !ARGUMENTS:
-    type(column_carbon_state) :: this
+    type(column_carbon_state), intent(inout) :: this
     type(bounds_type)      , intent(in)    :: bounds
     integer                , intent(in)    :: num_soilc       ! number of soil columns in filter
     integer                , intent(in)    :: filter_soilc(:) ! filter for soil columns
@@ -4700,7 +4702,7 @@ contains
   subroutine col_ps_summary(this, bounds, num_soilc, filter_soilc)
     !$acc routine seq
     ! !ARGUMENTS:
-    type(column_phosphorus_state) :: this
+    type(column_phosphorus_state), intent(inout) :: this
     type(bounds_type) , intent(in)  :: bounds
     integer           , intent(in)  :: num_soilc       ! number of soil columns in filter
     integer           , intent(in)  :: filter_soilc(:) ! filter for soil columns
@@ -6632,7 +6634,7 @@ contains
     !$acc routine seq
     use timeinfoMod , only : dtime_mod
     ! !ARGUMENTS:
-    type(column_carbon_flux)              :: this
+    type(column_carbon_flux), intent(inout) :: this
     type(bounds_type)      , intent(in)    :: bounds
     integer                , intent(in)    :: num_soilc       ! number of soil columns in filter
     integer                , intent(in)    :: filter_soilc(:) ! filter for soil columns
@@ -7043,7 +7045,7 @@ contains
     ! !USES:
     !$acc routine seq
     ! !ARGUMENTS:
-    type(column_carbon_flux)     :: this
+    type(column_carbon_flux),intent(inout)  :: this
     type(bounds_type), intent(in) :: bounds
     integer, intent(in) :: num_soilc
     integer, intent(in) :: filter_soilc(:)

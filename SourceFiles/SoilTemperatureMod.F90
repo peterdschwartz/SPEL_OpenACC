@@ -1,6 +1,6 @@
 module SoilTemperatureMod
 
-!#py #include "shr_assert.h"
+#include "shr_assert.h"
 
   !-----------------------------------------------------------------------
   ! !DESCRIPTION:
@@ -8,10 +8,10 @@ module SoilTemperatureMod
   !
   ! !USES:
   use shr_kind_mod      , only : r8 => shr_kind_r8
-  !#py !#py use shr_log_mod       , only : errMsg => shr_log_errMsg
-  !#py !#py use shr_infnan_mod    , only : nan => shr_infnan_nan
+  use shr_log_mod       , only : errMsg => shr_log_errMsg
+  use shr_infnan_mod    , only : nan => shr_infnan_nan
   use decompMod         , only : bounds_type
-  !#py use abortutils        , only : endrun
+  use abortutils        , only : endrun
   use elm_varctl        , only : iulog
   use elm_varcon        , only : spval
   use UrbanParamsType   , only : urbanparams_type
@@ -30,11 +30,11 @@ module SoilTemperatureMod
   use timeinfoMod
   use perfMod_GPU
   use column_varcon   , only : icol_roof, icol_sunwall, icol_shadewall, icol_road_perv, icol_road_imperv
-
-
-  !#py use ExternalModelConstants   , only : EM_ID_PTM
-  !#py use ExternalModelConstants   , only : EM_PTM_TBASED_SOLVE_STAGE
-  !#py use ExternalModelInterfaceMod, only : EMI_Driver
+  use verificationMod 
+    
+  use ExternalModelConstants   , only : EM_ID_PTM
+  use ExternalModelConstants   , only : EM_PTM_TBASED_SOLVE_STAGE
+  use ExternalModelInterfaceMod, only : EMI_Driver
 
   !! Needed beacuse EMI is still using them as arguments
 !   use WaterstateType    , only : waterstate_type
@@ -191,7 +191,6 @@ contains
     type(canopystate_type) , intent(in)    :: canopystate_vars
     type(soilstate_type)   , intent(inout) :: soilstate_vars
     type(solarabs_type)    , intent(inout) :: solarabs_vars
-    real(r8) :: dtime                                                       ! land model time step (sec)
 
     !
     ! !LOCAL VARIABLES:
@@ -224,6 +223,8 @@ contains
     integer  :: num_filter_lun
     integer :: filter_nolakec_and_nourbanc(1:num_nolakec)
     integer :: filter_nolakec_and_urbanc(1:num_nolakec)
+    integer :: fnlu, fnlnu 
+    integer :: fidx1, fidx2 
     integer, allocatable :: filter_lun(:)
     logical  :: urban_column
     logical  :: update_temperature
@@ -293,21 +294,17 @@ contains
          endc                    =>    bounds%endc                            &
          )
 
-      ! Get step size
-
-      dtime = dtime_mod !get_step_size()
-
       ! Restrict internal building temperature to between min and max
       ! and determine if heating or air conditioning is on
-      !$acc enter data create(cool_on(bounds%begl:bounds%endl), &
-      !$acc    heat_on(bounds%begl:bounds%endl), jbot(begc:endc), &
-      !$acc    fn(bounds%begc:bounds%endc,-nlevsno+1:nlevgrnd), &
-      !$acc    fn1(bounds%begc:bounds%endc,-nlevsno+1:nlevgrnd),&
-      !$acc    hs_top(bounds%begc:bounds%endc),dz_h2osfc(:), &
-      !$acc    dhsdT(bounds%begc:bounds%endc), hs_soil(bounds%begc:bounds%endc),&
-      !$acc    hs_top_snow(bounds%begc:bounds%endc),&
-      !$acc    hs_h2osfc(bounds%begc:bounds%endc),&
-      !$acc    sabg_lyr_col(bounds%begc:bounds%endc,-nlevsno+1:1) )
+      !$acc enter data create(cool_on(:), &
+      !$acc    heat_on(:), jbot(:), &
+      !$acc    fn(:,:), &
+      !$acc    fn1(:,:),&
+      !$acc    hs_top(:),dz_h2osfc(:), &
+      !$acc    dhsdT(:), hs_soil(:),&
+      !$acc    hs_top_snow(:),&
+      !$acc    hs_h2osfc(:),&
+      !$acc    sabg_lyr_col(:,:) )
 
       !$acc parallel loop independent gang vector default(present) 
       do fl = 1,num_urbanl
@@ -353,29 +350,30 @@ contains
       
       num_nolakec_and_nourbanc = 0
       num_nolakec_and_urbanc   = 0
-
-      !$acc parallel loop independent gang vector default(present) private(fl,c,l) &
-      !$acc copy(num_nolakec_and_nourbanc, num_nolakec_and_urbanc) &
-      !$acc present(filter_nolakec_and_nourbanc(:), filter_nolakec_and_urbanc(:))
+      fnlu = 0 
+      fnlnu = 0 
+      !$acc parallel loop independent gang vector default(present) private(fidx1,fidx2,c,l) copy(fnlu,fnlnu) &
+      !$acc present(filter_nolakec_and_nourbanc(:), filter_nolakec_and_urbanc(:))  
       do fc = 1,num_nolakec
          c = filter_nolakec(fc)
          l = col_pp%landunit(c)
          if (lun_pp%urbpoi(l)) then
             !$acc atomic capture 
-            num_nolakec_and_urbanc = num_nolakec_and_urbanc + 1
-            fl = num_nolakec_and_urbanc
+            fnlu = fnlu + 1
+            fidx1 = fnlu
             !$acc end atomic 
-            filter_nolakec_and_urbanc(fl) = c
+            filter_nolakec_and_urbanc(fidx1) = c
          else
             !$acc atomic capture
-            num_nolakec_and_nourbanc = num_nolakec_and_nourbanc + 1
-            fl = num_nolakec_and_nourbanc
+            fnlnu = fnlnu + 1
+            fidx2 = fnlnu
             !$acc end atomic 
-            filter_nolakec_and_nourbanc(fl) = c
+            filter_nolakec_and_nourbanc(fidx2) = c
          endif
       end do
+      num_nolakec_and_urbanc = fnlu 
+      num_nolakec_and_nourbanc = fnlnu
       print *, "Filter sizes for nolakec_and_** are ", num_nolakec_and_urbanc,num_nolakec_and_nourbanc
-
 
       num_filter_lun = bounds%endl - bounds%begl + 1
       allocate(filter_lun(num_filter_lun))
@@ -400,7 +398,7 @@ contains
            tk_h2osfc(begc:endc), &
            urbanparams_vars, soilstate_vars)
       call cpu_time(stopt)
-      !#py write(iulog,*) "SoilTemp:: SoilThermProp ",(stopt-startt)*1.E+3,"ms"  
+      write(iulog,*) "SoilTemp:: SoilThermProp ",(stopt-startt)*1.E+3,"ms"  
       ! Net ground heat flux into the surface and its temperature derivative
       ! Added a patches loop here to get the average of hs and dhsdT over
       ! all Patches on the column. Precalculate the terms that do not depend on PFT.
@@ -416,14 +414,14 @@ contains
            urbanparams_vars, canopystate_vars, &
            solarabs_vars)
       call cpu_time(stopt) 
-      !#py write(iulog,*) "SoilTemp::ComputeGroundHeatFluxAndDeriv ", (stopt-startt)*1.E+3,"ms"
+      write(iulog,*) "SoilTemp::ComputeGroundHeatFluxAndDeriv ", (stopt-startt)*1.E+3,"ms"
 
       ! Determine heat diffusion through the layer interface and factor used in computing
       ! banded diagonal matrix and set up vector r and vectors a, b, c that define banded
       ! diagonal matrix and solve system
 
       call ComputeHeatDiffFluxAndFactor(bounds, num_nolakec, filter_nolakec, &
-           dtime,                                                            &
+           dtime_mod,                                                            &
            tk( begc:endc, -nlevsno+1: ),                                     &
            cv( 1:num_nolakec, -nlevsno+1: ),                                 &
            fn( begc:endc, -nlevsno+1: ),                                     &
@@ -485,13 +483,12 @@ contains
       update_temperature = .true.
       select case(thermal_model)
       case (default_thermal_model)
-          print *, "SolveTemperature:: num_nolakec_and_nourbanc"
-         call cpu_time(startt) 
+         !call cpu_time(startt) 
          urban_column = .false.
          call SolveTemperature(bounds,                &
               num_nolakec_and_nourbanc,               &
               filter_nolakec_and_nourbanc,            &
-              dtime,                                  &
+              dtime_mod,                                  &
               hs_h2osfc( begc:endc ),                 &
               hs_top_snow( begc:endc ),               &
               hs_soil( begc:endc ),                   &
@@ -508,8 +505,8 @@ contains
               jbot( begc:endc ),                      &
               urban_column,                           &
               tvector_nourbanc( begc:endc, -nlevsno: ))
-         call cpu_time(stopt) 
-         !#py write(iulog,*) "SoilTemp::SolveTemp NonUrban ",(stopt-startt)*1.e+3,"ms"
+         !call cpu_time(stopt) 
+         !write(iulog,*) "SoilTemp::SolveTemp NonUrban ",(stopt-startt)*1.e+3,"ms"
       case (petsc_thermal_model)
 #ifdef USE_PETSC_LIB
          update_temperature = .false.
@@ -522,17 +519,17 @@ contains
              hs_top_snow( begc:endc ),              &
              hs_h2osfc( begc:endc ) )
 
-        !#py call EMI_Driver(EM_ID_PTM,                                      &
-             !#py EM_PTM_TBASED_SOLVE_STAGE,                                 &
-              !#py dt = dtime,                               &
-              !#py clump_rank  = bounds%clump_index,                          &
-              !#py num_nolakec_and_nourbanc = num_nolakec_and_nourbanc,       &
-              !#py filter_nolakec_and_nourbanc = filter_nolakec_and_nourbanc, &
-              !#py num_filter_lun = num_filter_lun,                           &
-              !#py filter_lun = filter_lun,                                   &
-              !#py waterstate_vars = waterstate_vars,                         &
-              !#py energyflux_vars = energyflux_vars,                         &
-              !#py temperature_vars = temperature_vars)
+        call EMI_Driver(EM_ID_PTM,                                      &
+             EM_PTM_TBASED_SOLVE_STAGE,                                 &
+              dt = dtime_mod,                               &
+              clump_rank  = bounds%clump_index,                          &
+              num_nolakec_and_nourbanc = num_nolakec_and_nourbanc,       &
+              filter_nolakec_and_nourbanc = filter_nolakec_and_nourbanc, &
+              num_filter_lun = num_filter_lun,                           &
+              filter_lun = filter_lun,                                   &
+              waterstate_vars = waterstate_vars,                         &
+              energyflux_vars = energyflux_vars,                         &
+              temperature_vars = temperature_vars)
 #endif
       end select
 
@@ -540,12 +537,12 @@ contains
       ! Solve temperature for lake + urban column
       !
       print *, "SolveTemperature::with urban columns"
-      call cpu_time(startt) 
+      !call cpu_time(startt) 
       urban_column = .true.
       call SolveTemperature(bounds,                &
            num_nolakec_and_urbanc,                 &
            filter_nolakec_and_urbanc,              &
-           dtime,                                  &
+           dtime_mod,                              &
            hs_h2osfc( begc:endc ),                 &
            hs_top_snow( begc:endc ),               &
            hs_soil( begc:endc ),                   &
@@ -558,13 +555,13 @@ contains
            fn( begc:endc, -nlevsno+1: ),           &
            c_h2osfc( begc:endc ),                  &
            dz_h2osfc( begc:endc ),                 &
-           snl( begc:endc ),                      &
+           snl( begc:endc ),                       &
            jbot( begc:endc ),                      &
            urban_column,                           &
            tvector_urbanc( begc:endc, -nlevsno: ))
 
-      call cpu_time(stopt) 
-      !#py write(iulog,*) "SoilTemp::SolveTemp Urban ",(stopt-startt)*1.e+3,"ms"
+      !call cpu_time(stopt) 
+      !write(iulog,*) "SoilTemp::SolveTemp Urban ",(stopt-startt)*1.e+3,"ms"
 
       ! return temperatures to original array
 
@@ -573,8 +570,8 @@ contains
       do fc = 1,num_nolakec
          c = filter_nolakec(fc)
          l = col_pp%landunit(c)
-
          if (lun_pp%urbpoi(l)) then
+            !$acc loop seq 
             do j = snl(c)+1, 0
                t_soisno(c,j)       = tvector_urbanc(c,j-1)        !snow layers
             end do
@@ -585,10 +582,9 @@ contains
             else
                t_h2osfc(c)         = tvector_urbanc(c,0)          !surface water
             endif
-
          else
-
             if (.true.) then !update_temperature) then
+               !$acc loop seq 
                do j = snl(c)+1, 0
                   t_soisno(c,j)       = tvector_nourbanc(c,j-1)        !snow layers
                end do
@@ -600,9 +596,7 @@ contains
                   t_h2osfc(c)         = tvector_nourbanc(c,0)          !surface water
                endif
             endif
-
          endif
-
       enddo
 
       ! Melting or Freezing
@@ -662,20 +656,20 @@ contains
       end do
 
       call cpu_time(stopt) 
-      !#py write(iulog,*) "SoilTemp::PrePhaseChange"
+      write(iulog,*) "SoilTemp::PrePhaseChange", (stopt-startt)*1.E+3,"ms" 
+      
+      call cpu_time(startt) 
       ! compute phase change of h2osfc
-
-      ! do fc = 1,num_nolakec
-      !    c = filter_nolakec(fc)
-      !    xmf_h2osfc(c) = 0.
-      ! end do
-
       call PhaseChangeH2osfc (bounds, num_nolakec, filter_nolakec, &
-           dhsdT(bounds%begc:bounds%endc),dtime )
+           dhsdT(bounds%begc:bounds%endc),dtime_mod )
 
       call Phasechange_beta (bounds, num_nolakec, filter_nolakec, &
-           dhsdT(bounds%begc:bounds%endc), soilstate_vars, dtime)
+           dhsdT(bounds%begc:bounds%endc), soilstate_vars, dtime_mod)
+      call cpu_time(stopt) 
 
+      write(iulog,*) "SoilTemp::PhaseChange", (stopt-startt)*1.E+3,"ms"  
+      
+      call cpu_time(startt) 
       !$acc parallel loop independent gang vector default(present)
       do fc = 1,num_nolakec
          c = filter_nolakec(fc)
@@ -689,7 +683,6 @@ contains
                t_grnd(c) = frac_sno_eff(c) * t_soisno(c,snl(c)+1) &
                     + (1.0_r8 - frac_sno_eff(c)) * t_soisno(c,1)
             end if
-
          else
             if(frac_h2osfc(c) /= 0._r8) then
                t_grnd(c) = (1._r8 - frac_h2osfc(c)) * t_soisno(c,1) + frac_h2osfc(c) * t_h2osfc(c)
@@ -723,22 +716,9 @@ contains
                eflx_fgr12(c) = -cnfac*fn(c,1) - (1._r8-cnfac)*fn1(c,1)
             end if
             if (j > 0 .and. j < nlevgrnd .and. (lun_pp%itype(l) == istsoil .or. lun_pp%itype(l) == istcrop)) then
-               eflx_fgr(c,j) = -cnfac*fn(c,j) - (1._r8-cnfac)*fn1(c,j)
+                eflx_fgr(c,j) = -cnfac*fn(c,j) - (1._r8-cnfac)*fn1(c,j)
             else if (j == nlevgrnd .and. (lun_pp%itype(l) == istsoil .or. lun_pp%itype(l) == istcrop)) then
                eflx_fgr(c,j) = 0._r8
-            end if
-
-            if (.not. lun_pp%urbpoi(l)) then
-               if (j >= snl(c)+1) then
-                  !$acc atomic update 
-                  hc_soisno(c) = hc_soisno(c) + cv(fc,j)*t_soisno(c,j) / 1.e6_r8
-                  !$acc end atomic 
-               endif
-               if (j >= 1) then
-                  !$acc atomic update 
-                  hc_soi(c) = hc_soi(c) + cv(fc,j)*t_soisno(c,j) / 1.e6_r8
-                  !$acc end atomic 
-               end if
             end if
          end do
       end do
@@ -763,20 +743,18 @@ contains
          end if
       end do
       ! Free up memory
-      !$acc exit data delete(cool_on(:),heat_on(:), jbot(:), num_nolakec_and_nourbanc, &
-      !$acc    num_nolakec_and_urbanc, filter_nolakec_and_nourbanc(:), filter_nolakec_and_urbanc(:), &
-      !$acc    filter_lun(:), tk(:,:), cv(:,:),tk_h2osfc(:), &
+      !$acc exit data delete(cool_on(:),heat_on(:), jbot(:), &
+      !$acc    filter_nolakec_and_nourbanc(:), filter_nolakec_and_urbanc(:), &
+      !$acc    filter_lun(:), tk(:,:), cv(:,:), tk_h2osfc(:), &
       !$acc    tvector_nourbanc(:,:), tvector_urbanc(:,:), fn(:,:), fn1(:,:), hs_top(:),dz_h2osfc(:), &
-      !$acc    dhsdT(:), hs_soil(:), hs_top_snow(:), hs_h2osfc(:),sabg_lyr_col(bounds%begc:bounds%endc,-nlevsno+1:1) )
-      ! deallocate(filter_nolakec_and_nourbanc)
-      ! deallocate(filter_nolakec_and_urbanc  )
-      deallocate(filter_lun                 )
-      
-
+      !$acc    dhsdT(:), hs_soil(:), hs_top_snow(:), hs_h2osfc(:),sabg_lyr_col(:,:) )
+  
+      deallocate(filter_lun )
+      call cpu_time(stopt) 
+      write(iulog,*), "SoilTemp::End",(stopt-startt)*1.E+3,"ms" 
     end associate
 
   end subroutine SoilTemperature
-
 
   !-----------------------------------------------------------------------
 
@@ -794,7 +772,7 @@ contains
     use elm_varcon       , only : cnfac, cpice, cpliq, denh2o
     use landunit_varcon  , only : istice, istice_mec, istsoil, istcrop
     use landunit_varcon  , only : istwet, istsoil
-    use BandDiagonalMod  , only : BandDiagonal, BandDiagonal_noloop
+    use BandDiagonalMod  , only : BandDiagonal
     !
     ! !ARGUMENTS:
     implicit none
@@ -858,10 +836,9 @@ contains
          rvector( begc:endc, -nlevsno: ))
       
       call cpu_time(stopt) 
-    !#py write(iulog, *) "SoilTemp::SetRHSVec ",(stopt-startt)*1.E+3,"ms"
+    write(iulog, *) "SoilTemp::SetRHSVec ",(stopt-startt)*1.E+3,"ms"
     ! Set up the banded diagonal matrix
-    
-    call cpu_time(startt) 
+     call cpu_time(startt)  
     call SetMatrix(bounds, num_filter, filter,   &
          dtime,                                  &
          nband,                                  &
@@ -873,49 +850,20 @@ contains
          dz_h2osfc( begc:endc ),                 &
          urban_column,                           &
          bmatrix( begc:endc, 1:, -nlevsno: ))
-     
-    call cpu_time(stopt) 
-    !#py write(iulog,*) "SoilTemp::SetMatrix ",(stopt-startt)*1.E+3,"ms"
-
+     call cpu_time(stopt) 
+    write(iulog,*) "SoilTemp::SetMatrix ",(stopt-startt)*1.E+3,"ms"  
     ! Solve the system
     event = 'SoilTempBandDiag'
     call t_start_lnd(event)
-    print *, "Printing Arguments for BandDiagonal_noloop "
-    !$acc parallel loop gang vector num_gangs(1) vector_length(1) default(present) 
-    do fc = 1, num_filter 
-        c = filter(fc) 
-        print *, "jtop,jbot:",jtop(c), jbot(c) 
-        !print *, "bmatrix"
-        !do j = 1, nband
-        !    do l = -nlevsno, ubound(bmatrix,3)  
-        !      print *,c,j,l, bmatrix(c,j,l) 
-        !    end do 
-        !end do 
-        print *, " rvector ====================="
-        do l = -nlevsno, ubound(rvector,2) 
-            print *,c,l, rvector(c,l)
-        end do  
-        print *, "\n tvector ========================="
-        do l = -nlevsno, ubound(tvector,2) 
-            print *, c,l,tvector(c,l) 
-        end do 
-    end do 
-    stop 
+    call cpu_time(startt) 
+    call BandDiagonal(bounds, -nlevsno, nlevgrnd, jtop(begc:endc), jbot(begc:endc), &
+         num_filter, filter, bmatrix(begc:endc, :, :), &
+         rvector(begc:endc, :), tvector(begc:endc, :))
+    call cpu_time(stopt) 
+    write(iulog,*) "SoilTemp::BandDiagonal ",(stopt-startt)*1.E+3,"ms"  
 
-    !$acc parallel loop independent gang vector default(present) private(c)
-    do fc = 1, num_filter
-      c = filter(fc)
-      call BandDiagonal_noloop(c, -nlevsno, nlevgrnd, jtop(c), jbot(c), &
-         nband, bmatrix(c, :, :), rvector(c, :), tvector(c, :))
-
-    end do 
-   !  call BandDiagonal(bounds, -nlevsno, nlevgrnd, jtop(begc:endc), jbot(begc:endc), &
-   !       num_filter, filter, nband, bmatrix(begc:endc, :, :), &
-   !       rvector(begc:endc, :), tvector(begc:endc, :))
     call t_stop_lnd(event)
-    
     !$acc exit data delete(rvector(:,:), bmatrix(:,:,:) )
-   
   end associate
 
   end subroutine SolveTemperature
@@ -1140,7 +1088,7 @@ contains
       end do
 
       ! Snow heat capacity
-
+      !$acc parallel loop independent gang vector collapse(2) default(present) 
       do j = -nlevsno+1,0
          do fc = 1,num_nolakec
             c = filter_nolakec(fc)
@@ -1450,9 +1398,9 @@ contains
          )
 
       ! Initialization
-      !$acc enter data create(supercool(:,:), tinc(1:num_nolakec,-nlevsno+1:nlevgrnd),sum1,sum2) 
+      !$acc enter data create(supercool(:,:), tinc(:,:),sum1,sum2) 
 
-      !$acc parallel loop independent gang vector default(present)  
+      !$acc parallel loop independent gang vector default(present) present(xmf(:))  
       do fc = 1,num_nolakec
          c = filter_nolakec(fc)
          l = col_pp%landunit(c)
@@ -1463,20 +1411,21 @@ contains
          qflx_glcice_melt(c) = 0._r8
          qflx_snow_melt(c) = 0._r8
       end do
-
-      ! do j = -nlevsno+1,nlevgrnd       ! all layers
-      !    do fc = 1,num_nolakec
-      !       c = filter_nolakec(fc)
-      !       if (j >= snl(c)+1) then
-
-      !          ! Initialization
-      !          ! hm(c,j) = 0._r8
-      !          ! xm(c,j) = 0._r8
-      !          ! wice0(c,j) = h2osoi_ice(c,j)
-      !          ! wmass0(c,j) = h2osoi_ice(c,j) + h2osoi_liq(c,j)
-      !       endif   ! end of snow layer if-block
-      !    end do   ! end of column-loop
-      ! enddo   ! end of level-loop
+      
+      !$acc parallel loop independent gang vector collapse(2) default(present) 
+      do j = -nlevsno+1,nlevgrnd       ! all layers
+         do fc = 1,num_nolakec
+            c = filter_nolakec(fc)
+            if (j >= snl(c)+1) then
+               imelt(c,j) = 0
+               ! Initialization
+               ! hm(c,j) = 0._r8
+               ! xm(c,j) = 0._r8
+               ! wice0(c,j) = h2osoi_ice(c,j)
+               ! wmass0(c,j) = h2osoi_ice(c,j) + h2osoi_liq(c,j)
+            endif   ! end of snow layer if-block
+         end do   ! end of column-loop
+      enddo   ! end of level-loop
 
       !--  snow layers  ---------------------------------------------------
       !$acc parallel loop independent collapse(2) gang vector default(present) 
@@ -1486,8 +1435,6 @@ contains
             qflx_snofrz_lyr(c,j) = 0._r8
 
             if (j >= snl(c)+1) then
-               imelt(c,j) = 0
-
                ! Melting identification
                ! If ice exists above melt point, melt some to liquid.
                if (h2osoi_ice(c,j) > 0._r8 .AND. t_soisno(c,j) > tfrz) then
@@ -1558,9 +1505,8 @@ contains
 
          end do
       enddo
-      print *, "hfus, wice0, h2osoi_ice"
-      !$acc parallel loop independent gang vector collapse(2) default(present) &
-      !$acc present(tinc(:,:)) private(hm, xm, wmass0,c, temp1,heatr) num_gangs(1) vector_length(1) 
+
+      !$acc parallel loop independent gang vector collapse(2) default(present)  present(tinc(:,:), xmf(:) ) 
       do j = -nlevsno+1,nlevgrnd       ! all layers
          do fc = 1,num_nolakec
             c = filter_nolakec(fc)
@@ -1690,15 +1636,14 @@ contains
                      ! else
                      !    xmf(c) = xmf(c) + hfus*(wice0 - h2osoi_ice(c,j))/dtime
                      ! endif
-                     print *, hfus, wice0,h2osoi_ice(c,j)
-                     !$acc atomic update 
+                     !!$acc atomic update 
                      xmf(c) = xmf(c) + hfus*(wice0 - h2osoi_ice(c,j))/dtime
-                     !$acc end atomic 
+                     !!!$acc end atomic 
 
                      if (imelt(c,j) == 1 .AND. j < 1) then
-                        !$acc atomic update 
+                        !!!$acc atomic update 
                         qflx_snomelt(c) = qflx_snomelt(c) + max(0._r8,(wice0 - h2osoi_ice(c,j)))/dtime
-                        !$acc end atomic 
+                        !!!$acc end atomic 
                      endif
 
                      ! layer freezing mass flux (positive):
@@ -1719,8 +1664,8 @@ contains
       ! as computed in HydrologyDrainageMod.F90.
       !$acc parallel loop independent gang worker default(present) private(sum1,sum2)
       do fc = 1,num_nolakec
-         l = col_pp%landunit(c)
          c = filter_nolakec(fc)
+         l = col_pp%landunit(c)
          sum1 = 0.0_r8 
          sum2 = 0.0_r8
          !$acc loop vector reduction(+:sum1,sum2)
@@ -1908,7 +1853,7 @@ contains
             l = veg_pp%landunit(p)
             t = veg_pp%topounit(p)
             g = veg_pp%gridcell(p)
-
+            
             if (veg_pp%active(p)) then
                if (.not. lun_pp%urbpoi(l)) then
                   eflx_gnet(p) = sabg(p) + dlrad(p) &
@@ -2174,16 +2119,12 @@ contains
     real(r8) , intent(in)  :: c_h2osfc( bounds%begc: )                   ! heat capacity of surface water [col]
     real(r8) , intent(in)  :: dz_h2osfc( bounds%begc: )                  ! Thickness of standing water [m]
     real(r8) , intent(out) :: rvector( bounds%begc: , -nlevsno: )        ! RHS vector used in numerical solution of temperature
-    logical                , intent(in)  :: urban_column                 ! Is true if solving temperature for urban column, otherwise false
+    logical  , intent(in)  :: urban_column                 ! Is true if solving temperature for urban column, otherwise false
     !
     ! !LOCAL VARIABLES:
     integer  :: j,c                                                     ! indices
     integer  :: fc                                                      ! lake filtered column indices
-   !  real(r8) :: rt (bounds%begc:bounds%endc,-nlevsno+1:nlevgrnd)        ! "r" vector for tridiagonal solution
     real(r8) :: fn_h2osfc(num_filter)                      ! heat diffusion through standing-water/soil interface [W/m2]
-   !  real(r8) :: rt_snow(bounds%begc:bounds%endc,-nlevsno:-1)            ! RHS vector corresponding to snow layers
-   !  real(r8) :: rt_ssw(bounds%begc:bounds%endc,1)                       ! RHS vector corresponding to standing surface water
-   !  real(r8) :: rt_soil(bounds%begc:bounds%endc,1:nlevgrnd)             ! RHS vector corresponding to soil layer
     !-----------------------------------------------------------------------
 
     ! Enforce expected array sizes
@@ -2241,13 +2182,6 @@ contains
            urban_column,                                       &
            rvector( begc:endc, 1:nlevgrnd ))
 
-      ! Combine the RHS vector
-      ! do fc = 1,num_filter
-      !    c = filter(fc)
-      !    rvector(c, -nlevsno:-1) = rt_snow(c, -nlevsno:-1)
-      !    rvector(c, 0         )  = rt_ssw(c)
-      !    rvector(c, 1:nlevgrnd)  = rt_soil(c, 1:nlevgrnd )
-      ! end do
       !$acc exit data delete(fn_h2osfc(:))
 
     end associate
@@ -2263,7 +2197,6 @@ contains
     ! Sets up RHS vector corresponding to snow layers.
     !
     ! !USES:
-      !$acc routine seq 
     use elm_varpar     , only : nlevsno, nlevgrnd
     !
     ! !ARGUMENTS:
@@ -2330,7 +2263,6 @@ contains
     ! Sets up RHS vector corresponding to snow layers for urban columns
     !
     ! !USES:
-      !$acc routine seq 
     use elm_varcon     , only : cnfac
     use column_varcon  , only : icol_roof, icol_sunwall, icol_shadewall
     use elm_varpar     , only : nlevsno, nlevgrnd
@@ -2681,7 +2613,6 @@ contains
     ! Sets up RHS vector corresponding to soil layers
     !
     ! !USES:
-      !$acc routine seq 
     use elm_varcon     , only : cnfac
     use column_varcon  , only : icol_roof, icol_sunwall, icol_shadewall
     use elm_varpar     , only : nlevsno, nlevgrnd, nlevurb
@@ -2772,7 +2703,6 @@ contains
     ! Sets up RHS vector corresponding to soil layers for urban columns
     !
     ! !USES:
-      !$acc routine seq 
     use elm_varcon     , only : cnfac
     use column_varcon  , only : icol_roof, icol_sunwall, icol_shadewall
     use elm_varpar     , only : nlevsno, nlevgrnd, nlevurb
@@ -3402,7 +3332,6 @@ contains
     ! Setup the matrix entries corresponding to internal snow layers
     !
     ! !USES:
-      !$acc routine seq 
     use elm_varcon     , only : cnfac
     use column_varcon  , only : icol_roof, icol_sunwall, icol_shadewall
     use elm_varpar     , only : nlevsno, nlevgrnd, nlevurb
@@ -3786,7 +3715,6 @@ contains
     ! Setup the matrix entries corresponding to snow-soil interaction
     !
     ! !USES:
-      !$acc routine seq 
     use elm_varcon     , only : cnfac
     use column_varcon  , only : icol_roof, icol_sunwall, icol_shadewall
     use elm_varpar     , only : nlevsno, nlevgrnd, nlevurb
@@ -4045,7 +3973,6 @@ contains
     ! non-urban columns
     !
     ! !USES:
-      !$acc routine seq 
     use elm_varcon     , only : cnfac
     use column_varcon  , only : icol_roof, icol_sunwall, icol_shadewall
     use elm_varpar     , only : nlevsno, nlevgrnd, nlevurb
@@ -4197,7 +4124,6 @@ contains
     ! urban columns
     !
     ! !USES:
-      !$acc routine seq 
     use elm_varcon     , only : cnfac
     use column_varcon  , only : icol_roof, icol_sunwall, icol_shadewall
     use elm_varpar     , only : nlevsno, nlevgrnd, nlevurb
@@ -4522,7 +4448,6 @@ contains
     ! Setup the matrix entries corresponding to soil-snow interaction
     !
     ! !USES:
-      !$acc routine seq 
     use elm_varcon     , only : cnfac
     use column_varcon  , only : icol_roof, icol_sunwall, icol_shadewall
     use elm_varpar     , only : nlevsno, nlevgrnd, nlevurb
@@ -4795,7 +4720,6 @@ contains
     ! non urban columns
     !
     ! !USES:
-      !$acc routine seq 
     use elm_varcon     , only : cnfac
     use column_varcon  , only : icol_roof, icol_sunwall, icol_shadewall
     use elm_varpar     , only : nlevsno, nlevgrnd, nlevurb
@@ -5010,7 +4934,6 @@ contains
     ! Model (PTM).
     !
     ! !USES:
-      !$acc routine seq 
     use shr_kind_mod    , only : r8 => shr_kind_r8
     use elm_varpar      , only : nlevsno
     !

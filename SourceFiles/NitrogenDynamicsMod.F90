@@ -78,9 +78,9 @@ contains
     ! Read in parameters
     !
     ! !USES:
-    use ncdio_pio   , only : file_desc_t,ncd_io
-    use abortutils  , only : endrun
-    use shr_log_mod , only : errMsg => shr_log_errMsg
+    !#py use ncdio_pio   , only : file_desc_t,ncd_io
+    !#py use abortutils  , only : endrun
+    !#py !#py use shr_log_mod , only : errMsg => shr_log_errMsg
     !
     ! !ARGUMENTS:
     type(file_desc_t),intent(inout) :: ncid   ! pio netCDF file id
@@ -98,13 +98,13 @@ contains
     allocate(CNNDynamicsParamsInst%sf)
     allocate(CNNDynamicsParamsInst%sf_no3)
     tString='sf_minn'
-    call ncd_io(varname=trim(tString),data=tempr, flag='read', ncid=ncid, readvar=readv)
-    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
+    !#py !#py call ncd_io(varname=trim(tString),data=tempr, flag='read', ncid=ncid, readvar=readv)
+    !#py !#py if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
     CNNDynamicsParamsInst%sf=tempr
 
     tString='sf_no3'
-    call ncd_io(varname=trim(tString),data=tempr, flag='read', ncid=ncid, readvar=readv)
-    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
+    !#py !#py call ncd_io(varname=trim(tString),data=tempr, flag='read', ncid=ncid, readvar=readv)
+    !#py !#py if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
     CNNDynamicsParamsInst%sf_no3=tempr
 
   end subroutine readNitrogenDynamicsParams
@@ -240,10 +240,8 @@ contains
    ! !LOCAL VARIABLES:
    integer  :: j,c,fc                                 ! indices
    integer  :: nlevbed				       ! number of layers to bedrock
-  !  real(r8) :: sf_no3                                 ! soluble fraction of NO3 (unitless)
    real(r8) :: disn_conc                              ! dissolved mineral N concentration (gN/kg water)
-   real(r8) :: surface_water(1:num_soilc) ! liquid water to shallow surface depth (kg water/m2)
-  !  real(r8) :: drain_tot(bounds%begc:bounds%endc)     ! total drainage flux (mm H2O /s)
+   real(r8) :: surface_water(num_soilc) ! liquid water to shallow surface depth (kg water/m2)
    real(r8), parameter :: depth_runoff_Nloss = 0.05   ! (m) depth over which runoff mixes with soil water for N loss to runoff
    real(r8) :: sum2 
    !-----------------------------------------------------------------------
@@ -259,7 +257,7 @@ contains
         smin_no3_runoff_vr  => col_nf%smin_no3_runoff_vr    & ! Output: [real(r8) (:,:) ]  rate of mineral NO3 loss with runoff (gN/m3/s)
         )
 
-        !$acc enter data create(sum2,surface_water(1:num_soilc))
+        !$acc enter data create(sum2,surface_water(:))
      ! for runoff calculation; calculate total water to a given depth
      !$acc parallel loop independent gang worker default(present) private(sum2,c,nlevbed)
      do fc = 1,num_soilc
@@ -277,7 +275,7 @@ contains
         surface_water(fc) = sum2 
      end do
 
-     !$acc parallel loop independent gang vector collapse(2) default(present)
+     !$acc parallel loop independent gang vector collapse(2) default(present) present(tot_water(:)) 
      do j = 1,nlevdecomp
         do fc = 1,num_soilc
            c = filter_soilc(fc)
@@ -286,8 +284,8 @@ contains
               ! calculate the dissolved mineral N concentration (gN/kg water)
               ! assumes that 10% of mineral nitrogen is soluble
               disn_conc = 0._r8
-              if (tot_water(c) > 0._r8) then
-                 disn_conc = (sf_no3 * smin_no3_vr(c,j) )/tot_water(c)
+              if (tot_water(fc) > 0._r8) then
+                 disn_conc = (sf_no3 * smin_no3_vr(c,j) )/tot_water(fc)
               end if
 
               ! calculate the N leaching flux as a function of the dissolved
@@ -303,7 +301,7 @@ contains
               !
               ! calculate the N leaching flux as a function of the dissolved
               ! concentration and the sub-surface drainage flux
-              smin_no3_leached_vr(c,j) = disn_conc * qflx_drain(c) * h2osoi_liq(c,j) / ( tot_water(c) * col_pp%dz(c,j) )
+              smin_no3_leached_vr(c,j) = disn_conc * qflx_drain(c) * h2osoi_liq(c,j) / ( tot_water(fc) * col_pp%dz(c,j) )
               !
               ! ensure that leaching rate isn't larger than soil N pool
               smin_no3_leached_vr(c,j) = min(smin_no3_leached_vr(c,j), smin_no3_vr(c,j) / dt )
@@ -315,11 +313,11 @@ contains
               ! calculate the N loss from surface runoff, assuming a shallow mixing of surface waters into soil and removal based on runoff
               if ( zisoi(j) <= depth_runoff_Nloss )  then
                  smin_no3_runoff_vr(c,j) = disn_conc * qflx_surf(c) * &
-                      h2osoi_liq(c,j) / ( surface_water(c) * col_pp%dz(c,j) )
+                      h2osoi_liq(c,j) / ( surface_water(fc) * col_pp%dz(c,j) )
               elseif ( zisoi(j-1) < depth_runoff_Nloss )  then
                  smin_no3_runoff_vr(c,j) = disn_conc * qflx_surf(c) * &
                       h2osoi_liq(c,j) * ((depth_runoff_Nloss - zisoi(j-1)) / &
-                      col_pp%dz(c,j)) / ( surface_water(c) * (depth_runoff_Nloss-zisoi(j-1) ))
+                      col_pp%dz(c,j)) / ( surface_water(fc) * (depth_runoff_Nloss-zisoi(j-1) ))
               else
                  smin_no3_runoff_vr(c,j) = 0._r8
               endif
@@ -342,7 +340,7 @@ contains
 
         end do
      end do
-        !$acc exit data delete(sum2,surface_water(1:num_soilc))
+        !$acc exit data delete(sum2,surface_water(:))
 
    end associate
  end subroutine NitrogenLeaching

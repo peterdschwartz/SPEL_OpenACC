@@ -20,11 +20,10 @@ Module HydrologyNoDrainageMod
   use ColumnDataType    , only : col_es, col_ws
   use VegetationType    , only : veg_pp
   use TopounitDataType  , only : top_as, top_af ! Atmospheric state and flux variables
-  !#py use elm_instMod       , only : alm_fates , ep_betr
-
+  use elm_instMod       , only : alm_fates , ep_betr
+   ! use verificationMod , only : update_vars_HydrologyNoDrainage
   !#py use WaterFluxType  ,only  : waterflux_vars
   !#py use WaterStateType ,only  : waterstate_vars
-
   use timeinfoMod
   !
   ! !PUBLIC TYPES:
@@ -47,6 +46,7 @@ contains
        num_nosnowc, filter_nosnowc, canopystate_vars, &
        atm2lnd_vars, soilstate_vars, &
        soilhydrology_vars, aerosol_vars)
+   
     ! !DESCRIPTION:
     ! This is the main subroutine to execute the calculation of soil/snow
     ! hydrology
@@ -94,10 +94,9 @@ contains
     integer                  , intent(inout) :: filter_nosnowc(:)    ! column filter for non-snow points
     type(atm2lnd_type)       , intent(in)    :: atm2lnd_vars
     type(soilstate_type)     , intent(inout) :: soilstate_vars
-    type(canopystate_type)   , intent(in)  :: canopystate_vars
+    type(canopystate_type)   , intent(in)    :: canopystate_vars
     type(aerosol_type)       , intent(inout) :: aerosol_vars
     type(soilhydrology_type) , intent(inout) :: soilhydrology_vars
-    real(r8) :: dtime                         ! land model time step (sec)
 
     !
     ! !LOCAL VARIABLES:
@@ -105,36 +104,36 @@ contains
     integer  :: nlevbed                       ! # layers to bedrock
     real(r8) :: psi,vwc,fsattmp,psifrz        ! temporary variables for soilpsi calculation
     real(r8) :: watdry                        ! temporary
-    real(r8) :: rwat(bounds%begc:bounds%endc) ! soil water wgted by depth to maximum depth of 0.5 m
-    real(r8) :: swat(bounds%begc:bounds%endc) ! same as rwat but at saturation
-    real(r8) :: rz  (bounds%begc:bounds%endc)   ! thickness of soil layers contributing to rwat (m)
+    real(r8) :: rwat(1:num_hydrologyc) ! soil water wgted by depth to maximum depth of 0.5 m
+    real(r8) :: swat(1:num_hydrologyc) ! same as rwat but at saturation
+    real(r8) :: rz  (1:num_hydrologyc)   ! thickness of soil layers contributing to rwat (m)
     real(r8) :: tsw                           ! volumetric soil water to 0.5 m
     real(r8) :: stsw                          ! volumetric soil water to 0.5 m at saturation
     real(r8) :: fracl                         ! fraction of soil layer contributing to 10cm total soil water
     real(r8) :: s_node                        ! soil wetness (-)
-    real(r8) :: icefrac(bounds%begc:bounds%endc,1:nlevgrnd)
-    real(r8) :: sum1, sum2, sum3,sum4 
+    real(r8) :: sum1, sum2, sum3,sum4
+    real     :: startt, stopt  
     !-----------------------------------------------------------------------
     
-    associate(                                                          & 
-         z                  => col_pp%z                                  , & ! Input:  [real(r8) (:,:) ]  layer depth  (m)                      
-         dz                 => col_pp%dz                                 , & ! Input:  [real(r8) (:,:) ]  layer thickness depth (m)             
-         zi                 => col_pp%zi                                 , & ! Input:  [real(r8) (:,:) ]  interface depth (m)                   
-         snl                => col_pp%snl                                , & ! Input:  [integer  (:)   ]  number of snow layers                    
-         nlev2bed           => col_pp%nlevbed                           , & ! Input:  [integer  (:)   ]  number of layers to bedrock                     
-         ctype              => col_pp%itype                              , & ! Input:  [integer  (:)   ]  column type                              
+    associate(                                       & 
+         z                  => col_pp%z               , & ! Input:  [real(r8) (:,:) ]  layer depth  (m)                      
+         dz                 => col_pp%dz              , & ! Input:  [real(r8) (:,:) ]  layer thickness depth (m)             
+         zi                 => col_pp%zi              , & ! Input:  [real(r8) (:,:) ]  interface depth (m)                   
+         snl                => col_pp%snl             , & ! Input:  [integer  (:)   ]  number of snow layers                    
+         nlev2bed           => col_pp%nlevbed         , & ! Input:  [integer  (:)   ]  number of layers to bedrock                     
+         ctype              => col_pp%itype           , & ! Input:  [integer  (:)   ]  column type                              
 
          forc_wind          => top_as%windbot         , & ! Input:  [real(r8) (:) ]  atmospheric wind speed (m/s)
 
-         t_h2osfc           => col_es%t_h2osfc          , & ! Input:  [real(r8) (:)   ]  surface water temperature               
-         dTdz_top           => col_es%dTdz_top          , & ! Output: [real(r8) (:)   ]  temperature gradient in top layer (col) [K m-1] !
-         snot_top           => col_es%snot_top          , & ! Output: [real(r8) (:)   ]  snow temperature in top layer (col) [K]
-         t_soisno           => col_es%t_soisno          , & ! Output: [real(r8) (:,:) ]  soil temperature (Kelvin)
-         t_grnd             => col_es%t_grnd            , & ! Output: [real(r8) (:)   ]  ground temperature (Kelvin)
-         t_grnd_u           => col_es%t_grnd_u          , & ! Output: [real(r8) (:)   ]  Urban ground temperature (Kelvin)
-         t_grnd_r           => col_es%t_grnd_r          , & ! Output: [real(r8) (:)   ]  Rural ground temperature (Kelvin)
-         t_soi_10cm         => col_es%t_soi10cm         , & ! Output: [real(r8) (:)   ]  soil temperature in top 10cm of soil (Kelvin)
-         tsoi17             => col_es%t_soi17cm         , & ! Output: [real(r8) (:)   ]  soil temperature in top 17cm of soil (Kelvin)
+         t_h2osfc           => col_es%t_h2osfc        , & ! Input:  [real(r8) (:)   ]  surface water temperature               
+         dTdz_top           => col_es%dTdz_top        , & ! Output: [real(r8) (:)   ]  temperature gradient in top layer (col) [K m-1] !
+         snot_top           => col_es%snot_top        , & ! Output: [real(r8) (:)   ]  snow temperature in top layer (col) [K]
+         t_soisno           => col_es%t_soisno        , & ! Output: [real(r8) (:,:) ]  soil temperature (Kelvin)
+         t_grnd             => col_es%t_grnd          , & ! Output: [real(r8) (:)   ]  ground temperature (Kelvin)
+         t_grnd_u           => col_es%t_grnd_u        , & ! Output: [real(r8) (:)   ]  Urban ground temperature (Kelvin)
+         t_grnd_r           => col_es%t_grnd_r        , & ! Output: [real(r8) (:)   ]  Rural ground temperature (Kelvin)
+         t_soi_10cm         => col_es%t_soi10cm       , & ! Output: [real(r8) (:)   ]  soil temperature in top 10cm of soil (Kelvin)
+         tsoi17             => col_es%t_soi17cm       , & ! Output: [real(r8) (:)   ]  soil temperature in top 17cm of soil (Kelvin)
 
          snow_depth         => col_ws%snow_depth         , & ! Input:  [real(r8) (:)   ]  snow height of snow covered area (m)
          snowdp             => col_ws%snowdp             , & ! Input:  [real(r8) (:)   ]  gridcell averaged snow height (m)
@@ -166,63 +165,87 @@ contains
          smpmin             => soilstate_vars%smpmin_col              , & ! Input:  [real(r8) (:)   ]  restriction for min of soil potential (mm)
          soilpsi            => soilstate_vars%soilpsi_col               & ! Output: [real(r8) (:,:) ]  soil water potential in each soil layer (MPa)
          )
+    !$acc enter data create(&
+    !$acc rwat(:), &
+    !$acc swat(:), &
+    !$acc rz(:), &
+    !$acc psi, &
+    !$acc sum1, &
+    !$acc sum2, &
+    !$acc sum3)
 
-         dtime = dtime_mod
       ! Determine initial snow/no-snow filters (will be modified possibly by
       ! routines CombineSnowLayers and DivideSnowLayers below
-      !$acc enter data create(rwat(:),swat(:),rz(:),icefrac(:,:), sum1,sum2,sum3,sum4 )
-      
+      call cpu_time(startt) 
+
       call BuildSnowFilter(num_nolakec, filter_nolakec, &
            num_snowc, filter_snowc, num_nosnowc, filter_nosnowc)
-
-
+      
+      call cpu_time(stopt)
+      print *, "HydrologyNoDrainage::BuildSnowFilter ",(stopt-startt)*1.E+3,"ms"
+      
       ! Determine the change of snow mass and the snow water onto soil
-
+      call cpu_time(startt)
       call SnowWater(bounds, num_snowc, filter_snowc, num_nosnowc, filter_nosnowc, &
            atm2lnd_vars, aerosol_vars)
-
+      call cpu_time(stopt)
+      print *, "HydrologyNoDrainage::SnowWater ",(stopt-startt)*1.E+3,"ms"
+      ! call update_vars_HydrologyNoDrainage(gpuflag,"SnowWater")
       ! mapping soilmoist from CLM to VIC layers for runoff calculations
-      ! if (use_vichydro) then
-      !    call ELMVICMap(bounds, num_hydrologyc, filter_hydrologyc, &
-      !         soilhydrology_vars)
-      ! end if
+      if (use_vichydro) then
+         call ELMVICMap(bounds, num_hydrologyc, filter_hydrologyc, &
+              soilhydrology_vars)
+      end if
+      call cpu_time(startt)
 
       call SurfaceRunoff(bounds, num_hydrologyc, filter_hydrologyc, num_urbanc, filter_urbanc, &
-           soilhydrology_vars, soilstate_vars, dtime)
+           soilhydrology_vars, soilstate_vars, dtime_mod)
+
+      call cpu_time(stopt) 
+      print *, "HydrologyNoDrainage::SurfaceRunoff ",(stopt-startt)*1.E+3,"ms"
+      ! call update_vars_HydrologyNoDrainage(gpuflag,"SurfaceRunoff")
 
       !------------------------------------------------------------------------------------
       if (use_pflotran .and. pf_hmode) then
 
-      !   call Infiltration(bounds, num_hydrononsoic, filter_hydrononsoic, &
-      !        num_urbanc, filter_urbanc, &
-      !        soilhydrology_vars, soilstate_vars, dtime)
+      call Infiltration(bounds, num_hydrononsoic, filter_hydrononsoic, &
+           num_urbanc, filter_urbanc, &
+           soilhydrology_vars, soilstate_vars, dtime_mod)
 
       else
       !------------------------------------------------------------------------------------
+        call cpu_time(startt) 
 
         call Infiltration(bounds, num_hydrologyc, filter_hydrologyc, num_urbanc, filter_urbanc, &
-             soilhydrology_vars, soilstate_vars, dtime)
+             soilhydrology_vars, soilstate_vars, dtime_mod)
 
-      !------------------------------------------------------------------------------------
+         call cpu_time(stopt) 
+         print *, "HydrologyNoDrainage::Infiltration ",(stopt-startt)*1.E+3,"ms"
+         ! call update_vars_HydrologyNoDrainage(gpuflag,"Infiltration")
+         
       end if
       !------------------------------------------------------------------------------------
 
       !!TODO:  need to fix the waterstate_vars dependence here.
-! #ifndef _OPENACC
-!       if (use_betr) then
-!         call ep_betr%BeTRSetBiophysForcing(bounds, col_pp, veg_pp, 1, nlevsoi, waterstate_vars=waterstate_vars)
-!         call ep_betr%PreDiagSoilColWaterFlux(num_hydrologyc, filter_hydrologyc)
-!       endif
-! #endif
+#ifndef _OPENACC
+      if (use_betr) then
+        !#py call ep_betr%BeTRSetBiophysForcing(bounds, col_pp, veg_pp, 1, nlevsoi, waterstate_vars=waterstate_vars)
+        !#py call ep_betr%PreDiagSoilColWaterFlux(num_hydrologyc, filter_hydrologyc)
+      endif
+#endif
 
-      ! if (use_vsfm) then
-      !    call DrainageVSFM(bounds, num_hydrologyc, filter_hydrologyc, &
-      !         num_urbanc, filter_urbanc,&
-      !         soilhydrology_vars, soilstate_vars, dtime)
-      ! endif
-
+      if (use_vsfm) then
+         call DrainageVSFM(bounds, num_hydrologyc, filter_hydrologyc, &
+              num_urbanc, filter_urbanc,&
+              soilhydrology_vars, soilstate_vars, dtime_mod)
+      endif
+      call cpu_time(startt) 
       call Compute_EffecRootFrac_And_VertTranSink(bounds, num_hydrologyc, &
            filter_hydrologyc, soilstate_vars, canopystate_vars)
+      call cpu_time(stopt) 
+      print *, "HydrologyNoDrainage::Compute_EffecRootFrac_And_VertTranSink ",(stopt-startt)*1.E+3,"ms"
+      ! call update_vars_HydrologyNoDrainage(gpuflag,"VertTranSink")
+      
 
 ! #ifndef _OPENACC
 !       ! If FATES plant hydraulics is turned on, over-ride default transpiration sink calculation
@@ -231,16 +254,21 @@ contains
 ! #endif
       !------------------------------------------------------------------------------------
       if (use_pflotran .and. pf_hmode) then
-
+      
       !   call SoilWater(bounds, num_hydrononsoic, filter_hydrononsoic, &
       !       num_urbanc, filter_urbanc, &
-      !       soilhydrology_vars, soilstate_vars, dtime)
+      !       soilhydrology_vars, soilstate_vars, dtime_mod)
 
       else
       !------------------------------------------------------------------------------------
+        call cpu_time(startt) 
 
         call SoilWater(bounds, num_hydrologyc, filter_hydrologyc, num_urbanc, filter_urbanc, &
-            soilhydrology_vars, soilstate_vars, dtime)
+            soilhydrology_vars, soilstate_vars, dtime_mod)
+         call cpu_time(stopt) 
+         print *, "HydrologyNoDrainage::SoilWater ",(stopt-startt)*1.E+3,"ms"
+
+         ! call update_vars_HydrologyNoDrainage(gpuflag,"SoilWater")
 
       !------------------------------------------------------------------------------------
       end if
@@ -266,50 +294,68 @@ contains
       !------------------------------------------------------------------------------------
       if (use_pflotran .and. pf_hmode) then
 
-      !   call WaterTable(bounds, num_hydrononsoic, filter_hydrononsoic, &
-      !      num_urbanc, filter_urbanc, &
-      !      soilhydrology_vars, soilstate_vars, dtime)
+      call WaterTable(bounds, num_hydrononsoic, filter_hydrononsoic, &
+         num_urbanc, filter_urbanc, &
+         soilhydrology_vars, soilstate_vars, dtime)
 
       else
       !------------------------------------------------------------------------------------
-
+         call cpu_time(startt) 
         call WaterTable(bounds, num_hydrologyc, filter_hydrologyc, num_urbanc, filter_urbanc, &
-           soilhydrology_vars, soilstate_vars, dtime)
+           soilhydrology_vars, soilstate_vars, dtime_mod)
+         call cpu_time(stopt) 
+         print *, "HydrologyNoDrainage::WaterTable ",(stopt-startt)*1.E+3,"ms"
+         
+         ! call update_vars_HydrologyNoDrainage(gpuflag,"WaterTable")
 
       !------------------------------------------------------------------------------------
       end if
-      !------------------------------------------------------------------------------------
 
-
-!#ifndef _OPENACC
-!      if (use_betr) then
-!         !apply dew and sublimation fluxes, this is a temporary work aroud for tracking water isotope
-!         !Jinyun Tang, Feb 4, 2015
-!         call ep_betr%CalcDewSubFlux(bounds, col_pp, num_hydrologyc, filter_hydrologyc)
-!      endif           
-!#endif
+#ifndef _OPENACC
+      if (use_betr) then
+         !apply dew and sublimation fluxes, this is a temporary work aroud for tracking water isotope
+         !Jinyun Tang, Feb 4, 2015
+         !#py call ep_betr%CalcDewSubFlux(bounds, col_pp, num_hydrologyc, filter_hydrologyc)
+      endif           
+#endif
       
       if (use_extrasnowlayers) then
          call SnowCapping(bounds, num_nolakec, filter_nolakec, num_snowc, filter_snowc, &
                           aerosol_vars)
       end if
       
+      call cpu_time(startt) 
       ! Natural compaction and metamorphosis.
-      call SnowCompaction(bounds, num_snowc, filter_snowc, top_as, dtime)
+      call SnowCompaction(bounds, num_snowc, filter_snowc, top_as, dtime_mod)
+      call cpu_time(stopt) 
+      print *, "HydrologyNoDrainage::SnowCompaction ",(stopt-startt)*1.E+3,"ms"
+      ! call update_vars_HydrologyNoDrainage(gpuflag,"SnowCompact")
 
+      call cpu_time(startt)
       ! Combine thin snow elements
       call CombineSnowLayers(bounds, num_snowc, filter_snowc, &
-           aerosol_vars, dtime)
+           aerosol_vars, dtime_mod)
+      call cpu_time(stopt) 
+      print *, "HydrologyNoDrainage::CombineSnowLayers ",(stopt-startt)*1.E+3,"ms"
+      ! call update_vars_HydrologyNoDrainage(gpuflag,"CombineSnowLayers")
+
 
       ! Divide thick snow elements
       ! if (.not. use_extrasnowlayers) then
+      call cpu_time(startt) 
       call DivideSnowLayers(bounds, num_snowc, filter_snowc, &
            aerosol_vars,  is_lake=.false.)
+      call cpu_time(stopt)
+      print *, "HydrologyNoDrainage::DivideSnowLayers ",(stopt-startt)*1.E+3,"ms"
+      ! call update_vars_HydrologyNoDrainage(gpuflag,"DivideSnowLayers")
+      
       ! else
       !   call DivideExtraSnowLayers(bounds, num_snowc, filter_snowc, &
       !        aerosol_vars,  is_lake=.false.)
       ! endif
       
+      call cpu_time(startt)
+
       ! Set empty snow layers to zero
       !$acc parallel loop independent gang vector default(present) collapse(2) 
       do j = -nlevsno+1,0
@@ -337,7 +383,7 @@ contains
       !$acc parallel loop independent gang vector default(present)
       do fc = 1, num_snowc
          c = filter_snowc(fc)
-         snow_persistence(c) = snow_persistence(c) + dtime
+         snow_persistence(c) = snow_persistence(c) + dtime_mod
       end do
       !$acc parallel loop independent gang vector default(present)
       do fc = 1, num_nosnowc
@@ -371,54 +417,55 @@ contains
       ! Determine ground temperature, ending water balance and volumetric soil water
       ! Calculate soil temperature and total water (liq+ice) in top 10cm of soil
       ! Calculate soil temperature and total water (liq+ice) in top 17cm of soil
-      !$acc parallel loop independent gang vector default(present)
+   
+      call cpu_time(stopt)
+      print *, "HydrologyNoDrainage::IndieLoops ",(stopt-startt)*1.E+3,"ms"
+
+      ! call update_vars_HydrologyNoDrainage(gpuflag,"IndieLoops")
+
+      !NOTE: Reductions in this Loop!!!
+      !$acc parallel loop independent gang worker default(present) private(sum1,sum2,sum3) 
       do fc = 1, num_nolakec
          c = filter_nolakec(fc)
          l = col_pp%landunit(c)
          if (.not. lun_pp%urbpoi(l)) then
-            t_soi_10cm(c) = 0._r8
-            tsoi17(c) = 0._r8
-            h2osoi_liqice_10cm(c) = 0._r8
-         end if
-      end do
-      do fc = 1, num_nolakec
-         c = filter_nolakec(fc)
-	       nlevbed = nlev2bed(c)
-         do j = 1, nlevbed
-            l = col_pp%landunit(c)
-            if (.not. lun_pp%urbpoi(l)) then
+            sum1 = 0._r8; sum2 = 0._r8; sum3 = 0._r8
+	         nlevbed = nlev2bed(c)
+            !$acc loop vector reduction(+:sum1,sum2,sum3)
+            do j = 1, nlevbed
                ! soil T at top 17 cm added by F. Li and S. Levis
                if (zi(c,j) <= 0.17_r8) then
                   fracl = 1._r8
-                  tsoi17(c) = tsoi17(c) + t_soisno(c,j)*dz(c,j)*fracl
+                  sum1 = sum1 + t_soisno(c,j)*dz(c,j)*fracl
                else
                   if (zi(c,j) > 0.17_r8 .and. zi(c,j-1) < 0.17_r8) then
                      fracl = (0.17_r8 - zi(c,j-1))/dz(c,j)
-                     tsoi17(c) = tsoi17(c) + t_soisno(c,j)*dz(c,j)*fracl
+                     sum1 = sum1 + t_soisno(c,j)*dz(c,j)*fracl
                   end if
                end if
 
                if (zi(c,j) <= 0.1_r8) then
                   fracl = 1._r8
-                  t_soi_10cm(c) = t_soi_10cm(c) + t_soisno(c,j)*dz(c,j)*fracl
-                  h2osoi_liqice_10cm(c) = h2osoi_liqice_10cm(c) + &
-                       (h2osoi_liq(c,j)+h2osoi_ice(c,j))* &
-                       fracl
+                  sum2 = sum2 + t_soisno(c,j)*dz(c,j)*fracl
+                  sum3 = sum3 + (h2osoi_liq(c,j)+h2osoi_ice(c,j))* fracl
                else
                   if (zi(c,j) > 0.1_r8 .and. zi(c,j-1) < 0.1_r8) then
                      fracl = (0.1_r8 - zi(c,j-1))/dz(c,j)
-                     t_soi_10cm(c) = t_soi_10cm(c) + t_soisno(c,j)*dz(c,j)*fracl
-                     h2osoi_liqice_10cm(c) = h2osoi_liqice_10cm(c) + &
-                          (h2osoi_liq(c,j)+h2osoi_ice(c,j))* &
-                          fracl
+                     sum2 = sum2 + t_soisno(c,j)*dz(c,j)*fracl
+                     sum3 = sum3 + (h2osoi_liq(c,j)+h2osoi_ice(c,j))* fracl
                   end if
                end if
-            end if
-         end do
+               
+            end do
+            tsoi17(c) =  sum1 
+            t_soi_10cm(c) =  sum2
+            h2osoi_liqice_10cm(c) = sum3 
+         end if
       end do
-
+      
       ! TODO - if this block of code is moved out of here - the SoilHydrology
       ! will NOT effect t_grnd, t_grnd_u or t_grnd_r
+      call cpu_time(startt) 
 
       !$acc parallel loop independent gang vector default(present)
       do fc = 1, num_nolakec
@@ -464,6 +511,10 @@ contains
          end do
       end do
 
+      call cpu_time(stopt)
+      print *, "HydrologyNoDrainage::IndieLoops 2",(stopt-startt)*1.E+3,"ms"
+
+
       if ( (use_cn .or. use_fates) .and. &
          .not.(use_pflotran .and. pf_hmode) ) then
          ! Update soilpsi.
@@ -496,34 +547,35 @@ contains
          ! Available soil water up to a depth of 0.05 m.
          ! Potentially available soil water (=whc) up to a depth of 0.05 m.
          ! Water content as fraction of whc up to a depth of 0.05 m.
-
-         !$acc parallel loop independent gang vector default(present)
+         
+         call cpu_time(startt) 
+         !$acc parallel loop independent gang worker default(present) private(sum1, sum2, sum3,c)
          do fc = 1, num_hydrologyc
             c = filter_hydrologyc(fc)
-            rwat(c) = 0._r8
-            swat(c) = 0._r8
-            rz(c)   = 0._r8
-         end do
+            sum1 = 0._r8; sum2 = 0.0_r8;
+            sum3 = 0.0_r8 
 
-         do j = 1, nlevgrnd
-            do fc = 1, num_hydrologyc
-               c = filter_hydrologyc(fc)
-               !if (z(c,j)+0.5_r8*dz(c,j) <= 0.5_r8) then
+            !$acc loop vector reduction(+:sum1,sum2,sum3)
+            do j = 1, nlevgrnd
                if (z(c,j)+0.5_r8*dz(c,j) <= 0.05_r8) then
                   watdry = watsat(c,j) * (316230._r8/sucsat(c,j)) ** (-1._r8/bsw(c,j))
-                  rwat(c) = rwat(c) + (h2osoi_vol(c,j)-watdry) * dz(c,j)
-                  swat(c) = swat(c) + (watsat(c,j)    -watdry) * dz(c,j)
-                  rz(c) = rz(c) + dz(c,j)
+                  sum1 = sum1 + (h2osoi_vol(c,j)-watdry) * dz(c,j)
+                  sum2 = sum2 + (watsat(c,j)    -watdry) * dz(c,j)
+                  sum3 = sum3 + dz(c,j)
                end if
             end do
+            rwat(fc) = sum1
+            swat(fc) = sum2 
+            rz(fc) = sum3  
+
          end do
 
          !$acc parallel loop independent gang vector default(present)
          do fc = 1, num_hydrologyc
             c = filter_hydrologyc(fc)
-            if (rz(c) /= 0._r8) then
-               tsw  = rwat(c)/rz(c)
-               stsw = swat(c)/rz(c)
+            if (rz(fc) /= 0._r8) then
+               tsw  = rwat(fc)/rz(fc)
+               stsw = swat(fc)/rz(fc)
             else
                watdry = watsat(c,1) * (316230._r8/sucsat(c,1)) ** (-1._r8/bsw(c,1))
                tsw = h2osoi_vol(c,1) - watdry
@@ -535,7 +587,7 @@ contains
          !$acc parallel loop independent gang worker default(present) private(sum1,sum2,sum3)
          do fc = 1, num_hydrologyc
             c = filter_hydrologyc(fc)
-            sum1 = 0._r8; sum2 = 0._r8;sum3=0._r8
+            sum1 = 0._r8; sum2 = 0._r8; sum3=0._r8
             !$acc loop vector reduction(+:sum1,sum2,sum3)
             do j = 1, nlevgrnd
                if (z(c,j)+0.5_r8*dz(c,j) <= 0.17_r8) then
@@ -545,17 +597,17 @@ contains
                   sum3 = sum3 + dz(c,j)
                end if
             end do
-            rwat(c) = sum1
-            swat(c) = sum2
-            rz(c)   = sum3
+            rwat(fc) = rwat(fc) + sum1
+            swat(fc) = swat(fc) + sum2
+            rz(fc)   = rz(fc)   + sum3
          end do
 
          !$acc parallel loop independent gang vector default(present)
          do fc = 1, num_hydrologyc
             c = filter_hydrologyc(fc)
-            if (rz(c) /= 0._r8) then
-               tsw  = rwat(c)/rz(c)
-               stsw = swat(c)/rz(c)
+            if (rz(fc) /= 0._r8) then
+               tsw  = rwat(fc)/rz(fc)
+               stsw = swat(fc)/rz(fc)
             else
                watdry = watsat(c,1) * (316230._r8/sucsat(c,1)) ** (-1._r8/bsw(c,1))
                tsw = h2osoi_vol(c,1) - watdry
@@ -586,7 +638,17 @@ contains
          sno_liq_top(c)     = spval
       end do
 
-      !$acc exit data delete(rwat(:),swat(:),rz(:),icefrac(:,:), sum1,sum2,sum3,sum4 )
+      call cpu_time(stopt) 
+      print *, "HydrologyNoDrainage::reductions and wrapup",(stopt-startt)*1.E+3,"ms"
+      
+    !$acc exit data delete(&
+    !$acc rwat(:), &
+    !$acc swat(:), &
+    !$acc rz(:), &
+    !$acc psi, &
+    !$acc sum1, &
+    !$acc sum2, &
+    !$acc sum3)
 
     end associate
 

@@ -44,7 +44,7 @@ module LandunitDataType
     real(r8), pointer :: eflx_traffic      (:)   ! traffic sensible heat flux (W/m**2)
     real(r8), pointer :: eflx_wasteheat    (:)   ! sensible heat flux from domestic heating/cooling sources of waste heat (W/m**2)
     real(r8), pointer :: eflx_heat_from_ac (:)   ! sensible heat flux to be put back into canyon due to removal by AC (W/m**2)
-
+    
   contains
     procedure, public :: Init    => lun_ef_init
     procedure, public :: Clean   => lun_ef_clean

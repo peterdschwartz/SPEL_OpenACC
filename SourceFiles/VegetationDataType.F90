@@ -4865,7 +4865,7 @@ module VegetationDataType
     ! Set phosphorus state variables, column-level
     !$acc routine seq
     ! !ARGUMENTS:
-    class (vegetation_phosphorus_state) :: this
+    type (vegetation_phosphorus_state) :: this
     integer , intent(in)                :: num_patch
     integer , intent(in)                :: filter_patch(:)
     real(r8), intent(in)                :: value_patch
@@ -8461,7 +8461,6 @@ module VegetationDataType
     !
     ! !USES:
     !
-    !$acc routine seq
     ! !ARGUMENTS:
     type(vegetation_carbon_flux) :: this
     type(bounds_type), intent(in) :: bounds

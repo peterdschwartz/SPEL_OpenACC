@@ -78,7 +78,7 @@ module elm_instMod
   use ELMFatesInterfaceMod       , only : hlm_fates_interface_type
 
   ! instances declared in their own modules
-  use UrbanParamsType            , only : urbanparams_vars
+!   use UrbanParamsType            , only : urbanparams_vars
   use controlMod                 , only : nlfilename
   use dynPatchStateUpdaterMod    , only : patch_state_updater_type 
   use dynColumnStateUpdaterMod   , only : column_state_updater_type 

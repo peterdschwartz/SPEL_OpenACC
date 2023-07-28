@@ -5,31 +5,226 @@ module lnd_import_export
   use decompmod    , only: bounds_type
   use lnd2atmType  , only: lnd2atm_type
   use lnd2glcMod   , only: lnd2glc_type
-  use atm2lndType  , only: atm2lnd_type
+  use atm2lndType  , only: atm2lnd_type, cplbypass_atminput_type
   use glc2lndMod   , only: glc2lnd_type
   use GridcellType , only: grc_pp          ! for access to gridcell topology
   use TopounitDataType , only: top_as, top_af  ! atmospheric state and flux variables
-  use clm_cpl_indices
+  use elm_cpl_indices
   use mct_mod
+  use shr_sys_mod , only : shr_sys_flush
   !
   implicit none
+  integer, parameter :: num_unique_sites = 42 !42 is ameriflux in NA
   !===============================================================================
 
 contains
 
+   subroutine duplicate_lnd_points(bounds, x2l, atm2lnd_vars, glc2lnd_vars, lnd2atm_vars,cpl_bypass_input)
+      !
+      use elm_varcon       , only: rair, o2_molar_const, c13ratio
+      use elm_varctl       , only: iulog
+      use shr_const_mod    , only: SHR_CONST_TKFRZ, SHR_CONST_STEBOL
+      use clm_time_manager , only: get_curr_date
+      ! !ARGUMENTS:
+      type(bounds_type)  , intent(in)    :: bounds   ! bounds
+      real(r8)           , intent(in)    :: x2l(:,:) ! driver import state to land model
+      type(atm2lnd_type) , intent(inout) :: atm2lnd_vars      ! clm internal input data type
+      type(glc2lnd_type) , intent(inout) :: glc2lnd_vars      ! clm internal input data type
+      type(lnd2atm_type) , intent(in)    :: lnd2atm_vars
+      type(cplbypass_atminput_type), intent(inout) :: cpl_bypass_input
+      !
+      integer :: g, dup_g, topo, yr, mon, day, tod
+      real(r8) :: e, ea         ! vapor pressure (Pa)
+      real(r8) :: qsat,vp       ! saturation specific humidity (kg/kg)
+      integer :: tindex(14,2)
+      real(r8) :: forc_rainc    ! rainxy Atm flux mm/s
+      real(r8) :: forc_rainl    ! rainxy Atm flux mm/s
+      real(r8) :: forc_snowc    ! snowfxy Atm flux  mm/s
+      real(r8) :: forc_snowl    ! snowfxl Atm flux  mm/s
+      real(r8) :: frac
+      real(r8) :: esatw                ! saturation vapor pressure over water (Pa)
+      real(r8) :: esati                ! saturation vapor pressure over ice (Pa)
+      real(r8) :: a0,a1,a2,a3,a4,a5,a6 ! coefficients for esat over water
+      real(r8) :: b0,b1,b2,b3,b4,b5,b6 ! coefficients for esat over ice
+      real(r8) :: tdc, t               ! Kelvins to Celcius function and its input
+
+      ! Constants to compute vapor pressure
+      parameter (a0=6.107799961_r8    , a1=4.436518521e-01_r8, &
+           a2=1.428945805e-02_r8, a3=2.650648471e-04_r8, &
+           a4=3.031240396e-06_r8, a5=2.034080948e-08_r8, &
+           a6=6.136820929e-11_r8)
+
+      parameter (b0=6.109177956_r8    , b1=5.034698970e-01_r8, &
+           b2=1.886013408e-02_r8, b3=4.176223716e-04_r8, &
+           b4=5.824720280e-06_r8, b5=4.838803174e-08_r8, &
+           b6=1.838826904e-10_r8)
+      !
+      ! function declarations
+      !
+      tdc(t) = min( 50._r8, max(-50._r8,(t-SHR_CONST_TKFRZ)) )
+      esatw(t) = 100._r8*(a0+t*(a1+t*(a2+t*(a3+t*(a4+t*(a5+t*a6))))))
+      esati(t) = 100._r8*(b0+t*(b1+t*(b2+t*(b3+t*(b4+t*(b5+t*b6))))))
+      write(iulog,*) "Duplicating atm Data "
+      call shr_sys_flush(iulog)
+      
+      do g = bounds%begg+num_unique_sites, bounds%endg
+         dup_g = mod(g-1,num_unique_sites)+1
+         ! write(iulog,*) "G, Dup_g", g, dup_g
+         !!!!!!!!!!!!!!!!!!!!!
+         atm2lnd_vars%forc_flood_grc(g) = atm2lnd_vars%forc_flood_grc(dup_g)
+         !
+         atm2lnd_vars%volr_grc(g)       = atm2lnd_vars%volr_grc(dup_g)
+         atm2lnd_vars%volrmch_grc(g)    = atm2lnd_vars%volrmch_grc(dup_g)
+         atm2lnd_vars%supply_grc(g)     = atm2lnd_vars%supply_grc(dup_g)
+         atm2lnd_vars%deficit_grc(g)    = atm2lnd_vars%deficit_grc(dup_g)
+         !
+         atm2lnd_vars%tindex(g,:,1) = atm2lnd_vars%tindex(dup_g,:,1)
+         atm2lnd_vars%tindex(g,:,2) = atm2lnd_vars%tindex(dup_g,:,2)
+         !Air temperature
+         atm2lnd_vars%forc_t_not_downscaled_grc(g)  = atm2lnd_vars%forc_t_not_downscaled_grc(dup_g )
+         atm2lnd_vars%forc_th_not_downscaled_grc(g) = atm2lnd_vars%forc_th_not_downscaled_grc(dup_g)
+         !Air Pressure
+         atm2lnd_vars%forc_pbot_not_downscaled_grc(g) = atm2lnd_vars%forc_pbot_not_downscaled_grc(dup_g)
+         !Specific humidity
+         atm2lnd_vars%forc_q_not_downscaled_grc(g) = atm2lnd_vars%forc_q_not_downscaled_grc(dup_g)
+         !Longwave
+         atm2lnd_vars%forc_lwrad_not_downscaled_grc(g) = atm2lnd_vars%forc_lwrad_not_downscaled_grc(dup_g)
+         !
+         atm2lnd_vars%forc_solad_grc(g,2) = atm2lnd_vars%forc_solad_grc(dup_g,2)
+         atm2lnd_vars%forc_solad_grc(g,1) = atm2lnd_vars%forc_solad_grc(dup_g,1)
+         atm2lnd_vars%forc_solai_grc(g,2) = atm2lnd_vars%forc_solai_grc(dup_g,2)
+         atm2lnd_vars%forc_solai_grc(g,1) = atm2lnd_vars%forc_solai_grc(dup_g,1)
+         !Wind
+         atm2lnd_vars%forc_u_grc(g)   = atm2lnd_vars%forc_u_grc(dup_g)
+         atm2lnd_vars%forc_v_grc(g)   = atm2lnd_vars%forc_v_grc(dup_g)
+         atm2lnd_vars%forc_hgt_grc(g) = atm2lnd_vars%forc_hgt_grc(dup_g)
+         !---- Fire Data ---------!
+         atm2lnd_vars%forc_hdm(g) = atm2lnd_vars%forc_hdm(dup_g)
+         atm2lnd_vars%lnfm(g,:) = atm2lnd_vars%lnfm(dup_g,:)
+         !------Nitrogen deposition---------!
+         atm2lnd_vars%forc_ndep_grc(g) = atm2lnd_vars%forc_ndep_grc(dup_g)
+         atm2lnd_vars%forc_aer_grc(g,:) = atm2lnd_vars%forc_aer_grc(dup_g,:)
+         !
+         atm2lnd_vars%forc_t_not_downscaled_grc(g)  = atm2lnd_vars%forc_t_not_downscaled_grc (dup_g)
+         atm2lnd_vars%forc_th_not_downscaled_grc(g) = atm2lnd_vars%forc_th_not_downscaled_grc(dup_g)
+         !
+         atm2lnd_vars%forc_hgt_u_grc(g) = atm2lnd_vars%forc_hgt_u_grc(dup_g)
+         atm2lnd_vars%forc_hgt_t_grc(g) = atm2lnd_vars%forc_hgt_t_grc(dup_g)
+         atm2lnd_vars%forc_hgt_q_grc(g) = atm2lnd_vars%forc_hgt_q_grc(dup_g)
+         atm2lnd_vars%forc_vp_grc(g)    = atm2lnd_vars%forc_vp_grc(dup_g)
+         atm2lnd_vars%forc_rho_not_downscaled_grc(g) = atm2lnd_vars%forc_rho_not_downscaled_grc(dup_g)
+         atm2lnd_vars%forc_po2_grc(g)   = atm2lnd_vars%forc_po2_grc  (dup_g)
+         atm2lnd_vars%forc_wind_grc(g)  = atm2lnd_vars%forc_wind_grc (dup_g)
+         atm2lnd_vars%forc_solar_grc(g) = atm2lnd_vars%forc_solar_grc(dup_g)
+         !
+         atm2lnd_vars%forc_rain_not_downscaled_grc(g) = atm2lnd_vars%forc_rain_not_downscaled_grc(dup_g)
+         atm2lnd_vars%forc_snow_not_downscaled_grc(g) = atm2lnd_vars%forc_snow_not_downscaled_grc(dup_g)
+         !
+         atm2lnd_vars%forc_rh_grc(g) = atm2lnd_vars%forc_rh_grc(dup_g)
+         !
+         if (index_x2l_Sa_methane /= 0) then
+            atm2lnd_vars%forc_pch4_grc(g) = atm2lnd_vars%forc_pch4_grc(dup_g)
+         end if
+      end do
+      write(iulog,*) "Duplicating Topo Data "
+      call shr_sys_flush(iulog)
+
+      call get_curr_date(yr,mon,day,tod)
+      do g = bounds%begg-1+num_unique_sites, bounds%endg
+         !
+         dup_g = mod(g-1,num_unique_sites)+1
+         tindex = atm2lnd_vars%tindex(dup_g,:,:)
+         !
+         if (atm2lnd_vars%metsource == 5) then
+          forc_rainc = max((((cpl_bypass_input%atm_input(5,dup_g,1,tindex(5,2))*atm2lnd_vars%scale_factors(5)+ &
+                                        atm2lnd_vars%add_offsets(5)))*atm2lnd_vars%var_mult(5,dup_g,mon) + &
+                                        atm2lnd_vars%var_offset(5,dup_g,mon)), 0.0_r8)
+          forc_rainl = max((((cpl_bypass_input%atm_input(11,dup_g,1,tindex(11,2))*atm2lnd_vars%scale_factors(11)+ &
+                                        atm2lnd_vars%add_offsets(11)))*atm2lnd_vars%var_mult(11,dup_g,mon) + &
+                                        atm2lnd_vars%var_offset(11,dup_g,mon)), 0.0_r8)
+          forc_snowc = max((((cpl_bypass_input%atm_input(12,dup_g,1,tindex(12,2))*atm2lnd_vars%scale_factors(12)+ &
+                                        atm2lnd_vars%add_offsets(12)))*atm2lnd_vars%var_mult(12,dup_g,mon) + &
+                                        atm2lnd_vars%var_offset(12,dup_g,mon)), 0.0_r8)
+          forc_snowl = max((((cpl_bypass_input%atm_input(13,dup_g,1,tindex(13,2))*atm2lnd_vars%scale_factors(13)+ &
+                                        atm2lnd_vars%add_offsets(13)))*atm2lnd_vars%var_mult(13,dup_g,mon) + &
+                                          atm2lnd_vars%var_offset(13,dup_g,mon)), 0.0_r8)
+         else
+          frac = (atm2lnd_vars%forc_t_not_downscaled_grc(dup_g) - SHR_CONST_TKFRZ)*0.5_R8       ! ramp near freezing
+          frac = min(1.0_R8,max(0.0_R8,frac))           ! bound in [0,1]
+          !Don't interpolate rainfall data
+          forc_rainc = 0.1_R8 * frac * max((((cpl_bypass_input%atm_input(5,dup_g,1,tindex(5,2))*atm2lnd_vars%scale_factors(5)+ &
+                                        atm2lnd_vars%add_offsets(5)))*atm2lnd_vars%var_mult(5,dup_g,mon) + &
+                                        atm2lnd_vars%var_offset(5,dup_g,mon)), 0.0_r8)
+          forc_rainl = 0.9_R8 * frac * max((((cpl_bypass_input%atm_input(5,dup_g,1,tindex(5,2))*atm2lnd_vars%scale_factors(5)+ &
+                                         atm2lnd_vars%add_offsets(5)))*atm2lnd_vars%var_mult(5,dup_g,mon) + &
+                                         atm2lnd_vars%var_offset(5,dup_g,mon)), 0.0_r8)
+          forc_snowc = 0.1_R8 * (1.0_R8 - frac) * max((((cpl_bypass_input%atm_input(5,dup_g,1,tindex(5,2))*atm2lnd_vars%scale_factors(5)+ &
+                  atm2lnd_vars%add_offsets(5)))*atm2lnd_vars%var_mult(5,dup_g,mon) + atm2lnd_vars%var_offset(5,dup_g,mon)), 0.0_r8)
+          forc_snowl = 0.9_R8 * (1.0_R8 - frac) * max((((cpl_bypass_input%atm_input(5,dup_g,1,tindex(5,2))*atm2lnd_vars%scale_factors(5)+ &
+                  atm2lnd_vars%add_offsets(5))) * atm2lnd_vars%var_mult(5,dup_g,mon) + atm2lnd_vars%var_offset(5,dup_g,mon)), 0.0_r8)
+         end if
+
+         do topo = grc_pp%topi(g), grc_pp%topf(g)
+            top_as%tbot (topo) = atm2lnd_vars%forc_t_not_downscaled_grc(g)
+            top_as%thbot(topo) = atm2lnd_vars%forc_th_not_downscaled_grc(g)
+            top_as%pbot (topo) = atm2lnd_vars%forc_pbot_not_downscaled_grc(g)
+            top_as%qbot (topo) = atm2lnd_vars%forc_q_not_downscaled_grc(g)
+            top_as%ubot (topo) = atm2lnd_vars%forc_u_grc(g)
+            top_as%vbot (topo) = atm2lnd_vars%forc_v_grc(g)
+            top_as%ugust(topo) = 0._r8
+            top_as%zbot (topo) = atm2lnd_vars%forc_hgt_grc(g)
+
+            top_as%windbot(topo) = sqrt(top_as%ubot(topo)**2 + top_as%vbot(topo)**2)
+            ! Relative humidity (percent)
+            if (top_as%tbot(topo) > SHR_CONST_TKFRZ) then
+               e = esatw(tdc(top_as%tbot(topo)))
+            else
+               e = esati(tdc(top_as%tbot(topo)))
+            end if
+            qsat           = 0.622_r8*e / (top_as%pbot(topo) - 0.378_r8*e)
+            top_as%rhbot(topo) = 100.0_r8*(top_as%qbot(topo) / qsat)
+            ! partial pressure of oxygen (Pa)
+            top_as%po2bot(topo) = o2_molar_const * top_as%pbot(topo)
+
+            ! air density (kg/m**3) - uses a temporary calculation of water vapor pressure (Pa)
+            vp = top_as%qbot(topo) * top_as%pbot(topo)  / (0.622_r8 + 0.378_r8 * top_as%qbot(topo))
+            top_as%rhobot(topo) = (top_as%pbot(topo) - 0.378_r8 * vp) / (rair * top_as%tbot(topo))
+
+            ! second, all the flux forcings
+            top_af%rain(topo)    = forc_rainc + forc_rainl            ! sum of convective and large-scale rain
+            top_af%snow(topo)    = forc_snowc + forc_snowl            ! sum of convective and large-scale snow
+            top_af%solad(topo,2) = atm2lnd_vars%forc_solad_grc(g,2)   ! forc_sollxy  Atm flux  W/m^2
+            top_af%solad(topo,1) = atm2lnd_vars%forc_solad_grc(g,1)   ! forc_solsxy  Atm flux  W/m^2
+            top_af%solai(topo,2) = atm2lnd_vars%forc_solai_grc(g,2)   ! forc_solldxy Atm flux  W/m^2
+            top_af%solai(topo,1) = atm2lnd_vars%forc_solai_grc(g,1)   ! forc_solsdxy Atm flux  W/m^2
+            top_af%lwrad(topo)   = atm2lnd_vars%forc_lwrad_not_downscaled_grc(g)  ! flwdsxy Atm flux  W/m^2
+            ! derived flux forcings
+            top_af%solar(topo) = top_af%solad(topo,2) + top_af%solad(topo,1) + &
+                                 top_af%solai(topo,2) + top_af%solai(topo,1)
+            !
+            if(index_x2l_Sa_methane /= 0) then
+               top_as%pch4bot(topo) =  atm2lnd_vars%forc_pch4_grc(g)
+            end if
+
+         end do
+      end do
+      call shr_sys_flush(iulog)
+
+   end subroutine duplicate_lnd_points
+
   !===============================================================================
-  subroutine lnd_import( bounds, x2l, atm2lnd_vars, glc2lnd_vars)
+  subroutine lnd_import( bounds, x2l, atm2lnd_vars, glc2lnd_vars, lnd2atm_vars,cpl_bypass_input )
 
     !---------------------------------------------------------------------------
     ! !DESCRIPTION:
     ! Convert the input data from the coupler to the land model
     !
     ! !USES:
-    use clm_varctl       , only: co2_type, co2_ppmv, iulog, use_c13, create_glacier_mec_landunit, &
-                                 metdata_type, metdata_bypass, metdata_biases, co2_file, aero_file
-    use clm_varctl       , only: const_climate_hist, add_temperature, add_co2, use_cn
-    use clm_varctl       , only: startdate_add_temperature, startdate_add_co2
-    use clm_varcon       , only: rair, o2_molar_const, c13ratio
+    use elm_varctl       , only: co2_type, co2_ppmv, iulog, use_c13, create_glacier_mec_landunit, &
+                                 metdata_type, metdata_bypass, metdata_biases, co2_file, aero_file, use_atm_downscaling_to_topunit
+    use elm_varctl       , only: const_climate_hist, add_temperature, add_co2, use_cn, use_fates
+    use elm_varctl       , only: startdate_add_temperature, startdate_add_co2
+    use elm_varcon       , only: rair, o2_molar_const, c13ratio
     use clm_time_manager , only: get_nstep, get_step_size, get_curr_calday, get_curr_date
     use controlMod       , only: NLFilename
     use shr_const_mod    , only: SHR_CONST_TKFRZ, SHR_CONST_STEBOL
@@ -37,7 +232,10 @@ contains
     use shr_kind_mod     , only: r8 => shr_kind_r8, CL => shr_kind_CL
     use fileutils        , only: getavu, relavu
     use spmdmod          , only: masterproc, mpicom, iam, npes, MPI_REAL8, MPI_INTEGER, MPI_STATUS_SIZE
-    use clm_nlUtilsMod   , only : find_nlgroup_name
+    use elm_nlUtilsMod   , only : find_nlgroup_name
+    use FrictionVelocityMod, only: implicit_stress, atm_gustiness
+    use lnd_disagg_forc
+    use lnd_downscale_atm_forcing
     use netcdf
     !
     ! !ARGUMENTS:
@@ -45,6 +243,8 @@ contains
     real(r8)           , intent(in)    :: x2l(:,:) ! driver import state to land model
     type(atm2lnd_type) , intent(inout) :: atm2lnd_vars      ! clm internal input data type
     type(glc2lnd_type) , intent(inout) :: glc2lnd_vars      ! clm internal input data type
+    type(lnd2atm_type) , intent(in)    :: lnd2atm_vars
+    type(cplbypass_atminput_type), intent(inout) :: cpl_bypass_input
     !
     ! !LOCAL VARIABLES:
     integer  :: g,topo,i,m,thism,nstep,ier  ! indices, number of steps, and error code
@@ -87,10 +287,6 @@ contains
     real(r8) :: tbot, tempndep(1,1,158), thiscalday, wt1(14), wt2(14), thisdoy
     real(r8) :: site_metdata(14,12)
     real(r8) :: var_month_mean(12)
-    !real(r8) :: hdm1(720,360,1), hdm2(720,360,1)
-    !real(r8) :: lnfm1(192,94,2920)
-    !real(r8) :: ndep1(144,96,1), ndep2(144,96,1)
-    !real(r8) :: aerodata(14,144,96,14)
     integer  :: lnfmind(2)
     integer  :: var_month_count(12)
     integer*2 :: temp(1,500000)
@@ -149,13 +345,16 @@ contains
 
     namelist /ndepdyn_nml/        &
         stream_year_first_ndep,  &
-    stream_year_last_ndep,   &
+        stream_year_last_ndep,   &
         model_year_align_ndep,   &
         ndepmapalgo,             &
         stream_fldFileName_ndep
 
     stream_fldFileName_lightng = ' '
     stream_fldFileName_popdens = ' '
+
+    write(iulog, *) "Modified LND_IMPORT TO DUPLICATE -- REVERT IF DOING PRODUCTION RUNS"
+    call shr_sys_flush(iulog)
 
     co2_type_idx = 0
     if (co2_type == 'prognostic') then
@@ -176,18 +375,18 @@ contains
     ! Below the units are therefore given in mm/s.
 
     thisng = bounds%endg - bounds%begg + 1
-    do g = bounds%begg,bounds%endg
+    do g = bounds%begg, bounds%begg+42-1
        i = 1 + (g - bounds%begg)
 
        ! Determine flooding input, sign convention is positive downward and
        ! hierarchy is atm/glc/lnd/rof/ice/ocn.  so water sent from rof to land is negative,
        ! change the sign to indicate addition of water to system.
-
        atm2lnd_vars%forc_flood_grc(g)   = -x2l(index_x2l_Flrr_flood,i)
 
        atm2lnd_vars%volr_grc(g)   = x2l(index_x2l_Flrr_volr,i) * (ldomain%area(g) * 1.e6_r8)
        atm2lnd_vars%volrmch_grc(g)= x2l(index_x2l_Flrr_volrmch,i) * (ldomain%area(g) * 1.e6_r8)
        atm2lnd_vars%supply_grc(g) = x2l(index_x2l_Flrr_supply,i)
+       atm2lnd_vars%deficit_grc(g) = x2l(index_x2l_Flrr_deficit,i)
 
        ! Determine required receive fields
 
@@ -199,7 +398,7 @@ contains
         !Get meteorological data, concatenated to include whole record
         !Note we only do this at the first timestep and keep the whole forcing dataset in the memory
 
-  !-----------------------------------Meteorological forcing  -----------------------------------
+        !-----------------------------------Meteorological forcing  -----------------------------------
 
         call get_curr_date( yr, mon, day, tod )
         thiscalday = get_curr_calday()
@@ -413,8 +612,6 @@ contains
             ierr = nf90_inq_varid(met_ncids(v), trim(metvars(v)), varid)
             !get the conversion factors
             ierr = nf90_get_att(met_ncids(v), varid, 'scale_factor', atm2lnd_vars%scale_factors(v))
-            !if(ierr.ne. 0) atm2lnd_vars%scale_factors(v) = 1.0d0
-
             ierr = nf90_get_att(met_ncids(v), varid, 'add_offset', atm2lnd_vars%add_offsets(v))
             !get the met data
             starti(1) = 1
@@ -424,10 +621,11 @@ contains
             if (.not. const_climate_hist .and. (yr .ge. 1850 .or. use_sitedata)) counti(1) = atm2lnd_vars%timelen(v)
 
             if (i == 1 .and. v == 1)  then
-              allocate(atm2lnd_vars%atm_input       (met_nvars,bounds%begg:bounds%endg,1,1:counti(1)))
+              allocate(cpl_bypass_input%atm_input       (met_nvars,bounds%begg:bounds%endg,1,1:counti(1)))
+              print *, "met_nvars, bounds%endg, counti(1):",met_nvars,bounds%endg,counti(1) 
             end if
 
-            ierr = nf90_get_var(met_ncids(v), varid, atm2lnd_vars%atm_input(v,g:g,1,1:counti(1)), starti(1:2), counti(1:2))
+            ierr = nf90_get_var(met_ncids(v), varid, cpl_bypass_input%atm_input(v,g:g,1,1:counti(1)), starti(1:2), counti(1:2))
             ierr = nf90_close(met_ncids(v))
 
             if (use_sitedata .and. v == 1) then
@@ -449,9 +647,9 @@ contains
                 do m=1,12
                   if (thisdoy .ge. caldaym(m) .and. thisdoy .lt. caldaym(m+1)) thism = m
                 enddo
-                var_month_mean(thism) = var_month_mean(thism) + (atm2lnd_vars%atm_input(v,g,1,i)* &
+                var_month_mean(thism) = var_month_mean(thism) + (cpl_bypass_input%atm_input(v,g,1,i)* &
                                           atm2lnd_vars%scale_factors(v) + atm2lnd_vars%add_offsets(v))
-                var_month_count(thism) = var_month_count(thism)+1
+                var_month_count(thism)= var_month_count(thism)+1
               end do
 
               do m = 1,12
@@ -487,7 +685,7 @@ contains
             if (atm2lnd_vars%tindex(g,v,1) == 0) then
               atm2lnd_vars%tindex(g,v,1) = atm2lnd_vars%timelen(v)
               if (yr .le. atm2lnd_vars%endyear_met_spinup) atm2lnd_vars%tindex(g,v,1) = atm2lnd_vars%timelen_spinup(v)
-             end if
+            end if
           end do    !end variable loop
         else
           do v=1,met_nvars
@@ -546,25 +744,25 @@ contains
         end do
 
         !Air temperature
-        atm2lnd_vars%forc_t_not_downscaled_grc(g)  = min(((atm2lnd_vars%atm_input(1,g,1,tindex(1,1))*atm2lnd_vars%scale_factors(1)+ &
-                                                      atm2lnd_vars%add_offsets(1))*wt1(1) + (atm2lnd_vars%atm_input(1,g,1,tindex(1,2))* &
+        atm2lnd_vars%forc_t_not_downscaled_grc(g)  = min(((cpl_bypass_input%atm_input(1,g,1,tindex(1,1))*atm2lnd_vars%scale_factors(1)+ &
+                                                      atm2lnd_vars%add_offsets(1))*wt1(1) + (cpl_bypass_input%atm_input(1,g,1,tindex(1,2))* &
                                                       atm2lnd_vars%scale_factors(1)+atm2lnd_vars%add_offsets(1))*wt2(1)) * &
                                                       atm2lnd_vars%var_mult(1,g,mon) + atm2lnd_vars%var_offset(1,g,mon), 323._r8)
-        atm2lnd_vars%forc_th_not_downscaled_grc(g) = min(((atm2lnd_vars%atm_input(1,g,1,tindex(1,1))*atm2lnd_vars%scale_factors(1)+ &
-                                                      atm2lnd_vars%add_offsets(1))*wt1(1) + (atm2lnd_vars%atm_input(1,g,1,tindex(1,2))* &
+        atm2lnd_vars%forc_th_not_downscaled_grc(g) = min(((cpl_bypass_input%atm_input(1,g,1,tindex(1,1))*atm2lnd_vars%scale_factors(1)+ &
+                                                      atm2lnd_vars%add_offsets(1))*wt1(1) + (cpl_bypass_input%atm_input(1,g,1,tindex(1,2))* &
                                                       atm2lnd_vars%scale_factors(1)+atm2lnd_vars%add_offsets(1))*wt2(1)) * &
                                                       atm2lnd_vars%var_mult(1,g,mon) + atm2lnd_vars%var_offset(1,g,mon), 323._r8)
 
         tbot = atm2lnd_vars%forc_t_not_downscaled_grc(g)
 
         !Air pressure
-        atm2lnd_vars%forc_pbot_not_downscaled_grc(g) = max(((atm2lnd_vars%atm_input(2,g,1,tindex(2,1))*atm2lnd_vars%scale_factors(2)+ &
-                                                        atm2lnd_vars%add_offsets(2))*wt1(2) + (atm2lnd_vars%atm_input(2,g,1,tindex(2,2)) &
+        atm2lnd_vars%forc_pbot_not_downscaled_grc(g) = max(((cpl_bypass_input%atm_input(2,g,1,tindex(2,1))*atm2lnd_vars%scale_factors(2)+ &
+                                                        atm2lnd_vars%add_offsets(2))*wt1(2) + (cpl_bypass_input%atm_input(2,g,1,tindex(2,2)) &
                                                         *atm2lnd_vars%scale_factors(2)+atm2lnd_vars%add_offsets(2))*wt2(2)) * &
                                                         atm2lnd_vars%var_mult(2,g,mon) + atm2lnd_vars%var_offset(2,g,mon), 4e4_r8)
         !Specific humidity
-        atm2lnd_vars%forc_q_not_downscaled_grc(g) = max(((atm2lnd_vars%atm_input(3,g,1,tindex(3,1))*atm2lnd_vars%scale_factors(3)+ &
-                                                     atm2lnd_vars%add_offsets(3))*wt1(3) + (atm2lnd_vars%atm_input(3,g,1,tindex(3,2)) &
+        atm2lnd_vars%forc_q_not_downscaled_grc(g) = max(((cpl_bypass_input%atm_input(3,g,1,tindex(3,1))*atm2lnd_vars%scale_factors(3)+ &
+                                                     atm2lnd_vars%add_offsets(3))*wt1(3) + (cpl_bypass_input%atm_input(3,g,1,tindex(3,2)) &
                                                      *atm2lnd_vars%scale_factors(3)+atm2lnd_vars%add_offsets(3))*wt2(3)) * &
                                                      atm2lnd_vars%var_mult(3,g,mon) + atm2lnd_vars%var_offset(3,g,mon), 1e-9_r8)
 
@@ -579,8 +777,8 @@ contains
         end if
 
         !use longwave from file if provided
-        atm2lnd_vars%forc_lwrad_not_downscaled_grc(g) = ((atm2lnd_vars%atm_input(7,g,1,tindex(7,1))*atm2lnd_vars%scale_factors(7)+ &
-                                                        atm2lnd_vars%add_offsets(7))*wt1(7) + (atm2lnd_vars%atm_input(7,g,1,tindex(7,2)) &
+        atm2lnd_vars%forc_lwrad_not_downscaled_grc(g) = ((cpl_bypass_input%atm_input(7,g,1,tindex(7,1))*atm2lnd_vars%scale_factors(7)+ &
+                                                        atm2lnd_vars%add_offsets(7))*wt1(7) + (cpl_bypass_input%atm_input(7,g,1,tindex(7,2)) &
                                                         *atm2lnd_vars%scale_factors(7)+atm2lnd_vars%add_offsets(7))*wt2(7)) * &
                                                         atm2lnd_vars%var_mult(7,g,mon) + atm2lnd_vars%var_offset(7,g,mon)
         if (atm2lnd_vars%forc_lwrad_not_downscaled_grc(g) .le. 50 .or. atm2lnd_vars%forc_lwrad_not_downscaled_grc(g) .ge. 600) then
@@ -624,26 +822,26 @@ contains
         if (atm2lnd_vars%metsource == 5) then
             wt2(4)=1.0   !cosz interp not working
             wt2(8:10)=1.0
-            swndf = max(((atm2lnd_vars%atm_input(4,g,1,tindex(4,2))*atm2lnd_vars%scale_factors(4)+ &
+            swndf = max(((cpl_bypass_input%atm_input(4,g,1,tindex(4,2))*atm2lnd_vars%scale_factors(4)+ &
                                      atm2lnd_vars%add_offsets(4))*wt2(4)), 0.0_r8)
-            swndr = max(((atm2lnd_vars%atm_input(8,g,1,tindex(8,2))*atm2lnd_vars%scale_factors(8)+ &
+            swndr = max(((cpl_bypass_input%atm_input(8,g,1,tindex(8,2))*atm2lnd_vars%scale_factors(8)+ &
                                      atm2lnd_vars%add_offsets(8))*wt2(8)), 0.0_r8)
-            swvdf = max(((atm2lnd_vars%atm_input(9,g,1,tindex(9,2))*atm2lnd_vars%scale_factors(9)+ &
+            swvdf = max(((cpl_bypass_input%atm_input(9,g,1,tindex(9,2))*atm2lnd_vars%scale_factors(9)+ &
                                      atm2lnd_vars%add_offsets(9))*wt2(9)), 0.0_r8)
-            swvdr = max(((atm2lnd_vars%atm_input(10,g,1,tindex(10,2))*atm2lnd_vars%scale_factors(10)+ &
+            swvdr = max(((cpl_bypass_input%atm_input(10,g,1,tindex(10,2))*atm2lnd_vars%scale_factors(10)+ &
                                      atm2lnd_vars%add_offsets(10))*wt2(10)), 0.0_r8)
             atm2lnd_vars%forc_solad_grc(g,2) = swndr
             atm2lnd_vars%forc_solad_grc(g,1) = swvdr
             atm2lnd_vars%forc_solai_grc(g,2) = swndf
             atm2lnd_vars%forc_solai_grc(g,1) = swvdf
         else
-            swndr = max(((atm2lnd_vars%atm_input(4,g,1,tindex(4,2))*atm2lnd_vars%scale_factors(4)+ &
+            swndr = max(((cpl_bypass_input%atm_input(4,g,1,tindex(4,2))*atm2lnd_vars%scale_factors(4)+ &
                                      atm2lnd_vars%add_offsets(4))*wt2(4)) * 0.50_R8, 0.0_r8)
-            swndf = max(((atm2lnd_vars%atm_input(4,g,1,tindex(4,2))*atm2lnd_vars%scale_factors(4)+ &
+            swndf = max(((cpl_bypass_input%atm_input(4,g,1,tindex(4,2))*atm2lnd_vars%scale_factors(4)+ &
                                     atm2lnd_vars%add_offsets(4))*wt2(4))*0.50_R8, 0.0_r8)
-            swvdr = max(((atm2lnd_vars%atm_input(4,g,1,tindex(4,2))*atm2lnd_vars%scale_factors(4)+ &
+            swvdr = max(((cpl_bypass_input%atm_input(4,g,1,tindex(4,2))*atm2lnd_vars%scale_factors(4)+ &
                                     atm2lnd_vars%add_offsets(4))*wt2(4))*0.50_R8, 0.0_r8)
-            swvdf = max(((atm2lnd_vars%atm_input(4,g,1,tindex(4,2))*atm2lnd_vars%scale_factors(4)+ &
+            swvdf = max(((cpl_bypass_input%atm_input(4,g,1,tindex(4,2))*atm2lnd_vars%scale_factors(4)+ &
                                     atm2lnd_vars%add_offsets(4))*wt2(4))*0.50_R8, 0.0_r8)
             ratio_rvrf =   min(0.99_R8,max(0.29548_R8 + 0.00504_R8*swndr &
                            -1.4957e-05_R8*swndr**2 + 1.4881e-08_R8*swndr**3,0.01_R8))
@@ -656,46 +854,46 @@ contains
         end if
         !Rain and snow
         if (atm2lnd_vars%metsource == 5) then
-          forc_rainc = max((((atm2lnd_vars%atm_input(5,g,1,tindex(5,2))*atm2lnd_vars%scale_factors(5)+ &
+          forc_rainc = max((((cpl_bypass_input%atm_input(5,g,1,tindex(5,2))*atm2lnd_vars%scale_factors(5)+ &
                                         atm2lnd_vars%add_offsets(5)))*atm2lnd_vars%var_mult(5,g,mon) + &
                                         atm2lnd_vars%var_offset(5,g,mon)), 0.0_r8)
-          forc_rainl = max((((atm2lnd_vars%atm_input(11,g,1,tindex(11,2))*atm2lnd_vars%scale_factors(11)+ &
+          forc_rainl = max((((cpl_bypass_input%atm_input(11,g,1,tindex(11,2))*atm2lnd_vars%scale_factors(11)+ &
                                         atm2lnd_vars%add_offsets(11)))*atm2lnd_vars%var_mult(11,g,mon) + &
                                         atm2lnd_vars%var_offset(11,g,mon)), 0.0_r8)
-          forc_snowc = max((((atm2lnd_vars%atm_input(12,g,1,tindex(12,2))*atm2lnd_vars%scale_factors(12)+ &
+          forc_snowc = max((((cpl_bypass_input%atm_input(12,g,1,tindex(12,2))*atm2lnd_vars%scale_factors(12)+ &
                                         atm2lnd_vars%add_offsets(12)))*atm2lnd_vars%var_mult(12,g,mon) + &
                                         atm2lnd_vars%var_offset(12,g,mon)), 0.0_r8)
-          forc_snowl = max((((atm2lnd_vars%atm_input(13,g,1,tindex(13,2))*atm2lnd_vars%scale_factors(13)+ &
+          forc_snowl = max((((cpl_bypass_input%atm_input(13,g,1,tindex(13,2))*atm2lnd_vars%scale_factors(13)+ &
                                         atm2lnd_vars%add_offsets(13)))*atm2lnd_vars%var_mult(13,g,mon) + &
                                           atm2lnd_vars%var_offset(13,g,mon)), 0.0_r8)
         else
           frac = (atm2lnd_vars%forc_t_not_downscaled_grc(g) - SHR_CONST_TKFRZ)*0.5_R8       ! ramp near freezing
           frac = min(1.0_R8,max(0.0_R8,frac))           ! bound in [0,1]
           !Don't interpolate rainfall data
-          forc_rainc = 0.1_R8 * frac * max((((atm2lnd_vars%atm_input(5,g,1,tindex(5,2))*atm2lnd_vars%scale_factors(5)+ &
+          forc_rainc = 0.1_R8 * frac * max((((cpl_bypass_input%atm_input(5,g,1,tindex(5,2))*atm2lnd_vars%scale_factors(5)+ &
                                         atm2lnd_vars%add_offsets(5)))*atm2lnd_vars%var_mult(5,g,mon) + &
                                         atm2lnd_vars%var_offset(5,g,mon)), 0.0_r8)
-          forc_rainl = 0.9_R8 * frac * max((((atm2lnd_vars%atm_input(5,g,1,tindex(5,2))*atm2lnd_vars%scale_factors(5)+ &
+          forc_rainl = 0.9_R8 * frac * max((((cpl_bypass_input%atm_input(5,g,1,tindex(5,2))*atm2lnd_vars%scale_factors(5)+ &
                                          atm2lnd_vars%add_offsets(5)))*atm2lnd_vars%var_mult(5,g,mon) + &
                                          atm2lnd_vars%var_offset(5,g,mon)), 0.0_r8)
-          forc_snowc = 0.1_R8 * (1.0_R8 - frac) * max((((atm2lnd_vars%atm_input(5,g,1,tindex(5,2))*atm2lnd_vars%scale_factors(5)+ &
+          forc_snowc = 0.1_R8 * (1.0_R8 - frac) * max((((cpl_bypass_input%atm_input(5,g,1,tindex(5,2))*atm2lnd_vars%scale_factors(5)+ &
                   atm2lnd_vars%add_offsets(5)))*atm2lnd_vars%var_mult(5,g,mon) + atm2lnd_vars%var_offset(5,g,mon)), 0.0_r8)
-          forc_snowl = 0.9_R8 * (1.0_R8 - frac) * max((((atm2lnd_vars%atm_input(5,g,1,tindex(5,2))*atm2lnd_vars%scale_factors(5)+ &
+          forc_snowl = 0.9_R8 * (1.0_R8 - frac) * max((((cpl_bypass_input%atm_input(5,g,1,tindex(5,2))*atm2lnd_vars%scale_factors(5)+ &
                   atm2lnd_vars%add_offsets(5))) * atm2lnd_vars%var_mult(5,g,mon) + atm2lnd_vars%var_offset(5,g,mon)), 0.0_r8)
         end if
         !Wind
-        atm2lnd_vars%forc_u_grc(g) = (atm2lnd_vars%atm_input(6,g,1,tindex(6,1))*atm2lnd_vars%scale_factors(6)+ &
-                                     atm2lnd_vars%add_offsets(6))*wt1(6) + (atm2lnd_vars%atm_input(6,g,1,tindex(6,2))* &
+        atm2lnd_vars%forc_u_grc(g) = (cpl_bypass_input%atm_input(6,g,1,tindex(6,1))*atm2lnd_vars%scale_factors(6)+ &
+                                     atm2lnd_vars%add_offsets(6))*wt1(6) + (cpl_bypass_input%atm_input(6,g,1,tindex(6,2))* &
                                      atm2lnd_vars%scale_factors(6)+atm2lnd_vars%add_offsets(6))*wt2(6)
         if (atm2lnd_vars%metsource == 5) then
-          atm2lnd_vars%forc_v_grc(g) = (atm2lnd_vars%atm_input(14,g,1,tindex(14,1))*atm2lnd_vars%scale_factors(14)+ &
-                                     atm2lnd_vars%add_offsets(14))*wt1(14) + (atm2lnd_vars%atm_input(14,g,1,tindex(14,2))* &
+          atm2lnd_vars%forc_v_grc(g) = (cpl_bypass_input%atm_input(14,g,1,tindex(14,1))*atm2lnd_vars%scale_factors(14)+ &
+                                     atm2lnd_vars%add_offsets(14))*wt1(14) + (cpl_bypass_input%atm_input(14,g,1,tindex(14,2))* &
                                      atm2lnd_vars%scale_factors(14)+atm2lnd_vars%add_offsets(14))*wt2(14)
         else
             atm2lnd_vars%forc_v_grc(g) = 0.0_R8
         end if
-        atm2lnd_vars%forc_hgt_grc(g) = 30.0_R8 !(atm2lnd_vars%atm_input(8,g,1,tindex(1))*wt1 + &
-                                             !atm2lnd_vars%atm_input(8,g,1,tindex(2))*wt2)    ! zgcmxy  Atm state, default=30m
+        atm2lnd_vars%forc_hgt_grc(g) = 30.0_R8 !(cpl_bypass_input%atm_input(8,g,1,tindex(1))*wt1 + &
+                                             !cpl_bypass_input%atm_input(8,g,1,tindex(2))*wt2)    ! zgcmxy  Atm state, default=30m
 
   !------------------------------------Fire data -------------------------------------------------------
 
@@ -704,7 +902,7 @@ contains
         if (yr .lt. 1850 .or. const_climate_hist) nindex(1:2) = 2
         if (yr .ge. 2010 .and. .not. const_climate_hist) nindex(1:2) = 161
 
-        if (use_cn) then
+        model_filter: if (use_cn .or. use_fates) then
           if (atm2lnd_vars%loaded_bypassdata == 0 .or. (mon .eq. 1 .and. day .eq. 1 .and. tod .eq. 0)) then
             if (masterproc .and. i .eq. 1) then
               ! Read pop_dens streams namelist to get filename
@@ -739,7 +937,7 @@ contains
                   atm2lnd_vars%hdm2 = atm2lnd_vars%hdm1
               end if
               ierr = nf90_close(ncid)
-            end if
+            end if !if master proc
 
             if (i .eq. 1) then
               call mpi_bcast (atm2lnd_vars%hdm1, 360*720, MPI_REAL8, 0, mpicom, ier)
@@ -747,7 +945,8 @@ contains
               call mpi_bcast (smap05_lon, 720, MPI_REAL8, 0, mpicom, ier)
               call mpi_bcast (smap05_lat, 360, MPI_REAL8, 0, mpicom, ier)
             end if
-          end if
+
+          end if ! if loaded_bypass data
 
           !figure out which point to get
           if (atm2lnd_vars%loaded_bypassdata == 0) then
@@ -845,8 +1044,7 @@ contains
           !Lightning data is 3-hourly.  Does not currently interpolate.
           atm2lnd_vars%forc_lnfm(g) = atm2lnd_vars%lnfm(g, ((int(thiscalday)-1)*8+tod/(3600*3))+1)
 
-   !------------------------------------Nitrogen deposition----------------------------------------------
-
+          !------------------Nitrogen deposition---------------------------
           !DMR note - ndep will NOT be correct if more than 1850 years of model
           !spinup (model year > 1850)
           nindex(1) = min(max(yr-1848,2), 168)
@@ -864,7 +1062,7 @@ contains
                 end if
               end if
               close(nu_nml)
-              call relavu( nu_nml )
+              call relavu(nu_nml)
 
               ierr = nf90_open(trim(stream_fldFileName_ndep), nf90_nowrite, ncid)
               ierr = nf90_inq_varid(ncid, 'lat', varid)
@@ -921,7 +1119,7 @@ contains
 
           atm2lnd_vars%forc_ndep_grc(g)    = (atm2lnd_vars%ndep1(atm2lnd_vars%ndepind(g,1),atm2lnd_vars%ndepind(g,2),1)*wt1(1) + &
                                               atm2lnd_vars%ndep2(atm2lnd_vars%ndepind(g,1),atm2lnd_vars%ndepind(g,2),1)*wt2(1)) / (365._r8 * 86400._r8)
-        end if
+       endif model_filter
 
    !------------------------------------Aerosol forcing--------------------------------------------------
         if (atm2lnd_vars%loaded_bypassdata .eq. 0 .or. (mon .eq. 1 .and. day .eq. 1 .and. tod .eq. 0)) then
@@ -962,7 +1160,7 @@ contains
         end if
 
         !Use ndep grid indices since they're on the same grid
-        if (atm2lnd_vars%loaded_bypassdata .eq. 0 .and. .not. use_cn) then
+        if (atm2lnd_vars%loaded_bypassdata .eq. 0 .and. (.not. (use_fates .or. use_cn) )   ) then
             mindist=99999
             do thisx = 1,144
               do thisy = 1,96
@@ -996,7 +1194,7 @@ contains
         wt2(1) = 1._r8 - wt1(1)
 
         do av = 1,14
-          atm2lnd_vars%forc_aer_grc(g,av)  =  atm2lnd_vars%aerodata(av,atm2lnd_vars%ndepind(g,1), &
+           atm2lnd_vars%forc_aer_grc(g,av)  =  atm2lnd_vars%aerodata(av,atm2lnd_vars%ndepind(g,1), &
             atm2lnd_vars%ndepind(g,2),aindex(1))*wt1(1)+atm2lnd_vars%aerodata(av,atm2lnd_vars%ndepind(g,1), &
             atm2lnd_vars%ndepind(g,2),aindex(2))*wt2(1)
         end do
@@ -1030,10 +1228,18 @@ contains
          top_as%qbot(topo)    = atm2lnd_vars%forc_q_not_downscaled_grc(g)      ! forc_qxy  Atm state kg/kg
          top_as%ubot(topo)    = atm2lnd_vars%forc_u_grc(g)                     ! forc_uxy  Atm state m/s
          top_as%vbot(topo)    = atm2lnd_vars%forc_v_grc(g)                     ! forc_vxy  Atm state m/s
+         if (implicit_stress) then
+            top_as%wsresp(topo)  = 0._r8                                       !           Atm state m/s/Pa
+            top_as%tau_est(topo) = 0._r8                                       !           Atm state Pa
+         end if
+         top_as%ugust(topo) = 0._r8                                            !           Atm state m/s
          top_as%zbot(topo)    = atm2lnd_vars%forc_hgt_grc(g)                   ! zgcmxy    Atm state m
          ! assign the state forcing fields derived from other inputs
          ! Horizontal windspeed (m/s)
          top_as%windbot(topo) = sqrt(top_as%ubot(topo)**2 + top_as%vbot(topo)**2)
+         if (atm_gustiness) then
+            top_as%windbot(topo) = top_as%windbot(topo) + top_as%ugust(topo)
+         end if
          ! Relative humidity (percent)
          if (top_as%tbot(topo) > SHR_CONST_TKFRZ) then
             e = esatw(tdc(top_as%tbot(topo)))
@@ -1100,49 +1306,73 @@ contains
        atm2lnd_vars%forc_aer_grc(g,14) =  x2l(index_x2l_Faxa_dstdry4,i)
 
        !set the topounit-level atmospheric state and flux forcings
-       do topo = grc_pp%topi(g), grc_pp%topf(g)
-         ! first, all the state forcings
-         top_as%tbot(topo)    = x2l(index_x2l_Sa_tbot,i)      ! forc_txy  Atm state K
-         top_as%thbot(topo)   = x2l(index_x2l_Sa_ptem,i)      ! forc_thxy Atm state K
-         top_as%pbot(topo)    = x2l(index_x2l_Sa_pbot,i)      ! ptcmxy    Atm state Pa
-         top_as%qbot(topo)    = x2l(index_x2l_Sa_shum,i)      ! forc_qxy  Atm state kg/kg
-         top_as%ubot(topo)    = x2l(index_x2l_Sa_u,i)         ! forc_uxy  Atm state m/s
-         top_as%vbot(topo)    = x2l(index_x2l_Sa_v,i)         ! forc_vxy  Atm state m/s
-         top_as%zbot(topo)    = x2l(index_x2l_Sa_z,i)         ! zgcmxy    Atm state m
-         ! assign the state forcing fields derived from other inputs
-         ! Horizontal windspeed (m/s)
-         top_as%windbot(topo) = sqrt(top_as%ubot(topo)**2 + top_as%vbot(topo)**2)
-         ! Relative humidity (percent)
-         if (top_as%tbot(topo) > SHR_CONST_TKFRZ) then
-            e = esatw(tdc(top_as%tbot(topo)))
-         else
-            e = esati(tdc(top_as%tbot(topo)))
+       if (use_atm_downscaling_to_topunit) then
+          if(atm_gustiness) then
+             call endrun("Error: atm_gustiness not yet supported with multiple topounits")
+          end if
+         do topo = grc_pp%topi(g) , grc_pp%topf(g)
+            top_as%ugust(topo) = 0._r8
+         end do
+
+         call downscale_atm_forcing_to_topounit(g, i, x2l, lnd2atm_vars)
+       else
+
+         do topo = grc_pp%topi(g), grc_pp%topf(g)
+           ! first, all the state forcings
+           top_as%tbot(topo)    = x2l(index_x2l_Sa_tbot,i)      ! forc_txy  Atm state K
+           top_as%thbot(topo)   = x2l(index_x2l_Sa_ptem,i)      ! forc_thxy Atm state K
+           top_as%pbot(topo)    = x2l(index_x2l_Sa_pbot,i)      ! ptcmxy    Atm state Pa
+           top_as%qbot(topo)    = x2l(index_x2l_Sa_shum,i)      ! forc_qxy  Atm state kg/kg
+           top_as%ubot(topo)    = x2l(index_x2l_Sa_u,i)         ! forc_uxy  Atm state m/s
+           top_as%vbot(topo)    = x2l(index_x2l_Sa_v,i)         ! forc_vxy  Atm state m/s
+           top_as%zbot(topo)    = x2l(index_x2l_Sa_z,i)         ! zgcmxy    Atm state m
+         if (implicit_stress) then
+            top_as%wsresp(topo)  = x2l(index_x2l_Sa_wsresp,i) !           Atm state m/s/Pa
+            top_as%tau_est(topo) = x2l(index_x2l_Sa_tau_est,i)!           Atm state Pa
          end if
-         qsat = 0.622_r8*e / (top_as%pbot(topo) - 0.378_r8*e)
-         top_as%rhbot(topo) = 100.0_r8*(top_as%qbot(topo) / qsat)
-         ! partial pressure of oxygen (Pa)
-         top_as%po2bot(topo) = o2_molar_const * top_as%pbot(topo)
-         ! air density (kg/m**3) - uses a temporary calculation of water vapor pressure (Pa)
-         vp = top_as%qbot(topo) * top_as%pbot(topo)  / (0.622_r8 + 0.378_r8 * top_as%qbot(topo))
-         top_as%rhobot(topo) = (top_as%pbot(topo) - 0.378_r8 * vp) / (rair * top_as%tbot(topo))
+         if (atm_gustiness) then
+            top_as%ugust(topo)  = x2l(index_x2l_Sa_ugust,i)   !           Atm state m/s
+         else
+            top_as%ugust(topo) = 0._r8
+         end if
+           ! assign the state forcing fields derived from other inputs
+           ! Horizontal windspeed (m/s)
+           top_as%windbot(topo) = sqrt(top_as%ubot(topo)**2 + top_as%vbot(topo)**2)
+         if (atm_gustiness) then
+            top_as%windbot(topo) = top_as%windbot(topo) + top_as%ugust(topo)
+         end if
+           ! Relative humidity (percent)
+           if (top_as%tbot(topo) > SHR_CONST_TKFRZ) then
+            e = esatw(tdc(top_as%tbot(topo)))
+           else
+            e = esati(tdc(top_as%tbot(topo)))
+           end if
+           qsat = 0.622_r8*e / (top_as%pbot(topo) - 0.378_r8*e)
+           top_as%rhbot(topo) = 100.0_r8*(top_as%qbot(topo) / qsat)
+           ! partial pressure of oxygen (Pa)
+           top_as%po2bot(topo) = o2_molar_const * top_as%pbot(topo)
+           ! air density (kg/m**3) - uses a temporary calculation of water vapor pressure (Pa)
+           vp = top_as%qbot(topo) * top_as%pbot(topo)  / (0.622_r8 + 0.378_r8 * top_as%qbot(topo))
+           top_as%rhobot(topo) = (top_as%pbot(topo) - 0.378_r8 * vp) / (rair * top_as%tbot(topo))
 
-         ! second, all the flux forcings
-         top_af%rain(topo)    = forc_rainc + forc_rainl       ! sum of convective and large-scale rain
-         top_af%snow(topo)    = forc_snowc + forc_snowl       ! sum of convective and large-scale snow
-         top_af%solad(topo,2) = x2l(index_x2l_Faxa_swndr,i)   ! forc_sollxy  Atm flux  W/m^2
-         top_af%solad(topo,1) = x2l(index_x2l_Faxa_swvdr,i)   ! forc_solsxy  Atm flux  W/m^2
-         top_af%solai(topo,2) = x2l(index_x2l_Faxa_swndf,i)   ! forc_solldxy Atm flux  W/m^2
-         top_af%solai(topo,1) = x2l(index_x2l_Faxa_swvdf,i)   ! forc_solsdxy Atm flux  W/m^2
-         top_af%lwrad(topo)   = x2l(index_x2l_Faxa_lwdn,i)    ! flwdsxy Atm flux  W/m^2
-         ! derived flux forcings
-         top_af%solar(topo) = top_af%solad(topo,2) + top_af%solad(topo,1) + &
+           ! second, all the flux forcings
+           top_af%rain(topo)    = forc_rainc + forc_rainl       ! sum of convective and large-scale rain
+           top_af%snow(topo)    = forc_snowc + forc_snowl       ! sum of convective and large-scale snow
+           top_af%solad(topo,2) = x2l(index_x2l_Faxa_swndr,i)   ! forc_sollxy  Atm flux  W/m^2
+           top_af%solad(topo,1) = x2l(index_x2l_Faxa_swvdr,i)   ! forc_solsxy  Atm flux  W/m^2
+           top_af%solai(topo,2) = x2l(index_x2l_Faxa_swndf,i)   ! forc_solldxy Atm flux  W/m^2
+           top_af%solai(topo,1) = x2l(index_x2l_Faxa_swvdf,i)   ! forc_solsdxy Atm flux  W/m^2
+           top_af%lwrad(topo)   = x2l(index_x2l_Faxa_lwdn,i)    ! flwdsxy Atm flux  W/m^2
+           ! derived flux forcings
+           top_af%solar(topo) = top_af%solad(topo,2) + top_af%solad(topo,1) + &
                               top_af%solai(topo,2) + top_af%solai(topo,1)
-       end do
-
+         end do
+       end if
 #endif
 
        ! Determine optional receive fields
        ! CO2 (and C13O2) concentration: constant, prognostic, or diagnostic
+       co2_type_idx = 0
        if (co2_type_idx == 0) then                    ! CO2 constant, value from namelist
          co2_ppmv_val = co2_ppmv
        else if (co2_type_idx == 1) then               ! CO2 prognostic, value from coupler field
@@ -1153,7 +1383,7 @@ contains
          call endrun( sub//' ERROR: Invalid co2_type_idx, must be 0, 1, or 2 (constant, prognostic, or diagnostic)' )
        end if
        ! Assign to topounits, with conversion from ppmv to partial pressure (Pa)
-       ! If using C13, then get the c13ratio from clm_varcon (constant value for pre-industrial atmosphere)
+       ! If using C13, then get the c13ratio from elm_varcon (constant value for pre-industrial atmosphere)
 
        do topo = grc_pp%topi(g), grc_pp%topf(g)
          top_as%pco2bot(topo) = co2_ppmv_val * 1.e-6_r8 * top_as%pbot(topo)
@@ -1217,7 +1447,7 @@ contains
        ! Determine derived quantities for optional fields
        ! Note that the following does unit conversions from ppmv to partial pressures (Pa)
        ! Note that forc_pbot is in Pa
-
+       !
 #ifdef CPL_BYPASS
        co2_type_idx = 2
 #endif
@@ -1309,11 +1539,11 @@ contains
 
     !---------------------------------------------------------------------------
     ! !DESCRIPTION:
-    ! Convert the data to be sent from the clm model to the coupler
+    ! Convert the data to be sent from the elm model to the coupler
     !
     ! !USES:
     use shr_kind_mod       , only : r8 => shr_kind_r8
-    use clm_varctl         , only : iulog, create_glacier_mec_landunit
+    use elm_varctl         , only : iulog, create_glacier_mec_landunit
     use clm_time_manager   , only : get_nstep, get_step_size
     use domainMod          , only : ldomain
     use seq_drydep_mod     , only : n_drydep
@@ -1334,6 +1564,8 @@ contains
     integer  :: num   ! counter
     character(len=*), parameter :: sub = 'lnd_export_mct'
     !---------------------------------------------------------------------------
+
+    dtime = get_step_size()
 
     ! cesm sign convention is that fluxes are positive downward
 
@@ -1406,7 +1638,8 @@ contains
        endif
        l2x(index_l2x_Flrl_Tqsur,i)  = lnd2atm_vars%Tqsur_grc(g)
        l2x(index_l2x_Flrl_Tqsub,i)  = lnd2atm_vars%Tqsub_grc(g)
-
+       l2x(index_l2x_coszen_str,i) = lnd2atm_vars%coszen_str(g)
+       l2x(index_l2x_Flrl_wslake,i) = lnd2atm_vars%wslake_grc(g)/dtime
        ! glc coupling
 
        if (create_glacier_mec_landunit) then

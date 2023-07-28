@@ -205,22 +205,37 @@ module GridcellDataType
   !-----------------------------------------------------------------------
   ! declare the public instances of gridcell-level data types
   !-----------------------------------------------------------------------
-  type(gridcell_energy_state)          , public, target :: grc_es     ! gridcell energy state
-  type(gridcell_energy_flux)           , public, target :: grc_ef     ! gridcell energy flux
-  type(gridcell_water_state)           , public, target :: grc_ws     ! gridcell water state
-  type(gridcell_water_flux)            , public, target :: grc_wf     ! gridcell water flux
-  type(gridcell_carbon_state)          , public, target :: grc_cs     ! gridcell carbon state
-  type(gridcell_carbon_state)          , public, target :: c13_grc_cs ! gridcell carbon state (C13)
-  type(gridcell_carbon_state)          , public, target :: c14_grc_cs ! gridcell carbon state (C14)
-  type(gridcell_carbon_flux)           , public, target :: grc_cf     ! gridcell carbon flux
-  type(gridcell_carbon_flux)           , public, target :: c13_grc_cf ! gridcell carbon flux (C13)
-  type(gridcell_carbon_flux)           , public, target :: c14_grc_cf ! gridcell carbon flux (C14)
-  type(gridcell_nitrogen_state)        , public, target :: grc_ns     ! gridcell nitrogen state
-  type(gridcell_nitrogen_flux)         , public, target :: grc_nf     ! gridcell nitrogen flux
-  type(gridcell_phosphorus_state)      , public, target :: grc_ps     ! gridcell phosphorus state
-  type(gridcell_phosphorus_flux)       , public, target :: grc_pf     ! gridcell phosphorus flux
+  type(gridcell_energy_state)     , public, target :: grc_es     ! gridcell energy state
+  type(gridcell_energy_flux)      , public, target :: grc_ef     ! gridcell energy flux
+  type(gridcell_water_state)      , public, target :: grc_ws     ! gridcell water state
+  type(gridcell_water_flux)       , public, target :: grc_wf     ! gridcell water flux
+  type(gridcell_carbon_state)     , public, target :: grc_cs     ! gridcell carbon state
+  type(gridcell_carbon_state)     , public, target :: c13_grc_cs ! gridcell carbon state (C13)
+  type(gridcell_carbon_state)     , public, target :: c14_grc_cs ! gridcell carbon state (C14)
+  type(gridcell_carbon_flux)      , public, target :: grc_cf     ! gridcell carbon flux
+  type(gridcell_carbon_flux)      , public, target :: c13_grc_cf ! gridcell carbon flux (C13)
+  type(gridcell_carbon_flux)      , public, target :: c14_grc_cf ! gridcell carbon flux (C14)
+  type(gridcell_nitrogen_state)   , public, target :: grc_ns     ! gridcell nitrogen state
+  type(gridcell_nitrogen_flux)    , public, target :: grc_nf     ! gridcell nitrogen flux
+  type(gridcell_phosphorus_state) , public, target :: grc_ps     ! gridcell phosphorus state
+  type(gridcell_phosphorus_flux)  , public, target :: grc_pf     ! gridcell phosphorus flux
   !------------------------------------------------------------------------
-  !$acc declare create(grc_ns, grc_ps )
+  !$acc declare create(grc_es    ) 
+  !$acc declare create(grc_ef    ) 
+  !$acc declare create(grc_ws    ) 
+  !$acc declare create(grc_wf    ) 
+  !$acc declare create(grc_cs    ) 
+  ! !$acc declare create(c13_grc_cs) 
+  ! !$acc declare create(c14_grc_cs) 
+  !$acc declare create(grc_cf    ) 
+  ! !$acc declare create(c13_grc_cf) 
+  ! !$acc declare create(c14_grc_cf) 
+  !$acc declare create(grc_ns    ) 
+  !$acc declare create(grc_nf    ) 
+  !$acc declare create(grc_ps    ) 
+  !$acc declare create(grc_pf    ) 
+
+
 contains
 
   !------------------------------------------------------------------------

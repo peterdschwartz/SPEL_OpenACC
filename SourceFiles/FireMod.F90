@@ -14,20 +14,20 @@ module FireMod
   ! !USES:
   use shr_kind_mod           , only : r8 => shr_kind_r8, CL => shr_kind_CL
   use shr_const_mod          , only : SHR_CONST_PI,SHR_CONST_TKFRZ
-  !#py use shr_infnan_mod         , only : shr_infnan_isnan
-  !#py use shr_strdata_mod        , only : shr_strdata_type, shr_strdata_create, shr_strdata_print
-  !#py use shr_strdata_mod        , only : shr_strdata_advance
-  !#py !#py use shr_log_mod            , only : errMsg => shr_log_errMsg
+  use shr_infnan_mod         , only : shr_infnan_isnan
+  use shr_strdata_mod        , only : shr_strdata_type, shr_strdata_create, shr_strdata_print
+  use shr_strdata_mod        , only : shr_strdata_advance
+  use shr_log_mod            , only : errMsg => shr_log_errMsg
   use elm_varctl             , only : iulog
   use elm_varpar             , only : nlevdecomp, ndecomp_pools
   use elm_varcon             , only : dzsoi_decomp
   use pftvarcon              , only : fsr_pft, fd_pft, noveg
-  !#py use spmdMod                , only : masterproc, mpicom, comp_id
-  !#py use fileutils              , only : getavu, relavu
-  !#py use controlMod             , only : NLFilename
+  use spmdMod                , only : masterproc, mpicom, comp_id
+  use fileutils              , only : getavu, relavu
+  use controlMod             , only : NLFilename
   use decompMod              , only : gsmap_lnd_gdc2glo
   use domainMod              , only : ldomain
-  !#py use abortutils             , only : endrun
+  use abortutils             , only : endrun
   use decompMod              , only : bounds_type
   use subgridAveMod          , only : p2c
   use CNDecompCascadeConType , only : decomp_cascade_con
@@ -44,7 +44,7 @@ module FireMod
   use VegetationType         , only : veg_pp
   use VegetationDataType     , only : veg_cs, veg_cf, veg_ns, veg_nf
   use VegetationDataType     , only : veg_ps, veg_pf
-  !#py use mct_mod
+  use mct_mod
   use elm_varctl             , only : nu_com
   use timeInfoMod
   !
@@ -59,9 +59,9 @@ module FireMod
   public :: FireFluxes  ! Calculate fire fluxes
   !
   ! !PRIVATE MEMBER FUNCTIONS:
-  !#py private :: hdm_init    ! position datasets for dynamic human population density
+  private :: hdm_init    ! position datasets for dynamic human population density
   private :: hdm_interp  ! interpolates between two years of human pop. density file data
-  !#py private :: lnfm_init   ! position datasets for Lightning
+  private :: lnfm_init   ! position datasets for Lightning
   private :: lnfm_interp ! interpolates between two years of Lightning file data
 
   ! !PRIVATE MEMBER DATA:
@@ -74,8 +74,8 @@ module FireMod
   !$acc declare copyin(secsphr )
   !$acc declare copyin(borealat)
 
- !#py type(shr_strdata_type) :: sdat_hdm    ! Human population density input data stream
- !#py type(shr_strdata_type) :: sdat_lnfm   ! Lightning input data stream
+ type(shr_strdata_type) :: sdat_hdm    ! Human population density input data stream
+ type(shr_strdata_type) :: sdat_lnfm   ! Lightning input data stream
   !-----------------------------------------------------------------------
 
 contains
@@ -90,9 +90,9 @@ contains
     type(bounds_type), intent(in) :: bounds
     !-----------------------------------------------------------------------
 #ifndef CPL_BYPASS
-    !#py call hdm_init(bounds)
+    call hdm_init(bounds)
     call hdm_interp(bounds)
-    !#py call lnfm_init(bounds)
+    call lnfm_init(bounds)
     call lnfm_interp(bounds)
 #endif
   end subroutine FireInit
@@ -113,7 +113,7 @@ contains
   end subroutine FireInterp
 
   !-----------------------------------------------------------------------
-  subroutine FireArea (bounds, &
+  subroutine FireArea ( &
        num_soilc, filter_soilc, num_soilp, filter_soilp, &
        atm2lnd_vars,  energyflux_vars, soilhydrology_vars, &
        cnstate_vars )
@@ -121,17 +121,16 @@ contains
     ! !DESCRIPTION:
     ! Computes column-level burned area
     !
-      !$acc routine seq
     ! !USES:
     use elm_varpar           , only: max_patch_per_col
     use elm_varcon           , only: secspday
     use elm_varctl           , only: use_nofire, spinup_state, spinup_mortality_factor
-    use dynSubgridControlMod , only: run_has_transient_landcover
     use pftvarcon            , only: nc4_grass, nc3crop, ndllf_evr_tmp_tree
     use pftvarcon            , only: nbrdlf_evr_trp_tree, nbrdlf_dcd_trp_tree, nbrdlf_evr_shrub
+    use subgridAveMod        , only: p2c_1d_filter_parallel
+    use dynSubgridControlMod , only: dyn_subgrid_control_inst
     !
     ! !ARGUMENTS:
-    type(bounds_type)        , intent(in)    :: bounds
     integer                  , intent(in)    :: num_soilc       ! number of soil columns in filter
     integer                  , intent(in)    :: filter_soilc(:) ! filter for soil columns
     integer                  , intent(in)    :: num_soilp       ! number of soil patches in filter
@@ -141,12 +140,6 @@ contains
     type(soilhydrology_type) , intent(in)    :: soilhydrology_vars
     type(cnstate_type)       , intent(inout) :: cnstate_vars
 
-    !!
-    real(r8)  :: dt       ! time step variable (s)
-    real(r8)  :: dayspyr  ! days per year
-    integer  :: kyr, kmo, kda, mcsec, nstep
-
-    !
     ! !LOCAL VARIABLES:
     real(r8), parameter  :: lfuel=75._r8    ! lower threshold of fuel mass (gC/m2) for ignition, Li et al.(2014)
     real(r8), parameter  :: ufuel=1050._r8  ! upper threshold of fuel mass(gC/m2) for ignition
@@ -162,11 +155,11 @@ contains
     !
     ! non-boreal peat fires (was different in paper)
     real(r8), parameter :: non_boreal_peatfire_c = 0.001_r8
+    real(r8), parameter ::cli_scale = 0.035_r8   !global constant for deforestation fires (/d)
     !
     integer  :: g,t,l,c,p,pi,j,fc,fp  ! index variables
     real(r8) :: m        ! top-layer soil moisture (proportion)
     real(r8) :: cli      ! effect of climate on deforestation fires (0-1)
-    real(r8), parameter ::cli_scale = 0.035_r8   !global constant for deforestation fires (/d)
     real(r8) :: cri      ! thresholds used for cli, (mm/d), see Eq.(7) in Li et al.(2013)
     real(r8) :: fb       ! availability of fuel for regs A and C
     real(r8) :: fhd      ! impact of hd on agricultural fire
@@ -179,8 +172,10 @@ contains
     real(r8) :: fs       ! hd-dependent fires suppression (0-1)
     real(r8) :: ig       ! total ignitions (count/km2/hr)
     real(r8) :: hdmlf    ! human density
-    real(r8) :: btran_col(bounds%begc:bounds%endc)
+    real(r8) :: sum1,sum2,sum3,sum4
+    real(r8) :: btran_col(num_soilc)
     logical  :: transient_landcover  ! whether this run has any prescribed transient landcover
+    real :: startt,stopt
     !-----------------------------------------------------------------------
 
     associate(                                                                &
@@ -255,31 +250,22 @@ contains
          fuelc_crop         =>    col_cs%fuelc_crop             & ! Output: [real(r8) (:)     ]  fuel avalability factor for Reg.A
          )
 
-      transient_landcover = run_has_transient_landcover()
+
+      transient_landcover = (dyn_subgrid_control_inst%do_transient_pfts .or. &
+                  dyn_subgrid_control_inst%do_transient_crops)
 
       !pft to column average
-      call p2c(bounds, num_soilc, filter_soilc, &
-           totvegc(bounds%begp:bounds%endp), &
-           totvegc_col(bounds%begc:bounds%endc))
+      call p2c_1d_filter_parallel( num_soilc, filter_soilc, &
+           totvegc(:), totvegc_col(:))
+      call p2c_1d_filter_parallel( num_soilc, filter_soilc, &
+           leafc(:), leafc_col(:))
+      call p2c_1d_filter_parallel(num_soilc, filter_soilc, &
+           deadstemc(:), deadstemc_col(:))
 
-      call p2c(bounds, num_soilc, filter_soilc, &
-           leafc(bounds%begp:bounds%endp), &
-           leafc_col(bounds%begc:bounds%endc))
-
-      call p2c(bounds, num_soilc, filter_soilc, &
-           deadstemc(bounds%begp:bounds%endp), &
-           deadstemc_col(bounds%begc:bounds%endc))
-
-      dt = dtime_mod        ! time step variable (s)
-      dayspyr = dayspyr_mod ! days per year
-      kyr = year_curr   ; kmo   = mon_curr;
-      kda = day_curr    ; mcsec = secs_curr;
-      nstep = nstep_mod
-
-     !
      ! On first time-step, just set area burned to zero and exit
      !
-     if ( nstep == 0 )then
+     if ( nstep_mod == 0 )then
+        !$acc parallel loop independent gang vector private(c) default(present)
         do fc = 1,num_soilc
            c = filter_soilc(fc)
            farea_burned(c) = 0._r8
@@ -290,178 +276,216 @@ contains
            cropf_col(c)    = 0._r8
         end do
         return
-     end if
+      end if
+      
+     !$acc enter data create(sum1,sum2,sum3,sum4,btran_col(:), i_cwd, transient_landcover)
+     ! find which pool is the cwd pool
+     i_cwd = 0
+     do l = 1, ndecomp_pools
+        if ( is_cwd(l) ) then
+           i_cwd = l
+        endif
+     end do
+     !$acc update device(i_cwd, transient_landcover)
      !
      ! Calculate fraction of crop (cropf_col) and non-crop and non-bare-soil
      ! vegetation (lfwt) in vegetated column
      !
-     do fc = 1,num_soilc
-        c = filter_soilc(fc)
-        cropf_col(c) = 0._r8
-        lfwt(c)      = 0._r8
-     end do
-     do pi = 1,max_patch_per_col
-        do fc = 1,num_soilc
-           c = filter_soilc(fc)
-           if (pi <=  col_pp%npfts(c)) then
-              p = col_pp%pfti(c) + pi - 1
-              ! For crop veg types
-              if( veg_pp%itype(p) > nc4_grass )then
-                 cropf_col(c) = cropf_col(c) + veg_pp%wtcol(p)
-              end if
-              ! For natural vegetation (non-crop and non-bare-soil)
-              if( veg_pp%itype(p) >= ndllf_evr_tmp_tree .and. veg_pp%itype(p) <= nc4_grass )then
-                 lfwt(c) = lfwt(c) + veg_pp%wtcol(p)
-              end if
-           end if
+     !$acc parallel loop independent gang worker default(present) private(c,sum1,sum2)
+      do fc = 1,num_soilc
+         c = filter_soilc(fc)
+         sum1 = 0._r8; sum2 = 0.0_r8;
+         !$acc loop vector reduction(+:sum1,sum2)
+         do p = col_pp%pfti(c), col_pp%pftf(c)
+            ! For crop veg types
+            if(veg_pp%wtcol(p)  >  0._r8) then 
+               if( veg_pp%itype(p) > nc4_grass )then
+                  sum1 = sum1 + veg_pp%wtcol(p)
+               end if
+               ! For natural vegetation (non-crop and non-bare-soil)
+               if( veg_pp%itype(p) >= ndllf_evr_tmp_tree .and. veg_pp%itype(p) <= nc4_grass )then
+                  sum2 = sum2 + veg_pp%wtcol(p)
+               end if
+            end if 
         end do
+        cropf_col(c) = sum1
+        lfwt(c)      = sum2
      end do
      !
      ! Calculate crop fuel
      !
+     !$acc parallel loop independent gang worker default(present) private(c,sum1)
      do fc = 1,num_soilc
         c = filter_soilc(fc)
-        fuelc_crop(c)=0._r8
-     end do
-     do pi = 1,max_patch_per_col
-        do fc = 1,num_soilc
-           c = filter_soilc(fc)
-           if (pi <=  col_pp%npfts(c)) then
-              p = col_pp%pfti(c) + pi - 1
-              ! For crop PFTs, fuel load includes leaf and litter; only
-              ! column-level litter carbon
-              ! is available, so we use leaf carbon to estimate the
-              ! litter carbon for crop PFTs
-              if( veg_pp%itype(p) > nc4_grass .and. veg_pp%wtcol(p) > 0._r8 .and. leafc_col(c) > 0._r8 )then
-                 fuelc_crop(c)=fuelc_crop(c) + (leafc(p) + leafc_storage(p) + &
-                      leafc_xfer(p))*veg_pp%wtcol(p)/cropf_col(c)     + &
-                      totlitc(c)*leafc(p)/leafc_col(c)*veg_pp%wtcol(p)/cropf_col(c)
+        sum1 = 0._r8
+        if(leafc_col(c) > 0._r8) then
+           !$acc loop vector reduction(+:sum1)
+           do p = col_pp%pfti(c), col_pp%pftf(c)
+             ! For crop PFTs, fuel load includes leaf and litter; only
+             ! column-level litter carbon
+             ! is available, so we use leaf carbon to estimate the
+             ! litter carbon for crop PFTs
+             if( veg_pp%itype(p) > nc4_grass .and. veg_pp%wtcol(p) > 0._r8  .and. veg_pp%wtcol(p)  >  0._r8 )then
+                sum1 = sum1 + (leafc(p) + leafc_storage(p) + &
+                     leafc_xfer(p))*veg_pp%wtcol(p)/cropf_col(c)     + &
+                     totlitc(c)*leafc(p)/leafc_col(c)*veg_pp%wtcol(p)/cropf_col(c)
               end if
-           end if
-        end do
+           end do
+        end if
+        fuelc_crop(c) = sum1
      end do
      !
      ! Calculate noncrop column variables
      ! 5/22/2018, PET: switched the use of column-weight-on-gridcell, to column-weight-on-topounit
      ! in the calculation of summed weight for tropical trees
      !
+     !
+     !$acc parallel loop gang worker default(present) private(c,sum1,sum2,sum4,sum4)
      do fc = 1,num_soilc
         c = filter_soilc(fc)
-        fsr_col(c)   = 0._r8
-        fd_col(c)    = 0._r8
-        rootc_col(c) = 0._r8
-        lgdp_col(c)  = 0._r8
-        lgdp1_col(c) = 0._r8
-        lpop_col(c)  = 0._r8
-        btran_col(c) = 0._r8
-        wtlf(c)      = 0._r8
-        trotr1_col(c)= 0._r8
-        trotr2_col(c)= 0._r8
-        if (transient_landcover) then    !true when landuse data is used
-           dtrotr_col(c)=0._r8
-        end if
-     end do
-     do pi = 1,max_patch_per_col
-        do fc = 1,num_soilc
-           c = filter_soilc(fc)
-           g = col_pp%gridcell(c)
-           if (pi <=  col_pp%npfts(c)) then
-              p = col_pp%pfti(c) + pi - 1
-
+        sum1 = 0._r8; sum2=0._r8;
+        sum3 = 0._r8; sum4=0._r8;
+        !$acc loop vector reduction(+:sum1,sum2,sum3,sum4)
+        do p = col_pp%pfti(c), col_pp%pftf(c)
               ! For non-crop -- natural vegetation and bare-soil
-              if( veg_pp%itype(p)  <  nc3crop .and. cropf_col(c)  <  1.0_r8 )then
-                 if( .not. (btran2(p) .ne. btran2(p)))then !?shr_infnan_isnan(btran2(p))) then
+              if( veg_pp%itype(p)  <  nc3crop .and. cropf_col(c)  <  1.0_r8 .and. veg_pp%wtcol(p)  >  0._r8 )then
+                 if( .not. (btran2(p) .ne. btran2(p)))then !check if btran2 is NaN
                     if (btran2(p)  <=  1._r8 ) then
-                       btran_col(c) = btran_col(c)+btran2(p)*veg_pp%wtcol(p)
-                       wtlf(c)      = wtlf(c)+veg_pp%wtcol(p)
+                      sum1 = sum1 + btran2(p)*veg_pp%wtcol(p)
+                      sum2 = sum2 + veg_pp%wtcol(p)
                     end if
                  end if
                  if( veg_pp%itype(p) == nbrdlf_evr_trp_tree .and. veg_pp%wtcol(p)  >  0._r8 )then
-                    trotr1_col(c)=trotr1_col(c)+veg_pp%wtcol(p)*col_pp%wttopounit(c)
+                    sum3 = sum3 + veg_pp%wtcol(p)*col_pp%wttopounit(c)
                  end if
                  if( veg_pp%itype(p) == nbrdlf_dcd_trp_tree .and. veg_pp%wtcol(p)  >  0._r8 )then
-                    trotr2_col(c)=trotr2_col(c)+veg_pp%wtcol(p)*col_pp%wttopounit(c)
+                    sum4 = sum4 + veg_pp%wtcol(p)*col_pp%wttopounit(c)
                  end if
-                 if (transient_landcover) then    !true when landuse data is used
-                    if( veg_pp%itype(p) == nbrdlf_evr_trp_tree .or. veg_pp%itype(p) == nbrdlf_dcd_trp_tree )then
-                       if(lfpftd(p) > 0._r8)then
-                          dtrotr_col(c)=dtrotr_col(c)+lfpftd(p)*col_pp%wttopounit(c)
-                       end if
-                    end if
-                 end if
-                 rootc_col(c) = rootc_col(c) + (frootc(p) + frootc_storage(p) + &
+              end if
+        end do
+        btran_col(fc) = sum1
+        wtlf(c) = sum2
+        trotr1_col(c) = sum3
+        trotr2_col(c) = sum4
+      end do
+      !
+      if (transient_landcover) then    !true when landuse data is used
+         !$acc parallel loop gang worker default(present) private(c,sum1)
+         do fc = 1,num_soilc
+            c = filter_soilc(fc)
+            sum1 = 0._r8;
+            !$acc loop vector reduction(+:sum1)
+            do p = col_pp%pfti(c), col_pp%pftf(c)
+               ! For non-crop -- natural vegetation and bare-soil
+               if( veg_pp%itype(p)  <  nc3crop .and. cropf_col(c)  <  1.0_r8 .and. veg_pp%wtcol(p)  >  0._r8 )then
+                  if( veg_pp%itype(p) == nbrdlf_evr_trp_tree .or. veg_pp%itype(p) == nbrdlf_dcd_trp_tree )then
+                     if(lfpftd(p) > 0._r8)then
+                        sum1 = sum1 + lfpftd(p)*col_pp%wttopounit(c)
+                     end if
+                  end if
+               end if
+            end do
+            dtrotr_col(c) = sum1
+         end do
+      end if
+
+      !$acc parallel loop gang worker default(present) private(c,sum1,sum2)
+     do fc = 1,num_soilc
+        c = filter_soilc(fc)
+        sum1 = 0._r8;sum2=0.0_r8;
+        !$acc loop vector reduction(+:sum1,sum2)
+        do p = col_pp%pfti(c), col_pp%pftf(c)
+              ! For non-crop -- natural vegetation and bare-soil
+              if( veg_pp%itype(p)  <  nc3crop .and. cropf_col(c)  <  1.0_r8 .and. veg_pp%wtcol(p)  >  0._r8 )then
+                  sum1 = sum1 + (frootc(p) + frootc_storage(p) + &
                       frootc_xfer(p) + deadcrootc(p) +                &
                       deadcrootc_storage(p) + deadcrootc_xfer(p) +    &
                       livecrootc(p)+livecrootc_storage(p) +           &
                       livecrootc_xfer(p))*veg_pp%wtcol(p)
 
-                 fsr_col(c) = fsr_col(c) + fsr_pft(veg_pp%itype(p))*veg_pp%wtcol(p)/(1.0_r8-cropf_col(c))
+                 sum2 = sum2 + fsr_pft(veg_pp%itype(p))*veg_pp%wtcol(p)/(1.0_r8-cropf_col(c))
+              end if
+        end do
+        rootc_col(c) = sum1
+        fsr_col(c) = sum2
+      end do
 
+      !$acc parallel loop gang worker default(present) private(c,g,sum1,sum2,sum4,sum4)
+     do fc = 1,num_soilc
+        c = filter_soilc(fc)
+        g = col_pp%gridcell(c)
+        sum1 = 0._r8;sum2=0.0_r8;
+        sum3 = 0._r8;sum4=0.0_r8;
+        !$acc loop vector reduction(+:sum1,sum2,sum3,sum4)
+        do p = col_pp%pfti(c), col_pp%pftf(c)
+              ! For non-crop -- natural vegetation and bare-soil
+              if( veg_pp%itype(p)  <  nc3crop .and. cropf_col(c)  <  1.0_r8 .and. veg_pp%wtcol(p)  >  0._r8 )then
                  if( lfwt(c)  /=  0.0_r8 )then
                     hdmlf=forc_hdm(g)
-
                     ! all these constants are in Li et al. BG (2012a,b;2013)
-
                     if( hdmlf  >  0.1_r8 )then
                        ! For NOT bare-soil
                        if( veg_pp%itype(p)  /=  noveg )then
                           ! For shrub and grass (crop already excluded above)
                           if( veg_pp%itype(p)  >=  nbrdlf_evr_shrub )then      !for shurb and grass
-                             lgdp_col(c)  = lgdp_col(c) + (0.1_r8 + 0.9_r8*    &
+                             sum1 = sum1 + (0.1_r8 + 0.9_r8*    &
                                   exp(-1._r8*SHR_CONST_PI* &
                                   (gdp_lf(c)/8._r8)**0.5_r8))*veg_pp%wtcol(p) &
                                   /(1.0_r8 - cropf_col(c))
-                             lgdp1_col(c) = lgdp1_col(c) + (0.2_r8 + 0.8_r8*   &
+                             sum2 = sum2 + (0.2_r8 + 0.8_r8*   &
                                   exp(-1._r8*SHR_CONST_PI* &
                                   (gdp_lf(c)/7._r8)))*veg_pp%wtcol(p)/lfwt(c)
-                             lpop_col(c)  = lpop_col(c) + (0.2_r8 + 0.8_r8*    &
+                             sum3 = sum3 + (0.2_r8 + 0.8_r8*    &
                                   exp(-1._r8*SHR_CONST_PI* &
                                   (hdmlf/450._r8)**0.5_r8))*veg_pp%wtcol(p)/lfwt(c)
                           else   ! for trees
                              if( gdp_lf(c)  >  20._r8 )then
-                                lgdp_col(c)  =lgdp_col(c)+0.39_r8*veg_pp%wtcol(p)/(1.0_r8 - cropf_col(c))
+                                sum1 = sum1 + 0.39_r8*veg_pp%wtcol(p)/(1.0_r8 - cropf_col(c))
                              else
-                                lgdp_col(c) = lgdp_col(c)+veg_pp%wtcol(p)/(1.0_r8 - cropf_col(c))
+                                sum1 = sum1 + veg_pp%wtcol(p)/(1.0_r8 - cropf_col(c))
                              end if
                              if( gdp_lf(c)  >  20._r8 )then
-                                lgdp1_col(c) = lgdp1_col(c)+0.62_r8*veg_pp%wtcol(p)/lfwt(c)
+                                sum2 = sum2 + 0.62_r8*veg_pp%wtcol(p)/lfwt(c)
                              else
                                 if( gdp_lf(c)  >  8._r8 ) then
-                                   lgdp1_col(c)=lgdp1_col(c)+0.83_r8*veg_pp%wtcol(p)/lfwt(c)
+                                   sum2 = sum2 + 0.83_r8*veg_pp%wtcol(p)/lfwt(c)
                                 else
-                                   lgdp1_col(c)=lgdp1_col(c)+veg_pp%wtcol(p)/lfwt(c)
+                                   sum2 = sum2 + veg_pp%wtcol(p)/lfwt(c)
                                 end if
                              end if
-                             lpop_col(c) = lpop_col(c) + (0.4_r8 + 0.6_r8*    &
+                             sum3 = sum3 + (0.4_r8 + 0.6_r8*    &
                                   exp(-1._r8*SHR_CONST_PI* &
                                   (hdmlf/125._r8)))*veg_pp%wtcol(p)/lfwt(c)
                           end if
                        end if
                     else
-                       lgdp_col(c)  = lgdp_col(c)+veg_pp%wtcol(p)/(1.0_r8 - cropf_col(c))
-                       lgdp1_col(c) = lgdp1_col(c)+veg_pp%wtcol(p)/lfwt(c)
-                       lpop_col(c)  = lpop_col(c)+veg_pp%wtcol(p)/lfwt(c)
+                       sum1 = sum1 + veg_pp%wtcol(p)/(1.0_r8 - cropf_col(c))
+                       sum2 = sum2 + veg_pp%wtcol(p)/lfwt(c)
+                       sum3 = sum3 + veg_pp%wtcol(p)/lfwt(c)
                     end if
                  end if
-
-                 fd_col(c) = fd_col(c) + fd_pft(veg_pp%itype(p)) * veg_pp%wtcol(p) * secsphr / (1.0_r8-cropf_col(c))
+                 sum4 = sum4 + fd_pft(veg_pp%itype(p)) * veg_pp%wtcol(p) * secsphr / (1.0_r8-cropf_col(c))
               end if
-           end if
         end do
+        lgdp_col(c)  = sum1
+        lgdp1_col(c) = sum2
+        lpop_col(c)  = sum3
+        fd_col(c)    = sum4
      end do
 
      ! estimate annual decreased fractional coverage of BET+BDT
      ! land cover conversion in CLM4.5 is the same for each timestep except for the beginning
 
      if (transient_landcover) then    !true when landuse data is used
+        !$acc parallel loop gang vector default(present) private(c)
         do fc = 1,num_soilc
            c = filter_soilc(fc)
            if( dtrotr_col(c)  >  0._r8 )then
-              if( kmo == 1 .and. kda == 1 .and. mcsec == 0)then
+              if( mon_curr == 1 .and. day_curr == 1 .and. secs_curr == 0)then
                  lfc(c) = 0._r8
               end if
-              if( kmo == 1 .and. kda == 1 .and. mcsec == dt)then
-                 lfc(c) = dtrotr_col(c)*dayspyr*secspday/dt
+              if( mon_curr == 1 .and. day_curr == 1 .and. secs_curr == dtime_mod)then
+                 lfc(c) = dtrotr_col(c)*dayspyr_mod*secspday/dtime_mod
               end if
            else
               lfc(c)=0._r8
@@ -470,54 +494,45 @@ contains
      end if
      !
      ! calculate burned area fraction in cropland
-     !
+     if( mon_curr == 1 .and. day_curr == 1 .and. secs_curr == 0 )then
+        !$acc parallel loop independent gang vector default(present) private(p)
+        do fp = 1,num_soilp
+           p = filter_soilp(fp)
+           burndate(p) = 10000 ! init. value; actual range [0 365]
+        end do
+     end if
+
+     !$acc parallel loop gang worker private(c,g,t,hdmlf,sum1) default(present)
      do fc = 1,num_soilc
         c = filter_soilc(fc)
-        baf_crop(c)=0._r8
-     end do
-
-     do fp = 1,num_soilp
-        p = filter_soilp(fp)
-        if( kmo == 1 .and. kda == 1 .and. mcsec == 0 )then
-           burndate(p) = 10000 ! init. value; actual range [0 365]
-        end if
-     end do
-
-     do pi = 1,max_patch_per_col
-        do fc = 1,num_soilc
-           c = filter_soilc(fc)
-           g = col_pp%gridcell(c)
-           t = col_pp%topounit(c)
-           hdmlf=forc_hdm(g)
-           if (pi <=  col_pp%npfts(c)) then
-              p = col_pp%pfti(c) + pi - 1
-              ! For crop
-              if( forc_t(t)  >=  SHR_CONST_TKFRZ .and. veg_pp%itype(p)  >  nc4_grass .and.  &
-                   kmo == abm_lf(c) .and. forc_rain(t)+forc_snow(t) == 0._r8  .and. &
+        g = col_pp%gridcell(c)
+        t = col_pp%topounit(c)
+        hdmlf=forc_hdm(g)
+        sum1 = 0._r8
+        !$acc loop vector reduction(+:sum1) private(fhd,fgdp,fb)
+        do p = col_pp%pfti(c),col_pp%pftf(c)
+           ! For crop
+           if( forc_t(t)  >=  SHR_CONST_TKFRZ .and. veg_pp%itype(p)  >  nc4_grass .and.  &
+                   mon_curr == abm_lf(c) .and. forc_rain(t)+forc_snow(t) == 0._r8  .and. &
                    burndate(p) >= 999 .and. veg_pp%wtcol(p)  >  0._r8 )then ! catch  crop burn time
-
-                 ! calculate human density impact on ag. fire
-                 fhd = 0.04_r8+0.96_r8*exp(-1._r8*SHR_CONST_PI*(hdmlf/350._r8)**0.5_r8)
-
-                 ! calculate impact of GDP on ag. fire
-                 fgdp = 0.01_r8+0.99_r8*exp(-1._r8*SHR_CONST_PI*(gdp_lf(c)/10._r8))
-
-                 ! calculate burned area
-                 fb   = max(0.0_r8,min(1.0_r8,(fuelc_crop(c)-lfuel)/(ufuel-lfuel)))
-
-                 ! crop fire only for generic crop types at this time
-                 ! managed crops are treated as grasses if crop model is turned on
-                 baf_crop(c) = baf_crop(c) + cropfire_a1/secsphr*fb*fhd*fgdp*veg_pp%wtcol(p)
-                 if( fb*fhd*fgdp*veg_pp%wtcol(p)  >  0._r8)then
-                    burndate(p)=kda
-                 end if
-              end if
+              ! calculate human density impact on ag. fire
+              fhd = 0.04_r8+0.96_r8*exp(-1._r8*SHR_CONST_PI*(hdmlf/350._r8)**0.5_r8)
+              ! calculate impact of GDP on ag. fire
+              fgdp = 0.01_r8+0.99_r8*exp(-1._r8*SHR_CONST_PI*(gdp_lf(c)/10._r8))
+              ! calculate burned area
+              fb   = max(0.0_r8,min(1.0_r8,(fuelc_crop(c)-lfuel)/(ufuel-lfuel)))
+              ! crop fire only for generic crop types at this time
+              ! managed crops are treated as grasses if crop model is turned on
+              sum1 = sum1 + cropfire_a1/secsphr*fb*fhd*fgdp*veg_pp%wtcol(p)
+              if( fb*fhd*fgdp*veg_pp%wtcol(p)  >  0._r8) burndate(p) = day_curr
            end if
         end do
+        baf_crop(c) = sum1
      end do
      !
      ! calculate peatland fire
      !
+     !$acc parallel loop independent gang vector default(present) private(c,t,g)
      do fc = 1, num_soilc
         c = filter_soilc(fc)
         t = col_pp%topounit(c)
@@ -532,48 +547,58 @@ contains
                 (1._r8-fsat(c))
         end if
      end do
+
      !
      ! calculate other fires
      !
-
      ! Set the number of timesteps for e-folding.
      ! When the simulation has run fewer than this number of steps,
      ! re-scale the e-folding time to get a stable early estimate.
 
-     ! find which pool is the cwd pool
-     i_cwd = 0
-     do l = 1, ndecomp_pools
-        if ( is_cwd(l) ) then
-           i_cwd = l
-        endif
+     ! begin column loop to calculate fractional area affected by fire
+     !$acc parallel loop independent gang worker default(present) private(c,sum1)
+     do fc = 1, num_soilc
+        c = filter_soilc(fc)
+        sum1 = 0._r8
+        if( cropf_col(c)  <  1.0 )then
+           sum1 = totlitc(c)+totvegc_col(c)-rootc_col(c)-fuelc_crop(c)*cropf_col(c)
+
+           if (spinup_state == 1) sum1 = sum1 + ((spinup_mortality_factor - 1._r8)*deadstemc_col(c))
+
+           if (spinup_state == 1 .and. year_curr < 40) then
+             !$acc loop vector reduction(+:sum1)
+             do j = 1, nlevdecomp
+                sum1 = sum1 + decomp_cpools_vr(c,j,i_cwd) * dzsoi_decomp(j) * &
+                     decomp_cascade_con%spinup_factor(i_cwd)
+             end do
+
+           else if (spinup_state == 1 .and. year_curr >= 40) then
+             !$acc loop vector reduction(+:sum1)
+             do j=1,nlevdecomp
+                sum1 = sum1 + decomp_cpools_vr(c,j,i_cwd) *dzsoi_decomp(j) * &
+                            decomp_cascade_con%spinup_factor(i_cwd) / cnstate_vars%scalaravg_col(c,j)
+             enddo
+           else
+               sum1 = sum1 + decomp_cpools_vr(c,j,i_cwd) * dzsoi_decomp(j)
+           end if
+
+           fuelc(c) = sum1/(1._r8-cropf_col(c))
+        end if
+
      end do
 
-     !
-     ! begin column loop to calculate fractional area affected by fire
-     !
+
+     !$acc parallel loop independent gang vector default(present)
      do fc = 1, num_soilc
         c = filter_soilc(fc)
         g = col_pp%gridcell(c)
         t = col_pp%topounit(c)
         hdmlf=forc_hdm(g)
+        !
         if( cropf_col(c)  <  1.0 )then
            if (trotr1_col(c)+trotr2_col(c)>0.6_r8) then
               farea_burned(c)=min(1.0_r8,baf_crop(c)+baf_peatf(c))
            else
-              fuelc(c) = totlitc(c)+totvegc_col(c)-rootc_col(c)-fuelc_crop(c)*cropf_col(c)
-              if (spinup_state == 1) fuelc(c) = fuelc(c) + ((spinup_mortality_factor - 1._r8)*deadstemc_col(c))
-              do j = 1, nlevdecomp
-                if (spinup_state == 1 .and. kyr < 40) then
-                  fuelc(c) = fuelc(c)+decomp_cpools_vr(c,j,i_cwd) *dzsoi_decomp(j) * &
-                    decomp_cascade_con%spinup_factor(i_cwd)
-                else if (spinup_state == 1 .and. kyr >= 40) then
-                  fuelc(c) = fuelc(c)+decomp_cpools_vr(c,j,i_cwd) *dzsoi_decomp(j) * &
-                    decomp_cascade_con%spinup_factor(i_cwd) / cnstate_vars%scalaravg_col(c,j)
-                else
-                  fuelc(c) = fuelc(c)+decomp_cpools_vr(c,j,i_cwd) * dzsoi_decomp(j)
-                end if
-              end do
-              fuelc(c) = fuelc(c)/(1._r8-cropf_col(c))
               fb       = max(0.0_r8,min(1.0_r8,(fuelc(c)-lfuel)/(ufuel-lfuel)))
               m        = max(0._r8,wf(c))
               fire_m   = exp(-SHR_CONST_PI *(m/0.69_r8)**2)*(1.0_r8 - max(0._r8, &
@@ -585,7 +610,7 @@ contains
               nfire(c) = ig/secsphr*fb*fire_m*lgdp_col(c) !fire counts/km2/sec
               Lb_lf    = 1._r8+10.0_r8*(1._r8-EXP(-0.06_r8*forc_wind(t)))
               if ( wtlf(c) > 0.0_r8 )then
-                 spread_m = (1.0_r8 - max(0._r8,min(1._r8,(btran_col(c)/wtlf(c)-0.3_r8)/ &
+                 spread_m = (1.0_r8 - max(0._r8,min(1._r8,(btran_col(fc)/wtlf(c)-0.3_r8)/ &
                       (0.7_r8-0.3_r8))))*(1.0_r8-max(0._r8, &
                       min(1._r8,(forc_rh(t)-30._r8)/(80._r8-30._r8))))
               else
@@ -602,19 +627,19 @@ contains
            !
            if (transient_landcover) then    !true when landuse change data is used
               if( trotr1_col(c)+trotr2_col(c) > 0.6_r8 )then
-                 if(( kmo == 1 .and. kda == 1 .and. mcsec == 0) .or. &
-                      dtrotr_col(c) <=0._r8 )then
+                 if(( mon_curr == 1 .and. day_curr == 1 .and. secs_curr == 0) .or. dtrotr_col(c) <= 0._r8 )then
                     fbac1(c)        = 0._r8
                     farea_burned(c) = baf_crop(c)+baf_peatf(c)
                  else
                     cri = (4.0_r8*trotr1_col(c)+1.8_r8*trotr2_col(c))/(trotr1_col(c)+trotr2_col(c))
                     cli = (max(0._r8,min(1._r8,(cri-prec60(t)*secspday)/cri))**0.5)* &
-                         (max(0._r8,min(1._r8,(cri-prec10(t)*secspday)/cri))**0.5)* &
-                         max(0.0005_r8,min(1._r8,19._r8*dtrotr_col(c)*dayspyr*secspday/dt-0.001_r8))* &
-                         max(0._r8,min(1._r8,(0.25_r8-(forc_rain(t)+forc_snow(t))*secsphr)/0.25_r8))
+                          (max(0._r8,min(1._r8,(cri-prec10(t)*secspday)/cri))**0.5)* &
+                          max(0.0005_r8,min(1._r8,19._r8*dtrotr_col(c)*dayspyr_mod*secspday/dtime_mod-0.001_r8))* &
+                          max(0._r8,min(1._r8,(0.25_r8-(forc_rain(t)+forc_snow(t))*secsphr)/0.25_r8))
+
                     farea_burned(c) = cli*(cli_scale/secspday)+baf_crop(c)+baf_peatf(c)
                     ! burned area out of conversion region due to land use fire
-                    fbac1(c) = max(0._r8,cli*(cli_scale/secspday) - 2.0_r8*lfc(c)/dt)
+                    fbac1(c) = max(0._r8,cli*(cli_scale/secspday) - 2.0_r8*lfc(c)/dtime_mod)
                  end if
                  ! total burned area out of conversion
                  fbac(c) = fbac1(c)+baf_crop(c)+baf_peatf(c)
@@ -640,6 +665,8 @@ contains
         end if
 
      end do  ! end of column loop
+     !$acc exit data delete(i_cwd, &
+     !$acc       sum1,sum2,sum3,sum4,btran_col(:), transient_landcover)
 
    end associate
 
@@ -660,14 +687,12 @@ contains
    ! seconds_per_year is the number of seconds in a year.
    !
    ! !USES:
-      !$acc routine seq
    use pftvarcon            , only: cc_leaf,cc_lstem,cc_dstem,cc_other,fm_leaf,fm_lstem,fm_other,fm_root,fm_lroot,fm_droot
    use pftvarcon            , only: nc3crop,lf_flab,lf_fcel,lf_flig,fr_flab,fr_fcel,fr_flig
    use elm_varpar           , only: max_patch_per_col
    use elm_varctl           , only: spinup_state, spinup_mortality_factor
-   use dynSubgridControlMod , only: get_flanduse_timeseries
+   use dynSubgridControlMod , only: get_flanduse_timeseries,dyn_subgrid_control_inst
    use elm_varcon           , only: secspday
-   use dynSubgridControlMod , only: run_has_transient_landcover
    !
    ! !ARGUMENTS:
    integer                  , intent(in)    :: num_soilc       ! number of soil columns in filter
@@ -675,22 +700,18 @@ contains
    integer                  , intent(in)    :: num_soilp       ! number of soil patches in filter
    integer                  , intent(in)    :: filter_soilp(:) ! filter for soil patches
    type(cnstate_type)       , intent(inout) :: cnstate_vars
-   real(r8)  :: dt                   ! time step variable (s)
-   real(r8)  :: dayspyr              ! days per year
-   integer   :: kyr, kmo, kda, mcsec
    !
    ! !LOCAL VARIABLES:
-   integer :: g,c,p,j,l,pi   ! indices
-   real(r8):: m_veg                ! speedup factor for accelerated decomp
-   integer :: fp,fc                ! filter indices
-   real(r8):: f                    ! rate for fire effects (1/s)
-   integer :: itype
-   real(r8):: cc_other_sc, wt_col, baf_crop_sc,lprof_pj,fr_prof_pj,cr_prof_pj,st_prof_pj
-
+   integer  :: g,c,p,j,l,pi   ! indices
+   real(r8) :: m_veg                ! speedup factor for accelerated decomp
+   integer  :: fp,fc                ! filter indices
+   real(r8) :: f                    ! rate for fire effects (1/s)
+   integer  :: itype
+   real(r8) :: cc_other_sc, wt_col, baf_crop_sc,lprof_pj,fr_prof_pj,cr_prof_pj,st_prof_pj
+   real(r8) :: sum1,sum2,sum3
+   real :: startt, stopt
    logical           :: transient_landcover  ! whether this run has any prescribed transient landcover
-
    !-----------------------------------------------------------------------
-
    ! NOTE: VR      = Vertically Resolved
    !       conv.   = conversion
    !       frac.   = fraction
@@ -947,25 +968,23 @@ contains
         )
 
 
-     transient_landcover = run_has_transient_landcover()
+     transient_landcover = (dyn_subgrid_control_inst%do_transient_pfts .or. &
+               dyn_subgrid_control_inst%do_transient_crops)
 
-     ! Get model step size
-     dt = dtime_mod        ! time step variable (s)
-     dayspyr = dayspyr_mod ! days per year
-     kyr = year_curr   ; kmo   = mon_curr;
-     kda = day_curr    ; mcsec = secs_curr;
+     m_veg = 1.0_r8
+     if (spinup_state == 1) m_veg = spinup_mortality_factor
+     !$acc enter data copyin (m_veg,transient_landcover)
+     !$acc enter data create(sum1,sum2,sum3)
      ! calculate burned area fraction per sec
      !
      ! patch loop
      !
-     m_veg = 1.0_r8
-     if (spinup_state == 1) m_veg = spinup_mortality_factor
-
+     !$acc parallel loop independent gang vector default(present) private(p,c,itype,f,cc_other_sc)
      do fp = 1,num_soilp
         p = filter_soilp(fp)
         c = veg_pp%column(p)
-
         itype = veg_pp%itype(p)
+        !
         if( itype < nc3crop .and. cropf_col(c) < 1.0_r8)then
            ! For non-crop (bare-soil and natural vegetation)
            if (transient_landcover) then    !true when landuse data is used
@@ -981,11 +1000,9 @@ contains
              f = 0._r8
            end if
         end if
-
         ! apply this rate to the pft state variables to get flux rates
         ! biomass burning
         ! carbon fluxes
-
         cc_other_sc = cc_other(itype)
 
         m_leafc_to_fire(p)               =  leafc(p)              * f * cc_leaf(itype)
@@ -1004,7 +1021,7 @@ contains
         m_livecrootc_storage_to_fire(p)  =  livecrootc_storage(p) * f * cc_other_sc
         m_livecrootc_xfer_to_fire(p)     =  livecrootc_xfer(p)    * f * cc_other_sc
         m_deadcrootc_to_fire(p)          =  deadcrootc(p)         * m_veg * f * 0._r8
-        m_deadcrootc_storage_to_fire(p)  =  deadcrootc_storage(p) * f*  cc_other_sc
+        m_deadcrootc_storage_to_fire(p)  =  deadcrootc_storage(p) * f * cc_other_sc
         m_deadcrootc_xfer_to_fire(p)     =  deadcrootc_xfer(p)    * f * cc_other_sc
         m_gresp_storage_to_fire(p)       =  gresp_storage(p)      * f * cc_other_sc
         m_gresp_xfer_to_fire(p)          =  gresp_xfer(p)         * f * cc_other_sc
@@ -1059,37 +1076,27 @@ contains
         ! mortality due to fire
         ! carbon pools
         m_leafc_to_litter_fire(p)                   =  leafc(p) * f * &
-             (1._r8 - cc_leaf(itype)) * &
-             fm_leaf(itype)
+             (1._r8 - cc_leaf(itype)) * fm_leaf(itype)
         m_leafc_storage_to_litter_fire(p)           =  leafc_storage(p) * f * &
-             (1._r8 - cc_other_sc) * &
-             fm_other(itype)
+             (1._r8 - cc_other_sc) * fm_other(itype)
         m_leafc_xfer_to_litter_fire(p)              =  leafc_xfer(p) * f * &
-             (1._r8 - cc_other_sc) * &
-             fm_other(itype)
+             (1._r8 - cc_other_sc) * fm_other(itype)
         m_livestemc_to_litter_fire(p)               =  livestemc(p) * f * &
-             (1._r8 - cc_lstem(itype)) * &
-             fm_droot(itype)
+             (1._r8 - cc_lstem(itype)) * fm_droot(itype)
         m_livestemc_storage_to_litter_fire(p)       =  livestemc_storage(p) * f * &
-             (1._r8 - cc_other_sc) * &
-             fm_other(itype)
+             (1._r8 - cc_other_sc) * fm_other(itype)
         m_livestemc_xfer_to_litter_fire(p)          =  livestemc_xfer(p) * f * &
-             (1._r8 - cc_other_sc) * &
-             fm_other(itype)
+             (1._r8 - cc_other_sc) * fm_other(itype)
         m_livestemc_to_deadstemc_fire(p)            =  livestemc(p) * f * &
-             (1._r8 - cc_lstem(itype)) * &
-             (fm_lstem(itype)-fm_droot(itype))
+             (1._r8 - cc_lstem(itype)) *(fm_lstem(itype)-fm_droot(itype))
         m_deadstemc_to_litter_fire(p)               =  deadstemc(p) * m_veg * f * &
-             (1._r8 - cc_dstem(itype)) * &
-             fm_droot(itype)
+             (1._r8 - cc_dstem(itype)) * fm_droot(itype)
         m_deadstemc_storage_to_litter_fire(p)       =  deadstemc_storage(p) * f * &
-             (1._r8 - cc_other_sc) * &
-             fm_other(itype)
+             (1._r8 - cc_other_sc) * fm_other(itype)
         m_deadstemc_xfer_to_litter_fire(p)          =  deadstemc_xfer(p) * f * &
-             (1._r8 - cc_other_sc) * &
-             fm_other(itype)
-        m_frootc_to_litter_fire(p)                  =  frootc(p)             * f * &
-             fm_root(itype)
+             (1._r8 - cc_other_sc) * fm_other(itype)
+        m_frootc_to_litter_fire(p)                  =  frootc(p)  * f * fm_root(itype)
+
         m_frootc_storage_to_litter_fire(p)          =  frootc_storage(p)     * f * &
              fm_other(itype)
         m_frootc_xfer_to_litter_fire(p)             =  frootc_xfer(p)        * f * &
@@ -1235,53 +1242,65 @@ contains
              fm_other(itype)
 
      end do  ! end of patches loop
-
      ! fire-induced transfer of carbon and nitrogen pools to litter and cwd
      ! add phosphorus transfer fluxes -X.YANG
-     do fp = 1,num_soilp
-       p = filter_soilp(fp)
-       c = veg_pp%column(p)
-       wt_col = veg_pp%wtcol(p)
-       itype = veg_pp%itype(p)
+     !NOTE:  restructuring store and FP ops. so likely non-BFB
+     !$acc parallel loop independent gang worker collapse(2) default(present) private(c,sum1,sum2,sum3)
+     do j = 1,nlevdecomp
+        do fc = 1,num_soilc
+           c = filter_soilc(fc)
+           sum1 = fire_mortality_c_to_cwdc(c,j);
+           sum2 = fire_mortality_n_to_cwdn(c,j);
+           sum3 = fire_mortality_p_to_cwdp(c,j);
 
-       do j = 1,nlevdecomp
-         lprof_pj   = leaf_prof(p,j)
-         fr_prof_pj = froot_prof(p,j)
-         cr_prof_pj = croot_prof(p,j)
-         st_prof_pj = stem_prof(p,j)
+           !$acc loop vector reduction(+:sum1,sum2,sum3) &
+           !$acc     private(wt_col, lprof_pj, fr_prof_pj, cr_prof_pj, st_prof_pj)
+           do p = col_pp%pfti(c), col_pp%pftf(c)
+             wt_col = veg_pp%wtcol(p)
+             if(wt_col == 0._r8) cycle 
+             lprof_pj   = leaf_prof(p,j)
+             fr_prof_pj = froot_prof(p,j)
+             cr_prof_pj = croot_prof(p,j)
+             st_prof_pj = stem_prof(p,j)
 
+             sum1 = sum1 &
+                +(m_deadstemc_to_litter_fire(p) +m_livestemc_to_litter_fire(p) )*wt_col*st_prof_pj &
+                +(m_deadcrootc_to_litter_fire(p)+m_livecrootc_to_litter_fire(p))*wt_col*cr_prof_pj
 
-         fire_mortality_c_to_cwdc(c,j) = fire_mortality_c_to_cwdc(c,j) + &
-              m_deadstemc_to_litter_fire(p) * wt_col * st_prof_pj
-         fire_mortality_c_to_cwdc(c,j) = fire_mortality_c_to_cwdc(c,j) + &
-              m_deadcrootc_to_litter_fire(p) * wt_col * cr_prof_pj
-         fire_mortality_n_to_cwdn(c,j) = fire_mortality_n_to_cwdn(c,j) + &
-              m_deadstemn_to_litter_fire(p) * wt_col * st_prof_pj
-         fire_mortality_n_to_cwdn(c,j) = fire_mortality_n_to_cwdn(c,j) + &
-              m_deadcrootn_to_litter_fire(p) * wt_col * cr_prof_pj
-         ! add phosphorus
-         fire_mortality_p_to_cwdp(c,j) = fire_mortality_p_to_cwdp(c,j) + &
-              m_deadstemp_to_litter_fire(p) * wt_col * st_prof_pj
-         fire_mortality_p_to_cwdp(c,j) = fire_mortality_p_to_cwdp(c,j) + &
-              m_deadcrootp_to_litter_fire(p) * wt_col * cr_prof_pj
+             sum2 = sum2 + &
+                  (m_deadstemn_to_litter_fire(p) + m_livestemn_to_litter_fire(p) )*wt_col*st_prof_pj &
+                + (m_deadcrootn_to_litter_fire(p)+ m_livecrootn_to_litter_fire(p))*wt_col*cr_prof_pj
+            ! add phosphorus
+             sum3 = sum3 + &
+                 (m_deadstemp_to_litter_fire(p) +m_livestemp_to_litter_fire(p) )*wt_col*st_prof_pj &
+                +(m_deadcrootp_to_litter_fire(p)+m_livecrootp_to_litter_fire(p))*wt_col*cr_prof_pj
 
+           end do
+           fire_mortality_c_to_cwdc(c,j) = sum1
+           fire_mortality_n_to_cwdn(c,j) = sum2
+           fire_mortality_p_to_cwdp(c,j) = sum3
+        end do
+     end do
 
-         fire_mortality_c_to_cwdc(c,j) = fire_mortality_c_to_cwdc(c,j) + &
-              m_livestemc_to_litter_fire(p) * wt_col * st_prof_pj
-         fire_mortality_c_to_cwdc(c,j) = fire_mortality_c_to_cwdc(c,j) + &
-              m_livecrootc_to_litter_fire(p) * wt_col * cr_prof_pj
-         fire_mortality_n_to_cwdn(c,j) = fire_mortality_n_to_cwdn(c,j) + &
-              m_livestemn_to_litter_fire(p) * wt_col * st_prof_pj
-         fire_mortality_n_to_cwdn(c,j) = fire_mortality_n_to_cwdn(c,j) + &
-              m_livecrootn_to_litter_fire(p) * wt_col * cr_prof_pj
-         ! add phosphorus
-         fire_mortality_p_to_cwdp(c,j) = fire_mortality_p_to_cwdp(c,j) + &
-              m_livestemp_to_litter_fire(p) * wt_col * st_prof_pj
-         fire_mortality_p_to_cwdp(c,j) = fire_mortality_p_to_cwdp(c,j) + &
-              m_livecrootp_to_litter_fire(p) * wt_col * cr_prof_pj
+     !$acc parallel loop independent gang worker collapse(2) default(present) private(c,sum1,sum2,sum3)
+     do j = 1,nlevdecomp
+        do fc = 1,num_soilc
+           c = filter_soilc(fc)
+           sum1 = m_c_to_litr_met_fire(c,j);
+           sum2 = m_c_to_litr_cel_fire(c,j);
+           sum3 = m_c_to_litr_lig_fire(c,j);
 
+           !$acc loop vector reduction(+:sum1,sum2,sum3) private(wt_col,itype,lprof_pj,fr_prof_pj,cr_prof_pj,st_prof_pj)
+           do p = col_pp%pfti(c), col_pp%pftf(c)
+             wt_col     = veg_pp%wtcol(p)
+             if(wt_col == 0._r8) cycle 
+             itype      = veg_pp%itype(p)
+             lprof_pj   = leaf_prof(p,j)
+             fr_prof_pj = froot_prof(p,j)
+             cr_prof_pj = croot_prof(p,j)
+             st_prof_pj = stem_prof(p,j)
 
-          m_c_to_litr_met_fire(c,j)=m_c_to_litr_met_fire(c,j) + &
+             sum1 = sum1 + &
                ((m_leafc_to_litter_fire(p)*lf_flab(itype) &
                +m_leafc_storage_to_litter_fire(p) + &
                m_leafc_xfer_to_litter_fire(p) + m_cpool_to_litter_fire(p) + &
@@ -1293,20 +1312,47 @@ contains
                +(m_livestemc_storage_to_litter_fire(p) + &
                m_livestemc_xfer_to_litter_fire(p) &
                +m_deadstemc_storage_to_litter_fire(p) + &
-               m_deadstemc_xfer_to_litter_fire(p))* st_prof_pj&
+               m_deadstemc_xfer_to_litter_fire(p))*st_prof_pj &
                +(m_livecrootc_storage_to_litter_fire(p) + &
                m_livecrootc_xfer_to_litter_fire(p) &
                +m_deadcrootc_storage_to_litter_fire(p) + &
                m_deadcrootc_xfer_to_litter_fire(p))* cr_prof_pj)* wt_col
 
-       m_c_to_litr_cel_fire(c,j)=m_c_to_litr_cel_fire(c,j) + &
-            (m_leafc_to_litter_fire(p)*lf_fcel(itype)*lprof_pj + &
-            m_frootc_to_litter_fire(p)*fr_fcel(itype)*fr_prof_pj)* wt_col
-       m_c_to_litr_lig_fire(c,j)=m_c_to_litr_lig_fire(c,j) + &
-            (m_leafc_to_litter_fire(p)*lf_flig(itype)*lprof_pj + &
-            m_frootc_to_litter_fire(p)*fr_flig(itype)*fr_prof_pj)* wt_col
+            sum2 = sum2 + &
+               (m_leafc_to_litter_fire(p)*lf_fcel(itype)*lprof_pj + &
+               m_frootc_to_litter_fire(p)*fr_fcel(itype)*fr_prof_pj)* wt_col
 
-       m_n_to_litr_met_fire(c,j)=m_n_to_litr_met_fire(c,j) + &
+            sum3 = sum3 + &
+               (m_leafc_to_litter_fire(p)*lf_flig(itype)*lprof_pj + &
+                m_frootc_to_litter_fire(p)*fr_flig(itype)*fr_prof_pj)* wt_col
+         end do
+
+         m_c_to_litr_met_fire(c,j) = sum1;
+         m_c_to_litr_cel_fire(c,j) = sum2;
+         m_c_to_litr_lig_fire(c,j) = sum3;
+
+        end do
+     end do
+
+   !$acc parallel loop independent gang worker collapse(2) default(present) private(c,sum1,sum2,sum3)
+   do j = 1,nlevdecomp
+     do fc = 1,num_soilc
+         c = filter_soilc(fc)
+         sum1 = m_n_to_litr_met_fire(c,j);
+         sum2 = m_n_to_litr_cel_fire(c,j);
+         sum3 = m_n_to_litr_lig_fire(c,j);
+
+         !$acc loop vector reduction(+:sum1,sum2,sum3) private(wt_col,itype,lprof_pj,fr_prof_pj,cr_prof_pj,st_prof_pj)
+         do p = col_pp%pfti(c), col_pp%pftf(c)
+          wt_col     = veg_pp%wtcol(p)
+          if(wt_col == 0._r8) cycle 
+          itype      = veg_pp%itype(p)
+          lprof_pj   = leaf_prof(p,j)
+          fr_prof_pj = froot_prof(p,j)
+          cr_prof_pj = croot_prof(p,j)
+          st_prof_pj = stem_prof(p,j)
+
+          sum1 = sum1 + &
             ((m_leafn_to_litter_fire(p)*lf_flab(itype) &
             +m_leafn_storage_to_litter_fire(p) + m_npool_to_litter_fire(p) + &
             m_leafn_xfer_to_litter_fire(p)+m_retransn_to_litter_fire(p)) &
@@ -1321,16 +1367,40 @@ contains
             m_livecrootn_xfer_to_litter_fire(p) &
             +m_deadcrootn_storage_to_litter_fire(p) + &
             m_deadcrootn_xfer_to_litter_fire(p))* cr_prof_pj)* wt_col
-       m_n_to_litr_cel_fire(c,j)=m_n_to_litr_cel_fire(c,j) + &
-            (m_leafn_to_litter_fire(p)*lf_fcel(itype)*lprof_pj + &
-            m_frootn_to_litter_fire(p)*fr_fcel(itype)*fr_prof_pj)* wt_col
 
-        m_n_to_litr_lig_fire(c,j)=m_n_to_litr_lig_fire(c,j) + &
+          sum2 = sum2 + &
+             (m_leafn_to_litter_fire(p)*lf_fcel(itype)*lprof_pj + &
+              m_frootn_to_litter_fire(p)*fr_fcel(itype)*fr_prof_pj)* wt_col
+
+          sum3 = sum3 + &
              (m_leafn_to_litter_fire(p)*lf_flig(itype)*lprof_pj + &
-             m_frootn_to_litter_fire(p)*fr_flig(itype)*fr_prof_pj)* wt_col
+              m_frootn_to_litter_fire(p)*fr_flig(itype)*fr_prof_pj)* wt_col
+          end do
+          m_n_to_litr_met_fire(c,j) = sum1
+          m_n_to_litr_cel_fire(c,j) = sum2
+          m_n_to_litr_lig_fire(c,j) = sum3
+     end do
+   end do
 
-         ! add phosphorus
-         m_p_to_litr_met_fire(c,j)=m_p_to_litr_met_fire(c,j) + &
+   !$acc parallel loop independent gang worker collapse(2) default(present) private(c,sum1,sum2,sum3)
+   do j = 1,nlevdecomp
+     do fc = 1,num_soilc
+         c = filter_soilc(fc)
+         sum1 = m_p_to_litr_met_fire(c,j);
+         sum2 = m_p_to_litr_cel_fire(c,j);
+         sum3 = m_p_to_litr_lig_fire(c,j);
+
+         !$acc loop vector reduction(+:sum1,sum2,sum3) private(wt_col,itype,lprof_pj,fr_prof_pj,cr_prof_pj,st_prof_pj)
+         do p = col_pp%pfti(c), col_pp%pftf(c)
+          wt_col     = veg_pp%wtcol(p)
+          if(wt_col == 0._r8) cycle 
+          itype      = veg_pp%itype(p)
+          lprof_pj   = leaf_prof(p,j)
+          fr_prof_pj = froot_prof(p,j)
+          cr_prof_pj = croot_prof(p,j)
+          st_prof_pj = stem_prof(p,j)
+          ! add phosphorus
+          sum1 = sum1 + &
               ((m_leafp_to_litter_fire(p)*lf_flab(itype) &
               +m_leafp_storage_to_litter_fire(p) + m_ppool_to_litter_fire(p) + &
               m_leafp_xfer_to_litter_fire(p)+m_retransp_to_litter_fire(p)) &
@@ -1345,93 +1415,81 @@ contains
               m_livecrootp_xfer_to_litter_fire(p) &
               +m_deadcrootp_storage_to_litter_fire(p) + &
               m_deadcrootp_xfer_to_litter_fire(p))* cr_prof_pj)* wt_col
-         m_p_to_litr_cel_fire(c,j)=m_p_to_litr_cel_fire(c,j) + &
+
+           sum2 = sum2 + &
               (m_leafp_to_litter_fire(p)*lf_fcel(itype)*lprof_pj + &
               m_frootp_to_litter_fire(p)*fr_fcel(itype)*fr_prof_pj)* wt_col
-         m_p_to_litr_lig_fire(c,j)=m_p_to_litr_lig_fire(c,j) + &
+
+           sum3 = sum3 + &
               (m_leafp_to_litter_fire(p)*lf_flig(itype)*lprof_pj + &
               m_frootp_to_litter_fire(p)*fr_flig(itype)*fr_prof_pj)* wt_col
-
-        end do
+         end do
+         m_p_to_litr_met_fire(c,j) = sum1;
+         m_p_to_litr_cel_fire(c,j) = sum2;
+         m_p_to_litr_lig_fire(c,j) = sum3;
      end do
-     !
-     ! vertically-resolved decomposing C/N fire loss
-     ! column loop
-     ! add phosphorus
-     do fc = 1,num_soilc
-        c = filter_soilc(fc)
+   end do
 
-        baf_crop_sc = baf_crop(c)
-        f = farea_burned(c)
-
-        ! change CC for litter from 0.4_r8 to 0.5_r8 and CC for CWD from 0.2_r8
-        ! to 0.25_r8 according to Li et al.(2014)
-        do j = 1, nlevdecomp
-           ! carbon fluxes
-           do l = 1, ndecomp_pools
+   ! vertically-resolved decomposing C/N fire loss
+   ! column loop
+   ! add phosphorus
+   !$acc parallel loop independent gang worker collapse(2) default(present)
+   do l = 1, ndecomp_pools
+     do j = 1, nlevdecomp
+        !$acc loop vector independent private(c,baf_crop_sc,f)
+        do fc = 1,num_soilc
+             ! change CC for litter from 0.4_r8 to 0.5_r8 and CC for CWD from 0.2_r8
+             ! to 0.25_r8 according to Li et al.(2014)
+             c = filter_soilc(fc)
+             baf_crop_sc = baf_crop(c)
+             f = farea_burned(c)
               if ( is_litter(l) ) then
                  m_decomp_cpools_to_fire_vr(c,j,l) = decomp_cpools_vr(c,j,l) * f * 0.5_r8
-              end if
-              if ( is_cwd(l) ) then
-                 m_decomp_cpools_to_fire_vr(c,j,l) = decomp_cpools_vr(c,j,l) * &
-                      (f-baf_crop_sc) * 0.25_r8
-
-                 if (spinup_state == 1) then
-                   m_decomp_cpools_to_fire_vr(c,j,l) = m_decomp_cpools_to_fire_vr(c,j,l) * &
-                     decomp_cascade_con%spinup_factor(l)
-                   if (kyr >= 40) m_decomp_cpools_to_fire_vr(c,j,l) = &
-                     m_decomp_cpools_to_fire_vr(c,j,l) / cnstate_vars%scalaravg_col(c,j)
-                 end if
-              end if
-           end do
-
-           ! nitrogen fluxes
-           do l = 1, ndecomp_pools
-              if ( is_litter(l) ) then
                  m_decomp_npools_to_fire_vr(c,j,l) = decomp_npools_vr(c,j,l) * f * 0.5_r8
-              end if
-              if ( is_cwd(l) ) then
-                 m_decomp_npools_to_fire_vr(c,j,l) = decomp_npools_vr(c,j,l) * &
-                      (f-baf_crop_sc) * 0.25_r8
-                 if (spinup_state == 1) then
-                   m_decomp_npools_to_fire_vr(c,j,l) = m_decomp_npools_to_fire_vr(c,j,l) * &
-                     decomp_cascade_con%spinup_factor(l)
-                   if (kyr >= 40) m_decomp_npools_to_fire_vr(c,j,l) = &
-                     m_decomp_npools_to_fire_vr(c,j,l) / cnstate_vars%scalaravg_col(c,j)
-                 end if
-             end if
-           end do
-
-           ! phosphorus fluxes - loss due to fire
-           do l = 1, ndecomp_pools
-              if ( is_litter(l) ) then
                  m_decomp_ppools_to_fire_vr(c,j,l) = decomp_ppools_vr(c,j,l) * f * 0.5_r8
               end if
               if ( is_cwd(l) ) then
-                 m_decomp_ppools_to_fire_vr(c,j,l) = decomp_ppools_vr(c,j,l) * &
-                      (f-baf_crop_sc) * 0.25_r8
-              end if
-           end do
+                 m_decomp_cpools_to_fire_vr(c,j,l) = decomp_cpools_vr(c,j,l)*(f-baf_crop_sc) * 0.25_r8
+                 m_decomp_npools_to_fire_vr(c,j,l) = decomp_npools_vr(c,j,l)*(f-baf_crop_sc) * 0.25_r8
+                 m_decomp_ppools_to_fire_vr(c,j,l) = decomp_ppools_vr(c,j,l)*(f-baf_crop_sc) * 0.25_r8
 
-        end do
-     end do  ! end of column loop
+                 if (spinup_state == 1) then
+                   m_decomp_cpools_to_fire_vr(c,j,l) = m_decomp_cpools_to_fire_vr(c,j,l) * &
+                        decomp_cascade_con%spinup_factor(l)
+                   !
+                   m_decomp_npools_to_fire_vr(c,j,l) = m_decomp_npools_to_fire_vr(c,j,l) * &
+                        decomp_cascade_con%spinup_factor(l)
+                   if (year_curr >= 40) then
+                      m_decomp_cpools_to_fire_vr(c,j,l) = &
+                              m_decomp_cpools_to_fire_vr(c,j,l) / cnstate_vars%scalaravg_col(c,j)
+                      !
+                      m_decomp_npools_to_fire_vr(c,j,l) = &
+                              m_decomp_npools_to_fire_vr(c,j,l) / cnstate_vars%scalaravg_col(c,j)
+                   end if
+                 end if
+              end if
+           end do ! end of column loop
+
+        end do !end of nlevdecomp loop
+     end do  ! decomp_pools loop
 
      ! carbon loss due to deforestation fires
-
      if (transient_landcover) then    !true when landuse data is used
-        do fc = 1,num_soilc
-           c = filter_soilc(fc)
-           lfc2(c)=0._r8
-           if( .not. (kmo == 1 .and. kda == 1 .and. mcsec == 0) )then
-              if( trotr1_col(c)+trotr2_col(c) > 0.6_r8 .and. dtrotr_col(c) > 0._r8 .and. &
+        if( .not. (mon_curr == 1 .and. day_curr == 1 .and. secs_curr == 0) )then
+           !$acc parallel loop gang vector independent default(present)
+           do fc = 1,num_soilc
+             c = filter_soilc(fc)
+             lfc2(c)=0._r8
+             if( trotr1_col(c)+trotr2_col(c) > 0.6_r8 .and. dtrotr_col(c) > 0._r8 .and. &
                    lfc(c) > 0._r8 .and. fbac1(c) == 0._r8) then
+                 !
                  lfc2(c) = max(0._r8, min(lfc(c), (farea_burned(c)-baf_crop(c) - &
-                      baf_peatf(c))/2.0*dt))/(dtrotr_col(c)*dayspyr*secspday/dt)/dt
+                      baf_peatf(c))/2.0*dtime_mod))/(dtrotr_col(c)*dayspyr_mod*secspday/dtime_mod)/dtime_mod
                  lfc(c)  = lfc(c) - max(0._r8, min(lfc(c), (farea_burned(c)-baf_crop(c) - &
-                      baf_peatf(c))*dt/2.0_r8))
-              end if
-           end if
-        end do
+                      baf_peatf(c))*dtime_mod/2.0_r8))
+             end if
+          end do
+        end if
      end if
      !
      ! Carbon loss due to peat fires
@@ -1439,6 +1497,7 @@ contains
      ! somc_fire is not connected to clm45 soil carbon pool, ie does not decrease
      ! soil carbon b/c clm45 soil carbon was very low in several peatland grids
      !
+     !$acc parallel loop independent gang vector private(c) default(present)
      do fc = 1,num_soilc
         c = filter_soilc(fc)
         g = col_pp%gridcell(c)
@@ -1453,309 +1512,311 @@ contains
      ! They will be added here in proportion to the carbon emission
      ! Emission factors differ for various fire types
 
+     !$acc exit data delete(m_veg,transient_landcover,sum1,sum2,sum3)
+
    end associate
 
  end subroutine FireFluxes
 
  !-----------------------------------------------------------------------
-!#py  subroutine hdm_init( bounds )
-!#py    !
-!#py    ! !DESCRIPTION:
-!#py    ! Initialize data stream information for population density.
-!#py    !
-!#py    ! !USES:
-!#py    use elm_varctl       , only : inst_name
-!#py    use clm_time_manager , only : get_calendar
-!#py    use ncdio_pio        , only : pio_subsystem
-!#py    use shr_pio_mod      , only : shr_pio_getiotype
-!#py    use elm_nlUtilsMod   , only : find_nlgroup_name
-!#py    use ndepStreamMod    , only : elm_domain_mct
-!#py    use histFileMod      , only : hist_addfld1d
-!#py    !
-!#py    ! !ARGUMENTS:
-!#py    implicit none
-!#py    type(bounds_type), intent(in) :: bounds
-!#py    !
-!#py    ! !LOCAL VARIABLES:
-!#py    integer            :: stream_year_first_popdens   ! first year in pop. dens. stream to use
-!#py    integer            :: stream_year_last_popdens    ! last year in pop. dens. stream to use
-!#py    integer            :: model_year_align_popdens    ! align stream_year_first_hdm with
-!#py    integer            :: nu_nml                      ! unit for namelist file
-!#py    integer            :: nml_error                   ! namelist i/o error flag
-!#py    type(mct_ggrid)    :: dom_elm                     ! domain information
-!#py    character(len=CL)  :: stream_fldFileName_popdens  ! population density streams filename
-!#py    character(len=CL)  :: popdensmapalgo = 'bilinear' ! mapping alogrithm for population density
-!#py    character(*), parameter :: subName = "('hdmdyn_init')"
-!#py    character(*), parameter :: F00 = "('(hdmdyn_init) ',4a)"
-!#py    !-----------------------------------------------------------------------
-!#py
-!#py    namelist /popd_streams/          &
-!#py         stream_year_first_popdens,  &
-!#py         stream_year_last_popdens,   &
-!#py         model_year_align_popdens,   &
-!#py         popdensmapalgo,             &
-!#py         stream_fldFileName_popdens
-!#py
-!#py    ! Allocate pop dens forcing data
-!#py    allocate( forc_hdm(bounds%begg:bounds%endg) )
-!#py
-!#py    ! Default values for namelist
-!#py    stream_year_first_popdens  = 1       ! first year in stream to use
-!#py    stream_year_last_popdens   = 1       ! last  year in stream to use
-!#py    model_year_align_popdens   = 1       ! align stream_year_first_popdens with this model year
-!#py    stream_fldFileName_popdens = ' '
-!#py
-!#py    ! Read popd_streams namelist
-!#py    if (masterproc) then
-!#py       nu_nml = getavu()
-!#py       open( nu_nml, file=trim(NLFilename), status='old', iostat=nml_error )
-!#py       call find_nlgroup_name(nu_nml, 'popd_streams', status=nml_error)
-!#py       if (nml_error == 0) then
-!#py          read(nu_nml, nml=popd_streams,iostat=nml_error)
-!#py          if (nml_error /= 0) then
-!#py             call endrun(msg='ERROR reading popd_streams namelist'//errMsg(__FILE__, __LINE__))
-!#py          end if
-!#py       end if
-!#py       close(nu_nml)
-!#py       call relavu( nu_nml )
-!#py    endif
-!#py
-!#py    call shr_mpi_bcast(stream_year_first_popdens, mpicom)
-!#py    call shr_mpi_bcast(stream_year_last_popdens, mpicom)
-!#py    call shr_mpi_bcast(model_year_align_popdens, mpicom)
-!#py    call shr_mpi_bcast(stream_fldFileName_popdens, mpicom)
-!#py
-!#py    if (masterproc) then
-!#py       write(iulog,*) ' '
-!#py       write(iulog,*) 'popdens_streams settings:'
-!#py       write(iulog,*) '  stream_year_first_popdens  = ',stream_year_first_popdens
-!#py       write(iulog,*) '  stream_year_last_popdens   = ',stream_year_last_popdens
-!#py       write(iulog,*) '  model_year_align_popdens   = ',model_year_align_popdens
-!#py       write(iulog,*) '  stream_fldFileName_popdens = ',stream_fldFileName_popdens
-!#py       write(iulog,*) ' '
-!#py    endif
-!#py
-!#py    call elm_domain_mct (bounds, dom_elm)
-!#py
-!#py    call shr_strdata_create(sdat_hdm,name="clmhdm",     &
-!#py         pio_subsystem=pio_subsystem,                   &
-!#py         pio_iotype=shr_pio_getiotype(inst_name),       &
-!#py         mpicom=mpicom, compid=comp_id,                 &
-!#py         gsmap=gsmap_lnd_gdc2glo, ggrid=dom_elm,        &
-!#py         nxg=ldomain%ni, nyg=ldomain%nj,                &
-!#py         yearFirst=stream_year_first_popdens,           &
-!#py         yearLast=stream_year_last_popdens,             &
-!#py         yearAlign=model_year_align_popdens,            &
-!#py         offset=0,                                      &
-!#py         domFilePath='',                                &
-!#py         domFileName=trim(stream_fldFileName_popdens),  &
-!#py         domTvarName='time',                            &
-!#py         domXvarName='lon' ,                            &
-!#py         domYvarName='lat' ,                            &
-!#py         domAreaName='area',                            &
-!#py         domMaskName='mask',                            &
-!#py         filePath='',                                   &
-!#py         filename=(/trim(stream_fldFileName_popdens)/) , &
-!#py         fldListFile='hdm',                             &
-!#py         fldListModel='hdm',                            &
-!#py         fillalgo='none',                               &
-!#py         mapalgo=popdensmapalgo,                        &
-!#py         calendar=get_calendar(),                       &
-!#py         tintalgo='nearest',                            &
-!#py         taxmode='extend'                           )
-!#py
-!#py    if (masterproc) then
-!#py       call shr_strdata_print(sdat_hdm,'population density data')
-!#py    endif
-!#py
-!#py    ! Add history fields
-!#py    call hist_addfld1d (fname='HDM', units='counts/km^2',      &
-!#py          avgflag='A', long_name='human population density',   &
-!#py          ptr_lnd=forc_hdm, default='inactive')
-!#py
-!#py end subroutine hdm_init
+ subroutine hdm_init( bounds )
+   !
+   ! !DESCRIPTION:
+   ! Initialize data stream information for population density.
+   !
+   ! !USES:
+   use elm_varctl       , only : inst_name
+   use clm_time_manager , only : get_calendar
+   use ncdio_pio        , only : pio_subsystem
+   use shr_pio_mod      , only : shr_pio_getiotype
+   use elm_nlUtilsMod   , only : find_nlgroup_name
+   use ndepStreamMod    , only : elm_domain_mct
+   use histFileMod      , only : hist_addfld1d
+   !
+   ! !ARGUMENTS:
+   implicit none
+   type(bounds_type), intent(in) :: bounds
+   !
+   ! !LOCAL VARIABLES:
+   integer            :: stream_year_first_popdens   ! first year in pop. dens. stream to use
+   integer            :: stream_year_last_popdens    ! last year in pop. dens. stream to use
+   integer            :: model_year_align_popdens    ! align stream_year_first_hdm with
+   integer            :: nu_nml                      ! unit for namelist file
+   integer            :: nml_error                   ! namelist i/o error flag
+   type(mct_ggrid)    :: dom_elm                     ! domain information
+   character(len=CL)  :: stream_fldFileName_popdens  ! population density streams filename
+   character(len=CL)  :: popdensmapalgo = 'bilinear' ! mapping alogrithm for population density
+   character(*), parameter :: subName = "('hdmdyn_init')"
+   character(*), parameter :: F00 = "('(hdmdyn_init) ',4a)"
+   !-----------------------------------------------------------------------
+
+   namelist /popd_streams/          &
+        stream_year_first_popdens,  &
+        stream_year_last_popdens,   &
+        model_year_align_popdens,   &
+        popdensmapalgo,             &
+        stream_fldFileName_popdens
+
+   ! Allocate pop dens forcing data
+   allocate( forc_hdm(bounds%begg:bounds%endg) )
+
+   ! Default values for namelist
+   stream_year_first_popdens  = 1       ! first year in stream to use
+   stream_year_last_popdens   = 1       ! last  year in stream to use
+   model_year_align_popdens   = 1       ! align stream_year_first_popdens with this model year
+   stream_fldFileName_popdens = ' '
+
+   ! Read popd_streams namelist
+   if (masterproc) then
+      nu_nml = getavu()
+      open( nu_nml, file=trim(NLFilename), status='old', iostat=nml_error )
+      call find_nlgroup_name(nu_nml, 'popd_streams', status=nml_error)
+      if (nml_error == 0) then
+         read(nu_nml, nml=popd_streams,iostat=nml_error)
+         if (nml_error /= 0) then
+            call endrun(msg='ERROR reading popd_streams namelist'//errMsg(__FILE__, __LINE__))
+         end if
+      end if
+      close(nu_nml)
+      call relavu( nu_nml )
+   endif
+
+   call shr_mpi_bcast(stream_year_first_popdens, mpicom)
+   call shr_mpi_bcast(stream_year_last_popdens, mpicom)
+   call shr_mpi_bcast(model_year_align_popdens, mpicom)
+   call shr_mpi_bcast(stream_fldFileName_popdens, mpicom)
+
+   if (masterproc) then
+      write(iulog,*) ' '
+      write(iulog,*) 'popdens_streams settings:'
+      write(iulog,*) '  stream_year_first_popdens  = ',stream_year_first_popdens
+      write(iulog,*) '  stream_year_last_popdens   = ',stream_year_last_popdens
+      write(iulog,*) '  model_year_align_popdens   = ',model_year_align_popdens
+      write(iulog,*) '  stream_fldFileName_popdens = ',stream_fldFileName_popdens
+      write(iulog,*) ' '
+   endif
+
+   call elm_domain_mct (bounds, dom_elm)
+
+   call shr_strdata_create(sdat_hdm,name="clmhdm",     &
+        pio_subsystem=pio_subsystem,                   &
+        pio_iotype=shr_pio_getiotype(inst_name),       &
+        mpicom=mpicom, compid=comp_id,                 &
+        gsmap=gsmap_lnd_gdc2glo, ggrid=dom_elm,        &
+        nxg=ldomain%ni, nyg=ldomain%nj,                &
+        yearFirst=stream_year_first_popdens,           &
+        yearLast=stream_year_last_popdens,             &
+        yearAlign=model_year_align_popdens,            &
+        offset=0,                                      &
+        domFilePath='',                                &
+        domFileName=trim(stream_fldFileName_popdens),  &
+        domTvarName='time',                            &
+        domXvarName='lon' ,                            &
+        domYvarName='lat' ,                            &
+        domAreaName='area',                            &
+        domMaskName='mask',                            &
+        filePath='',                                   &
+        filename=(/trim(stream_fldFileName_popdens)/) , &
+        fldListFile='hdm',                             &
+        fldListModel='hdm',                            &
+        fillalgo='none',                               &
+        mapalgo=popdensmapalgo,                        &
+        calendar=get_calendar(),                       &
+        tintalgo='nearest',                            &
+        taxmode='extend'                           )
+
+   if (masterproc) then
+      call shr_strdata_print(sdat_hdm,'population density data')
+   endif
+
+   ! Add history fields
+   call hist_addfld1d (fname='HDM', units='counts/km^2',      &
+         avgflag='A', long_name='human population density',   &
+         ptr_lnd=forc_hdm, default='inactive')
+
+end subroutine hdm_init
 
 !-----------------------------------------------------------------------
-!#py subroutine hdm_interp(bounds)
-!#py   !
-!#py   ! !DESCRIPTION:
-!#py   ! Interpolate data stream information for population density.
-!#py   !
-!#py   ! !USES:
-!#py   !#py use clm_time_manager, only : get_curr_date
-!#py   !
-!#py   ! !ARGUMENTS:
-!#py   type(bounds_type), intent(in) :: bounds
-!#py   !
-!#py   ! !LOCAL VARIABLES:
-!#py   integer :: g, ig
-!#py   integer :: year    ! year (0, ...) for nstep+1
-!#py   integer :: mon     ! month (1, ..., 12) for nstep+1
-!#py   integer :: day     ! day of month (1, ..., 31) for nstep+1
-!#py   integer :: sec     ! seconds into current date for nstep+1
-!#py   integer :: mcdate  ! Current model date (yyyymmdd)
-!#py   !-----------------------------------------------------------------------
-!#py    !#py call get_curr_date(year, mon, day, sec)
-!#py    mcdate = year*10000 + mon*100 + day
-!#py 
-!#py    !#py call shr_strdata_advance(sdat_hdm, mcdate, sec, mpicom, 'hdmdyn')
-!#py 
-!#py    ig = 0
-!#py    do g = bounds%begg,bounds%endg
-!#py       ig = ig+1
-!#py       forc_hdm(g) = sdat_hdm%avs(1)%rAttr(1,ig)
-!#py    end do
-!#py end subroutine hdm_interp
+subroutine hdm_interp(bounds)
+  !
+  ! !DESCRIPTION:
+  ! Interpolate data stream information for population density.
+  !
+  ! !USES:
+  use clm_time_manager, only : get_curr_date
+  !
+  ! !ARGUMENTS:
+  type(bounds_type), intent(in) :: bounds
+  !
+  ! !LOCAL VARIABLES:
+  integer :: g, ig
+  integer :: year    ! year (0, ...) for nstep+1
+  integer :: mon     ! month (1, ..., 12) for nstep+1
+  integer :: day     ! day of month (1, ..., 31) for nstep+1
+  integer :: sec     ! seconds into current date for nstep+1
+  integer :: mcdate  ! Current model date (yyyymmdd)
+  !-----------------------------------------------------------------------
+   call get_curr_date(year, mon, day, sec)
+   mcdate = year*10000 + mon*100 + day
+
+   call shr_strdata_advance(sdat_hdm, mcdate, sec, mpicom, 'hdmdyn')
+
+   ig = 0
+   do g = bounds%begg,bounds%endg
+      ig = ig+1
+      forc_hdm(g) = sdat_hdm%avs(1)%rAttr(1,ig)
+   end do
+end subroutine hdm_interp
 
 !-----------------------------------------------------------------------
-!#py subroutine lnfm_init( bounds )
-!#py   !
-!#py   ! !DESCRIPTION:
-!#py   !
-!#py   ! Initialize data stream information for Lightning.
-!#py   !
-!#py   ! !USES:
-!#py   use elm_varctl       , only : inst_name
-!#py   use clm_time_manager , only : get_calendar
-!#py   use ncdio_pio        , only : pio_subsystem
-!#py   use shr_pio_mod      , only : shr_pio_getiotype
-!#py   use elm_nlUtilsMod   , only : find_nlgroup_name
-!#py   use ndepStreamMod    , only : elm_domain_mct
-!#py   use histFileMod      , only : hist_addfld1d
-!#py   !
-!#py   ! !ARGUMENTS:
-!#py   implicit none
-!#py   type(bounds_type), intent(in) :: bounds
-!#py   !
-!#py   ! !LOCAL VARIABLES:
-!#py   integer            :: stream_year_first_lightng  ! first year in Lightning stream to use
-!#py   integer            :: stream_year_last_lightng   ! last year in Lightning stream to use
-!#py   integer            :: model_year_align_lightng   ! align stream_year_first_lnfm with
-!#py   integer            :: nu_nml                     ! unit for namelist file
-!#py   integer            :: nml_error                  ! namelist i/o error flag
-!#py   type(mct_ggrid)    :: dom_elm                    ! domain information
-!#py   character(len=CL)  :: stream_fldFileName_lightng ! lightning stream filename to read
-!#py   character(len=CL)  :: lightngmapalgo = 'bilinear'! Mapping alogrithm
-!#py   character(*), parameter :: subName = "('lnfmdyn_init')"
-!#py   character(*), parameter :: F00 = "('(lnfmdyn_init) ',4a)"
-!#py   !-----------------------------------------------------------------------
-!#py
-!#py    namelist /light_streams/         &
-!#py         stream_year_first_lightng,  &
-!#py         stream_year_last_lightng,   &
-!#py         model_year_align_lightng,   &
-!#py         lightngmapalgo,             &
-!#py         stream_fldFileName_lightng
-!#py
-!#py    ! Allocate lightning forcing data
-!#py    allocate( forc_lnfm(bounds%begg:bounds%endg) )
-!#py
-!#py    ! Default values for namelist
-!#py     stream_year_first_lightng  = 1      ! first year in stream to use
-!#py     stream_year_last_lightng   = 1      ! last  year in stream to use
-!#py     model_year_align_lightng   = 1      ! align stream_year_first_lnfm with this model year
-!#py     stream_fldFileName_lightng = ' '
-!#py
-!#py    ! Read light_streams namelist
-!#py    if (masterproc) then
-!#py       nu_nml = getavu()
-!#py       open( nu_nml, file=trim(NLFilename), status='old', iostat=nml_error )
-!#py       call find_nlgroup_name(nu_nml, 'light_streams', status=nml_error)
-!#py       if (nml_error == 0) then
-!#py          read(nu_nml, nml=light_streams,iostat=nml_error)
-!#py          if (nml_error /= 0) then
-!#py             call endrun(msg='ERROR reading light_streams namelist'//errMsg(__FILE__, __LINE__))
-!#py          end if
-!#py       end if
-!#py       close(nu_nml)
-!#py       call relavu( nu_nml )
-!#py    endif
-!#py
-!#py    call shr_mpi_bcast(stream_year_first_lightng, mpicom)
-!#py    call shr_mpi_bcast(stream_year_last_lightng, mpicom)
-!#py    call shr_mpi_bcast(model_year_align_lightng, mpicom)
-!#py    call shr_mpi_bcast(stream_fldFileName_lightng, mpicom)
-!#py
-!#py    if (masterproc) then
-!#py       write(iulog,*) ' '
-!#py       write(iulog,*) 'light_stream settings:'
-!#py       write(iulog,*) '  stream_year_first_lightng  = ',stream_year_first_lightng
-!#py       write(iulog,*) '  stream_year_last_lightng   = ',stream_year_last_lightng
-!#py       write(iulog,*) '  model_year_align_lightng   = ',model_year_align_lightng
-!#py       write(iulog,*) '  stream_fldFileName_lightng = ',stream_fldFileName_lightng
-!#py       write(iulog,*) ' '
-!#py    endif
-!#py
-!#py    call elm_domain_mct (bounds, dom_elm)
-!#py
-!#py    call shr_strdata_create(sdat_lnfm,name="clmlnfm",  &
-!#py         pio_subsystem=pio_subsystem,                  &
-!#py         pio_iotype=shr_pio_getiotype(inst_name),      &
-!#py         mpicom=mpicom, compid=comp_id,                &
-!#py         gsmap=gsmap_lnd_gdc2glo, ggrid=dom_elm,       &
-!#py         nxg=ldomain%ni, nyg=ldomain%nj,               &
-!#py         yearFirst=stream_year_first_lightng,          &
-!#py         yearLast=stream_year_last_lightng,            &
-!#py         yearAlign=model_year_align_lightng,           &
-!#py         offset=0,                                     &
-!#py         domFilePath='',                               &
-!#py         domFileName=trim(stream_fldFileName_lightng), &
-!#py         domTvarName='time',                           &
-!#py         domXvarName='lon' ,                           &
-!#py         domYvarName='lat' ,                           &
-!#py         domAreaName='area',                           &
-!#py         domMaskName='mask',                           &
-!#py         filePath='',                                  &
-!#py         filename=(/trim(stream_fldFileName_lightng)/),&
-!#py         fldListFile='lnfm',                           &
-!#py         fldListModel='lnfm',                          &
-!#py         fillalgo='none',                              &
-!#py         mapalgo=lightngmapalgo,                       &
-!#py         calendar=get_calendar(),                      &
-!#py         taxmode='cycle'                            )
-!#py
-!#py    if (masterproc) then
-!#py       call shr_strdata_print(sdat_lnfm,'Lightning data')
-!#py    endif
-!#py
-!#py    ! Add history fields
-!#py    call hist_addfld1d (fname='LNFM', units='counts/km^2/hr',  &
-!#py          avgflag='A', long_name='Lightning frequency',        &
-!#py          ptr_lnd=forc_lnfm, default='inactive')
-!#py
-!#py end subroutine lnfm_init
+subroutine lnfm_init( bounds )
+  !
+  ! !DESCRIPTION:
+  !
+  ! Initialize data stream information for Lightning.
+  !
+  ! !USES:
+  use elm_varctl       , only : inst_name
+  use clm_time_manager , only : get_calendar
+  use ncdio_pio        , only : pio_subsystem
+  use shr_pio_mod      , only : shr_pio_getiotype
+  use elm_nlUtilsMod   , only : find_nlgroup_name
+  use ndepStreamMod    , only : elm_domain_mct
+  use histFileMod      , only : hist_addfld1d
+  !
+  ! !ARGUMENTS:
+  implicit none
+  type(bounds_type), intent(in) :: bounds
+  !
+  ! !LOCAL VARIABLES:
+  integer            :: stream_year_first_lightng  ! first year in Lightning stream to use
+  integer            :: stream_year_last_lightng   ! last year in Lightning stream to use
+  integer            :: model_year_align_lightng   ! align stream_year_first_lnfm with
+  integer            :: nu_nml                     ! unit for namelist file
+  integer            :: nml_error                  ! namelist i/o error flag
+  type(mct_ggrid)    :: dom_elm                    ! domain information
+  character(len=CL)  :: stream_fldFileName_lightng ! lightning stream filename to read
+  character(len=CL)  :: lightngmapalgo = 'bilinear'! Mapping alogrithm
+  character(*), parameter :: subName = "('lnfmdyn_init')"
+  character(*), parameter :: F00 = "('(lnfmdyn_init) ',4a)"
+  !-----------------------------------------------------------------------
+
+   namelist /light_streams/         &
+        stream_year_first_lightng,  &
+        stream_year_last_lightng,   &
+        model_year_align_lightng,   &
+        lightngmapalgo,             &
+        stream_fldFileName_lightng
+
+   ! Allocate lightning forcing data
+   allocate( forc_lnfm(bounds%begg:bounds%endg) )
+
+   ! Default values for namelist
+    stream_year_first_lightng  = 1      ! first year in stream to use
+    stream_year_last_lightng   = 1      ! last  year in stream to use
+    model_year_align_lightng   = 1      ! align stream_year_first_lnfm with this model year
+    stream_fldFileName_lightng = ' '
+
+   ! Read light_streams namelist
+   if (masterproc) then
+      nu_nml = getavu()
+      open( nu_nml, file=trim(NLFilename), status='old', iostat=nml_error )
+      call find_nlgroup_name(nu_nml, 'light_streams', status=nml_error)
+      if (nml_error == 0) then
+         read(nu_nml, nml=light_streams,iostat=nml_error)
+         if (nml_error /= 0) then
+            call endrun(msg='ERROR reading light_streams namelist'//errMsg(__FILE__, __LINE__))
+         end if
+      end if
+      close(nu_nml)
+      call relavu( nu_nml )
+   endif
+
+   call shr_mpi_bcast(stream_year_first_lightng, mpicom)
+   call shr_mpi_bcast(stream_year_last_lightng, mpicom)
+   call shr_mpi_bcast(model_year_align_lightng, mpicom)
+   call shr_mpi_bcast(stream_fldFileName_lightng, mpicom)
+
+   if (masterproc) then
+      write(iulog,*) ' '
+      write(iulog,*) 'light_stream settings:'
+      write(iulog,*) '  stream_year_first_lightng  = ',stream_year_first_lightng
+      write(iulog,*) '  stream_year_last_lightng   = ',stream_year_last_lightng
+      write(iulog,*) '  model_year_align_lightng   = ',model_year_align_lightng
+      write(iulog,*) '  stream_fldFileName_lightng = ',stream_fldFileName_lightng
+      write(iulog,*) ' '
+   endif
+
+   call elm_domain_mct (bounds, dom_elm)
+
+   call shr_strdata_create(sdat_lnfm,name="clmlnfm",  &
+        pio_subsystem=pio_subsystem,                  &
+        pio_iotype=shr_pio_getiotype(inst_name),      &
+        mpicom=mpicom, compid=comp_id,                &
+        gsmap=gsmap_lnd_gdc2glo, ggrid=dom_elm,       &
+        nxg=ldomain%ni, nyg=ldomain%nj,               &
+        yearFirst=stream_year_first_lightng,          &
+        yearLast=stream_year_last_lightng,            &
+        yearAlign=model_year_align_lightng,           &
+        offset=0,                                     &
+        domFilePath='',                               &
+        domFileName=trim(stream_fldFileName_lightng), &
+        domTvarName='time',                           &
+        domXvarName='lon' ,                           &
+        domYvarName='lat' ,                           &
+        domAreaName='area',                           &
+        domMaskName='mask',                           &
+        filePath='',                                  &
+        filename=(/trim(stream_fldFileName_lightng)/),&
+        fldListFile='lnfm',                           &
+        fldListModel='lnfm',                          &
+        fillalgo='none',                              &
+        mapalgo=lightngmapalgo,                       &
+        calendar=get_calendar(),                      &
+        taxmode='cycle'                            )
+
+   if (masterproc) then
+      call shr_strdata_print(sdat_lnfm,'Lightning data')
+   endif
+
+   ! Add history fields
+   call hist_addfld1d (fname='LNFM', units='counts/km^2/hr',  &
+         avgflag='A', long_name='Lightning frequency',        &
+         ptr_lnd=forc_lnfm, default='inactive')
+
+end subroutine lnfm_init
 
 !-----------------------------------------------------------------------
-!#py subroutine lnfm_interp(bounds )
-!#py   !
-!#py   ! !DESCRIPTION:
-!#py   ! Interpolate data stream information for Lightning.
-!#py   !
-!#py   ! !USES:
-!#py   !#py use clm_time_manager, only : get_curr_date
-!#py   !
-!#py   ! !ARGUMENTS:
-!#py   type(bounds_type), intent(in) :: bounds
-!#py   !
-!#py   ! !LOCAL VARIABLES:
-!#py   integer :: g, ig
-!#py   integer :: year    ! year (0, ...) for nstep+1
-!#py   integer :: mon     ! month (1, ..., 12) for nstep+1
-!#py   integer :: day     ! day of month (1, ..., 31) for nstep+1
-!#py   integer :: sec     ! seconds into current date for nstep+1
-!#py   integer :: mcdate  ! Current model date (yyyymmdd)
-!#py   !-----------------------------------------------------------------------
-!#py    !#py call get_curr_date(year, mon, day, sec)
-!#py    mcdate = year*10000 + mon*100 + day
-!#py 
-!#py    !#py call shr_strdata_advance(sdat_lnfm, mcdate, sec, mpicom, 'lnfmdyn')
-!#py 
-!#py    ig = 0
-!#py    do g = bounds%begg,bounds%endg
-!#py       ig = ig+1
-!#py       forc_lnfm(g) = sdat_lnfm%avs(1)%rAttr(1,ig)
-!#py    end do
-!#py 
-!#py end subroutine lnfm_interp
+subroutine lnfm_interp(bounds )
+  !
+  ! !DESCRIPTION:
+  ! Interpolate data stream information for Lightning.
+  !
+  ! !USES:
+  use clm_time_manager, only : get_curr_date
+  !
+  ! !ARGUMENTS:
+  type(bounds_type), intent(in) :: bounds
+  !
+  ! !LOCAL VARIABLES:
+  integer :: g, ig
+  integer :: year    ! year (0, ...) for nstep+1
+  integer :: mon     ! month (1, ..., 12) for nstep+1
+  integer :: day     ! day of month (1, ..., 31) for nstep+1
+  integer :: sec     ! seconds into current date for nstep+1
+  integer :: mcdate  ! Current model date (yyyymmdd)
+  !-----------------------------------------------------------------------
+   call get_curr_date(year, mon, day, sec)
+   mcdate = year*10000 + mon*100 + day
+
+   call shr_strdata_advance(sdat_lnfm, mcdate, sec, mpicom, 'lnfmdyn')
+
+   ig = 0
+   do g = bounds%begg,bounds%endg
+      ig = ig+1
+      forc_lnfm(g) = sdat_lnfm%avs(1)%rAttr(1,ig)
+   end do
+
+end subroutine lnfm_interp
 
 end module FireMod

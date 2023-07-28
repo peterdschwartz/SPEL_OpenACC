@@ -673,10 +673,10 @@ contains
     integer , intent(in) :: filter_pcropp(:) ! filter for prognostic crop patches
     !
     ! !LOCAL VARIABLES:
-    integer kyr   ! current year
-    integer kmo   ! month of year  (1, ..., 12)
-    integer kda   ! day of month   (1, ..., 31)
-    integer mcsec ! seconds of day (0, ..., seconds/day)
+    integer :: kyr   ! current year
+    integer :: kmo   ! month of year  (1, ..., 12)
+    integer :: kda   ! day of month   (1, ..., 31)
+    integer :: mcsec ! seconds of day (0, ..., seconds/day)
     integer :: fp, p
     !-----------------------------------------------------------------------
 

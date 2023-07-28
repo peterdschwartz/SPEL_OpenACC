@@ -1,5 +1,4 @@
 module SoilFluxesMod
-
   !-----------------------------------------------------------------------
   ! !DESCRIPTION:
   ! Updates surface fluxes based on the new ground temperature.
@@ -9,9 +8,9 @@ module SoilFluxesMod
   !#py !#py use shr_log_mod	, only : errMsg => shr_log_errMsg
   use decompMod		, only : bounds_type
   !#py use abortutils	, only : endrun
-  !#py use perf_mod		, only : t_startf, t_stopf
-  use clm_varctl	, only : iulog
-  use clm_varpar	, only : nlevsno, nlevgrnd, nlevurb, max_patch_per_col
+  use elm_varctl	, only : iulog, use_extrasnowlayers
+  use perfMod_GPU
+  use elm_varpar	, only : nlevsno, nlevgrnd, nlevurb, max_patch_per_col
   use atm2lndType	, only : atm2lnd_type
   use CanopyStateType   , only : canopystate_type
   use EnergyFluxType    , only : energyflux_type
@@ -22,6 +21,8 @@ module SoilFluxesMod
   use ColumnDataType    , only : col_es, col_ef, col_ws
   use VegetationType    , only : veg_pp
   use VegetationDataType, only : veg_ef, veg_wf
+
+  use timeinfoMod , only : dtime_mod
   !
   ! !PUBLIC TYPES:
   implicit none
@@ -37,15 +38,14 @@ contains
   subroutine SoilFluxes (bounds, num_urbanl, filter_urbanl, &
        num_nolakec, filter_nolakec, num_nolakep, filter_nolakep, &
        atm2lnd_vars, solarabs_vars, canopystate_vars, &
-       energyflux_vars, dtime)
+       energyflux_vars)
     !
     ! !DESCRIPTION:
     ! Update surface fluxes based on the new ground temperature
     !
     ! !USES:
-    !#py use clm_time_manager , only : get_step_size
       !$acc routine seq
-    use clm_varcon       , only : hvap, cpair, grav, vkc, tfrz, sb
+    use elm_varcon       , only : hvap, cpair, grav, vkc, tfrz, sb
     use landunit_varcon  , only : istsoil, istcrop
     use column_varcon    , only : icol_roof, icol_sunwall, icol_shadewall, icol_road_perv
     use subgridAveMod    , only : p2c
@@ -60,12 +60,10 @@ contains
     integer                , intent(in)    :: filter_nolakep(:)                ! patch filter for non-lake points
     type(atm2lnd_type)     , intent(in)    :: atm2lnd_vars
     type(solarabs_type)    , intent(in)    :: solarabs_vars
-    !type(temperature_type) , intent(in)    :: temperature_vars
     type(canopystate_type) , intent(in)    :: canopystate_vars
-    !type(waterstate_type)  , intent(in)    :: waterstate_vars
-    !type(waterflux_type)   , intent(inout) :: waterflux_vars
     type(energyflux_type)  , intent(inout) :: energyflux_vars
-    real(r8), intent(in) :: dtime                                              ! land model time step (sec)
+    real(r8) :: dtime                                              ! land model time step (sec)
+
 
     !
     ! !LOCAL VARIABLES:
@@ -83,6 +81,8 @@ contains
     real(r8) :: lw_grnd
     real(r8) :: fsno_eff
     real(r8) :: temp
+
+    character(len=256) :: event
     !-----------------------------------------------------------------------
 
     associate(                                                                &
@@ -163,10 +163,13 @@ contains
          errsoi_patch            => veg_ef%errsoi              & ! Output: [real(r8) (:)   ]  pft-level soil/lake energy conservation error (W/m**2)
          )
 
+         dtime = dtime_mod
+      event = 'bgp2_loop_1'
+      call t_start_lnd(event)
       do fc = 1,num_nolakec
          c = filter_nolakec(fc)
          j = col_pp%snl(c)+1
-
+         
          ! Calculate difference in soil temperature from last time step, for
          ! flux corrections
 
@@ -238,9 +241,10 @@ contains
             end if
          end do
       end do
-      !#py call t_stopf('bgp2_loop_1')
-      !#py call t_startf('bgp2_loop_2')
 
+      call t_stop_lnd(event)
+      event = 'bgp2_loop_2'
+      call t_start_lnd(event)
       ! Calculate ratio for rescaling pft-level fluxes to meet availability
 
       do fc = 1,num_nolakec
@@ -345,7 +349,7 @@ contains
          ! This was moved in from Hydrology2 to keep all pft-level
          ! calculations out of Hydrology2
 
-         if (col_pp%snl(c) < 0 .and. do_capsnow(c)) then
+         if (col_pp%snl(c) < 0 .and. do_capsnow(c) .and. .not. use_extrasnowlayers) then
             qflx_snwcp_liq(p) = qflx_snwcp_liq(p)+frac_sno_eff(c)*qflx_dew_grnd(p)
             qflx_snwcp_ice(p) = qflx_snwcp_ice(p)+frac_sno_eff(c)*qflx_dew_snow(p)
          end if
@@ -358,9 +362,10 @@ contains
          eflx_lh_grnd(p)   = qflx_evap_soi(p) * htvp(c)
 
       end do
-      !#py call t_stopf('bgp2_loop_2')
-      !#py call t_startf('bgp2_loop_3')
+      call t_stop_lnd(event)
 
+      event = 'bgp2_loop_3'
+      call t_start_lnd(event)
       ! Soil Energy balance check
 
       do fp = 1,num_nolakep
@@ -392,20 +397,16 @@ contains
                 if (j >= 1) then
                        temp = t_soisno(c,j)-tssbef(c,j)
                        temp = temp/fact(c,j)
-                       ! print *, "j>=1,diff/fact, fact, snow, BEFORE:"
-                        !print *,temp,fact(c,j),errsoi_patch(p)
                        errsoi_patch(p) = errsoi_patch(p) - temp
-
-                !print *,"snow AFTER"
-                !print *, p, errsoi_patch(p)
                 end if
 
             end if
          end do
       end do
-      !#py call t_stopf('bgp2_loop_3')
-      !#py call t_startf('bgp2_loop_4')
+      call t_stop_lnd(event)
 
+      event = 'bgp2_loop_4'
+      call t_start_lnd(event)
       ! Outgoing long-wave radiation from vegetation + ground
       ! For conservation we put the increase of ground longwave to outgoing
       ! For urban patches, ulrad=0 and (1-fracveg_nosno)=1, and eflx_lwrad_out and eflx_lwrad_net
@@ -421,14 +422,14 @@ contains
          j = col_pp%snl(c)+1
 
          if (.not. lun_pp%urbpoi(l)) then
-            lw_grnd=(frac_sno_eff(c)*tssbef(c,col_pp%snl(c)+1)**4 &
-                 +(1._r8-frac_sno_eff(c)-frac_h2osfc(c))*tssbef(c,1)**4 &
-                 +frac_h2osfc(c)*t_h2osfc_bef(c)**4)
+            lw_grnd=(frac_sno_eff(c)*tssbef(c,col_pp%snl(c)+1)**4._r8 &
+                 +(1._r8-frac_sno_eff(c)-frac_h2osfc(c))*tssbef(c,1)**4._r8 &
+                 +frac_h2osfc(c)*t_h2osfc_bef(c)**4._r8)
 
             eflx_lwrad_out(p) = ulrad(p) &
-                 + (1-frac_veg_nosno(p))*(1.-emg(c))*forc_lwrad(t) &
-                 + (1-frac_veg_nosno(p))*emg(c)*sb*lw_grnd &
-                 + 4._r8*emg(c)*sb*t_grnd0(c)**3*tinc(c)
+                 + (1._r8-frac_veg_nosno(p))*(1._r8-emg(c))*forc_lwrad(t) &
+                 + (1._r8-frac_veg_nosno(p))*emg(c)*sb*lw_grnd &
+                 + 4._r8*emg(c)*sb*t_grnd0(c)**3._r8*tinc(c)
 
             eflx_lwrad_net(p) = eflx_lwrad_out(p) - forc_lwrad(t)
             if (lun_pp%itype(l) == istsoil .or. lun_pp%itype(l) == istcrop) then
@@ -449,8 +450,7 @@ contains
       call p2c(bounds, num_nolakec, filter_nolakec, &
            errsoi_patch(bounds%begp:bounds%endp), &
            errsoi_col(bounds%begc:bounds%endc))
-           
-      !#py call t_stopf('bgp2_loop_4')
+      call t_stop_lnd(event)
 
     end associate
 

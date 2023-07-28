@@ -13,13 +13,13 @@ module DUSTMod
   !
   ! !USES:
   use shr_kind_mod         , only : r8 => shr_kind_r8
-  !#py !#py use shr_log_mod          , only : errMsg => shr_log_errMsg
-  !#py !#py use shr_infnan_mod       , only : nan => shr_infnan_nan, assignment(=)
+  use shr_log_mod          , only : errMsg => shr_log_errMsg
+  use shr_infnan_mod       , only : nan => shr_infnan_nan, assignment(=)
   use elm_varpar           , only : dst_src_nbr, ndst, sz_nbr
   use elm_varcon           , only : grav, spval
   use landunit_varcon      , only : istcrop, istice_mec, istsoil
   use elm_varctl           , only : iulog
-  !#py use abortutils           , only : endrun
+  use abortutils           , only : endrun
   use subgridAveMod        , only : p2l_1d
   use decompMod            , only : bounds_type
   use atm2lndType          , only : atm2lnd_type
@@ -61,19 +61,19 @@ module DUSTMod
   type, public :: dust_type
 
      real(r8), pointer, PUBLIC  :: flx_mss_vrt_dst_patch     (:,:)  ! surface dust emission (kg/m**2/s) [ + = to atm] (ndst)
-     real(r8), pointer, private :: flx_mss_vrt_dst_tot_patch (:)    ! total dust flux into atmosphere
-     real(r8), pointer, private :: vlc_trb_patch             (:,:)  ! turbulent deposition velocity  (m/s) (ndst)
-     real(r8), pointer, private :: vlc_trb_1_patch           (:)    ! turbulent deposition velocity 1(m/s)
-     real(r8), pointer, private :: vlc_trb_2_patch           (:)    ! turbulent deposition velocity 2(m/s)
-     real(r8), pointer, private :: vlc_trb_3_patch           (:)    ! turbulent deposition velocity 3(m/s)
-     real(r8), pointer, private :: vlc_trb_4_patch           (:)    ! turbulent deposition velocity 4(m/s)
-     real(r8), pointer, private :: mbl_bsn_fct_col           (:)    ! basin factor
+     real(r8), pointer, public :: flx_mss_vrt_dst_tot_patch (:)    ! total dust flux into atmosphere
+     real(r8), pointer, public :: vlc_trb_patch             (:,:)  ! turbulent deposition velocity  (m/s) (ndst)
+     real(r8), pointer, public :: vlc_trb_1_patch           (:)    ! turbulent deposition velocity 1(m/s)
+     real(r8), pointer, public :: vlc_trb_2_patch           (:)    ! turbulent deposition velocity 2(m/s)
+     real(r8), pointer, public :: vlc_trb_3_patch           (:)    ! turbulent deposition velocity 3(m/s)
+     real(r8), pointer, public :: vlc_trb_4_patch           (:)    ! turbulent deposition velocity 4(m/s)
+     real(r8), pointer, public :: mbl_bsn_fct_col           (:)    ! basin factor
 
    contains
 
      procedure , public  :: Init
      procedure , private :: InitAllocate
-     !#py procedure , private :: InitHistory
+     procedure , private :: InitHistory
      procedure , private :: InitCold
      procedure , private :: InitDustVars ! Initialize variables used in subroutine Dust
 
@@ -89,7 +89,7 @@ contains
     type(bounds_type), intent(in) :: bounds
 
     call this%InitAllocate (bounds)
-    !#py call this%InitHistory  (bounds)
+    call this%InitHistory  (bounds)
     call this%InitCold     (bounds)
     call this%InitDustVars (bounds)
 
@@ -122,48 +122,48 @@ contains
   end subroutine InitAllocate
 
   !------------------------------------------------------------------------
-!#py   subroutine InitHistory(this, bounds)
-!#py     !
-!#py     ! !USES:
-!#py     use histFileMod, only : hist_addfld1d
-!#py     !
-!#py     !
-!#py     ! !ARGUMENTS:
-!#py     class (dust_type) :: this
-!#py     type(bounds_type), intent(in) :: bounds
-!#py     !
-!#py     ! !LOCAL VARIABLES:
-!#py     integer :: begp,endp
-!#py     !------------------------------------------------------------------------
-!#py 
-!#py     begp = bounds%begp; endp = bounds%endp
-!#py 
-!#py     this%flx_mss_vrt_dst_tot_patch(begp:endp) = spval
-!#py     call hist_addfld1d (fname='DSTFLXT', units='kg/m2/s',  &
-!#py          avgflag='A', long_name='total surface dust emission', &
-!#py          ptr_patch=this%flx_mss_vrt_dst_tot_patch, set_lake=0._r8, set_urb=0._r8)
-!#py 
-!#py     this%vlc_trb_1_patch(begp:endp) = spval
-!#py     call hist_addfld1d (fname='DPVLTRB1', units='m/s',  &
-!#py          avgflag='A', long_name='turbulent deposition velocity 1', &
-!#py          ptr_patch=this%vlc_trb_1_patch, default='inactive')
-!#py 
-!#py     this%vlc_trb_2_patch(begp:endp) = spval
-!#py     call hist_addfld1d (fname='DPVLTRB2', units='m/s',  &
-!#py          avgflag='A', long_name='turbulent deposition velocity 2', &
-!#py          ptr_patch=this%vlc_trb_2_patch, default='inactive')
-!#py 
-!#py     this%vlc_trb_3_patch(begp:endp) = spval
-!#py     call hist_addfld1d (fname='DPVLTRB3', units='m/s',  &
-!#py          avgflag='A', long_name='turbulent deposition velocity 3', &
-!#py          ptr_patch=this%vlc_trb_3_patch, default='inactive')
-!#py 
-!#py     this%vlc_trb_4_patch(begp:endp) = spval
-!#py     call hist_addfld1d (fname='DPVLTRB4', units='m/s',  &
-!#py          avgflag='A', long_name='turbulent deposition velocity 4', &
-!#py          ptr_patch=this%vlc_trb_4_patch, default='inactive')
-!#py 
-!#py   end subroutine InitHistory
+  subroutine InitHistory(this, bounds)
+    !
+    ! !USES:
+    use histFileMod, only : hist_addfld1d
+    !
+    !
+    ! !ARGUMENTS:
+    class (dust_type) :: this
+    type(bounds_type), intent(in) :: bounds
+    !
+    ! !LOCAL VARIABLES:
+    integer :: begp,endp
+    !------------------------------------------------------------------------
+
+    begp = bounds%begp; endp = bounds%endp
+
+    this%flx_mss_vrt_dst_tot_patch(begp:endp) = spval
+   ! call hist_addfld1d (fname='DSTFLXT', units='kg/m2/s',  &
+   !      avgflag='A', long_name='total surface dust emission', &
+   !      ptr_patch=this%flx_mss_vrt_dst_tot_patch, set_lake=0._r8, set_urb=0._r8)
+
+    this%vlc_trb_1_patch(begp:endp) = spval
+    call hist_addfld1d (fname='DPVLTRB1', units='m/s',  &
+         avgflag='A', long_name='turbulent deposition velocity 1', &
+         ptr_patch=this%vlc_trb_1_patch, default='inactive')
+
+    this%vlc_trb_2_patch(begp:endp) = spval
+    call hist_addfld1d (fname='DPVLTRB2', units='m/s',  &
+         avgflag='A', long_name='turbulent deposition velocity 2', &
+         ptr_patch=this%vlc_trb_2_patch, default='inactive')
+
+    this%vlc_trb_3_patch(begp:endp) = spval
+    call hist_addfld1d (fname='DPVLTRB3', units='m/s',  &
+         avgflag='A', long_name='turbulent deposition velocity 3', &
+         ptr_patch=this%vlc_trb_3_patch, default='inactive')
+
+    this%vlc_trb_4_patch(begp:endp) = spval
+    call hist_addfld1d (fname='DPVLTRB4', units='m/s',  &
+         avgflag='A', long_name='turbulent deposition velocity 4', &
+         ptr_patch=this%vlc_trb_4_patch, default='inactive')
+
+  end subroutine InitHistory
 
   !-----------------------------------------------------------------------
   subroutine InitCold(this, bounds)
@@ -191,7 +191,7 @@ contains
   !------------------------------------------------------------------------
   subroutine DustEmission (bounds, &
        num_nolakep, filter_nolakep, &
-       atm2lnd_vars, soilstate_vars, canopystate_vars, &
+       soilstate_vars, canopystate_vars, &
        frictionvel_vars, dust_vars)
     !
     ! !DESCRIPTION:
@@ -202,14 +202,12 @@ contains
     ! Source: C. Zender's dust model
     !
     ! !USES
-      !$acc routine seq
     use shr_const_mod, only : SHR_CONST_RHOFW
     !
     ! !ARGUMENTS:
     type(bounds_type)      , intent(in)    :: bounds
     integer                , intent(in)    :: num_nolakep                 ! number of column non-lake points in pft filter
     integer                , intent(in)    :: filter_nolakep(num_nolakep) ! patch filter for non-lake points
-    type(atm2lnd_type)     , intent(in)    :: atm2lnd_vars
     type(soilstate_type)   , intent(in)    :: soilstate_vars
     type(canopystate_type) , intent(in)    :: canopystate_vars
     type(frictionvel_type) , intent(in)    :: frictionvel_vars
@@ -224,20 +222,21 @@ contains
     real(r8) :: wnd_rfr_dlt         ! [m s-1] Reference windspeed excess over threshld
     real(r8) :: dst_slt_flx_rat_ttl
     real(r8) :: flx_mss_hrz_slt_ttl
-    real(r8) :: flx_mss_vrt_dst_ttl(bounds%begp:bounds%endp)
+    real(r8) :: flx_mss_vrt_dst_ttl(1:num_nolakep)
     real(r8) :: frc_thr_wet_fct
     real(r8) :: frc_thr_rgh_fct
     real(r8) :: wnd_frc_thr_slt
     real(r8) :: wnd_rfr_thr_slt
     real(r8) :: wnd_frc_slt
-    real(r8) :: lnd_frc_mbl(bounds%begp:bounds%endp)
+    real(r8) :: lnd_frc_mbl(1:num_nolakep)
     real(r8) :: bd
     real(r8) :: gwc_sfc
     real(r8) :: ttlai(bounds%begp:bounds%endp)
     real(r8) :: tlai_lu(bounds%begl:bounds%endl)
-    real(r8) :: sumwt(bounds%begl:bounds%endl) ! sum of weights
+   !  real(r8) :: sumwt(bounds%begl:bounds%endl) ! sum of weights
     logical  :: found                          ! temporary for error check
     integer  :: index
+    real(r8) :: sum1, sum2 
     !
     ! constants
     !
@@ -268,47 +267,57 @@ contains
          flx_mss_vrt_dst     => dust_vars%flx_mss_vrt_dst_patch      , & ! Output: [real(r8) (:,:) ]  surface dust emission (kg/m**2/s)
          flx_mss_vrt_dst_tot => dust_vars%flx_mss_vrt_dst_tot_patch    & ! Output: [real(r8) (:)   ]  total dust flux back to atmosphere (pft)
          )
+    !$acc enter data create(&
+    !$acc flx_mss_vrt_dst_ttl(:), &
+    !$acc lnd_frc_mbl(:), &
+    !$acc ttlai(:), &
+    !$acc tlai_lu(:), &
+    !$acc flx_mss_hrz_slt_ttl, &
+    !$acc sum1, &
+    !$acc sum2)
 
       ttlai(bounds%begp : bounds%endp) = 0._r8
       ! make lai average at landunit level
+      !$acc parallel loop independent gang vector default(present)
       do fp = 1,num_nolakep
          p = filter_nolakep(fp)
          ttlai(p) = tlai(p)+tsai(p)
       enddo
 
-      tlai_lu(bounds%begl : bounds%endl) = spval
-      sumwt(bounds%begl : bounds%endl) = 0._r8
-      do p = bounds%begp,bounds%endp
-         if (ttlai(p) /= spval .and. veg_pp%active(p) .and. veg_pp%wtlunit(p) /= 0._r8) then
-            c = veg_pp%column(p)
-            l = veg_pp%landunit(p)
-            if (sumwt(l) == 0._r8) tlai_lu(l) = 0._r8
-            tlai_lu(l) = tlai_lu(l) + ttlai(p) * veg_pp%wtlunit(p)
-            sumwt(l) = sumwt(l) + veg_pp%wtlunit(p)
-         end if
-      end do
-      found = .false.
+      !$acc parallel loop independent gang worker default(present) create(sum1,sum2) private(sum1,sum2)
       do l = bounds%begl,bounds%endl
-         if (sumwt(l) > 1.0_r8 + 1.e-6_r8) then
-            found = .true.
-            index = l
-            exit
-         else if (sumwt(l) /= 0._r8) then
-            tlai_lu(l) = tlai_lu(l)/sumwt(l)
-         end if
+         sum1 = 0._r8 
+         sum2 = 0._r8 
+         !$acc loop reduction(+:sum1,sum2)
+         do p = lun_pp%pfti(l), lun_pp%pftf(l) 
+            ! Can active pfts have a weight of 0?
+            if (veg_pp%active(p) .and. veg_pp%wtlunit(p) /= 0._r8) then
+               sum1 = sum1 + ttlai(p) * veg_pp%wtlunit(p)
+               sum2 = sum2 + veg_pp%wtlunit(p)
+            end if
+         end do 
+         tlai_lu(l) = sum1
+         if(sum2 > 1.0_r8 + 1.e-6_r8) then 
+            stop
+         end if 
+         if(sum2 /= 0._r8) then 
+            tlai_lu(l) = tlai_lu(l)/sum2
+         end if 
       end do
+      
+      !pds NOTE: need to copyout found from gpu region.
+      found = .false.
       if (found) then
-#ifndef _OPENACC
-         !#py write(iulog,*)  'p2l_1d error: sumwt is greater than 1.0 at l= ',index
-         !#py !#py call endrun(msg=errMsg(__FILE__, __LINE__))
-#endif
+         write(iulog,*)  'p2l_1d error: sumwt is greater than 1.0 at l= '
+         call endrun(msg=errMsg(__FILE__, __LINE__))
       end if
 
       ! Loop through patches
 
       ! initialize variables which get passed to the atmosphere
-      flx_mss_vrt_dst(bounds%begp:bounds%endp,:)=0._r8
+      ! flx_mss_vrt_dst(bounds%begp:bounds%endp,:)=0._r8
 
+      !$acc parallel loop independent gang vector default(present)
       do fp = 1,num_nolakep
          p = filter_nolakep(fp)
          c = veg_pp%column(p)
@@ -323,39 +332,44 @@ contains
 
          if (lun_pp%itype(l) == istsoil .or. lun_pp%itype(l) == istcrop) then
             if (tlai_lu(l) < vai_mbl_thr) then
-               lnd_frc_mbl(p) = 1.0_r8 - (tlai_lu(l))/vai_mbl_thr
+               lnd_frc_mbl(fp) = 1.0_r8 - (tlai_lu(l))/vai_mbl_thr
             else
-               lnd_frc_mbl(p) = 0.0_r8
+               lnd_frc_mbl(fp) = 0.0_r8
             endif
-            lnd_frc_mbl(p) = lnd_frc_mbl(p) * (1.0_r8 - frac_sno(c))
+            lnd_frc_mbl(fp) = lnd_frc_mbl(fp) * (1.0_r8 - frac_sno(c))
          else
-            lnd_frc_mbl(p) = 0.0_r8
+            lnd_frc_mbl(fp) = 0.0_r8
          end if
+
       end do
 
 #ifndef _OPENACC
+      !$acc parallel loop independent gang vector default(present)
       do fp = 1,num_nolakep
          p = filter_nolakep(fp)
-         if (lnd_frc_mbl(p)>1.0_r8 .or. lnd_frc_mbl(p)<0.0_r8) then
-            !#py write(iulog,*)'Error dstmbl: pft= ',p,' lnd_frc_mbl(p)= ',lnd_frc_mbl(p)
-            !#py !#py call endrun(msg=errMsg(__FILE__, __LINE__))
+         if (lnd_frc_mbl(fp)>1.0_r8 .or. lnd_frc_mbl(fp)<0.0_r8) then
+            write(iulog,*)'Error dstmbl: pft= ',p,' lnd_frc_mbl(p)= ',lnd_frc_mbl(p)
+            call endrun(msg=errMsg(__FILE__, __LINE__))
          end if
       end do
 #endif
 
       ! reset history output variables before next if-statement to avoid output = inf
 
-      do fp = 1,num_nolakep
-         p = filter_nolakep(fp)
-         flx_mss_vrt_dst_tot(p) = 0.0_r8
-      end do
-      do n = 1, ndst
-         do fp = 1,num_nolakep
-            p = filter_nolakep(fp)
-            flx_mss_vrt_dst(p,n) = 0.0_r8
-         end do
-      end do
+      ! !$acc parallel loop independent gang vector default(present)
+      ! do fp = 1,num_nolakep
+      !    p = filter_nolakep(fp)
+      !    flx_mss_vrt_dst_tot(p) = 0.0_r8
+      ! end do
+      ! !$acc parallel loop independent gang vector default(present) collapse(2) 
+      ! do n = 1, ndst
+      !    do fp = 1,num_nolakep
+      !       p = filter_nolakep(fp)
+      !       flx_mss_vrt_dst(p,n) = 0.0_r8
+      !    end do
+      ! end do
 
+      !$acc parallel loop independent gang vector default(present)
       do fp = 1,num_nolakep
          p = filter_nolakep(fp)
          c = veg_pp%column(p)
@@ -365,7 +379,7 @@ contains
 
          ! only perform the following calculations if lnd_frc_mbl is non-zero
 
-         if (lnd_frc_mbl(p) > 0.0_r8) then
+         if (lnd_frc_mbl(fp) > 0.0_r8) then
 
             ! the following comes from subr. frc_thr_rgh_fct_get
             ! purpose: compute factor by which surface roughness increases threshold
@@ -403,7 +417,7 @@ contains
 
             wnd_frc_slt = fv(p)
             flx_mss_hrz_slt_ttl = 0.0_r8
-            flx_mss_vrt_dst_ttl(p) = 0.0_r8
+            flx_mss_vrt_dst_ttl(fp) = 0.0_r8
 
             ! the following line comes from subr. dst_mbl
             ! purpose: threshold saltation wind speed
@@ -433,7 +447,7 @@ contains
                ! slevis: multiply flx_mss_hrz_slt_ttl by liqfrac to incude the effect
                ! of frozen soil
 
-               flx_mss_hrz_slt_ttl = flx_mss_hrz_slt_ttl * lnd_frc_mbl(p) * mbl_bsn_fct(c) * &
+               flx_mss_hrz_slt_ttl = flx_mss_hrz_slt_ttl * lnd_frc_mbl(fp) * mbl_bsn_fct(c) * &
                     flx_mss_fdg_fct * liqfrac
             end if
 
@@ -442,7 +456,7 @@ contains
             !          integrated streamwise mass flux
 
             dst_slt_flx_rat_ttl = 100.0_r8 * exp( log(10.0_r8) * (13.4_r8 * mss_frc_cly_vld(c) - 6.0_r8) )
-            flx_mss_vrt_dst_ttl(p) = flx_mss_hrz_slt_ttl * dst_slt_flx_rat_ttl
+            flx_mss_vrt_dst_ttl(fp) = flx_mss_hrz_slt_ttl * dst_slt_flx_rat_ttl
 
          end if   ! lnd_frc_mbl > 0.0
 
@@ -450,34 +464,53 @@ contains
 
       ! the following comes from subr. flx_mss_vrt_dst_prt in C. Zender's code
       ! purpose: partition total vertical mass flux of dust into transport bins
-
-      do n = 1, ndst
-         do m = 1, dst_src_nbr
-            do fp = 1,num_nolakep
-               p = filter_nolakep(fp)
-               if (lnd_frc_mbl(p) > 0.0_r8) then
-                  flx_mss_vrt_dst(p,n) = flx_mss_vrt_dst(p,n) +  ovr_src_snk_mss(m,n) * flx_mss_vrt_dst_ttl(p)
-               end if
-            end do
-         end do
-      end do
-
+      
+      !$acc parallel loop independent gang worker collapse(2) default(present) 
       do n = 1, ndst
          do fp = 1,num_nolakep
             p = filter_nolakep(fp)
-            if (lnd_frc_mbl(p) > 0.0_r8) then
-               flx_mss_vrt_dst_tot(p) = flx_mss_vrt_dst_tot(p) + flx_mss_vrt_dst(p,n)
+            sum1 = 0._r8 
+
+            if (lnd_frc_mbl(fp) > 0.0_r8) then
+               !$acc loop reduction(+:sum1 )
+               do m = 1, dst_src_nbr
+                  sum1 = sum1 +  ovr_src_snk_mss(m,n) * flx_mss_vrt_dst_ttl(fp)
+               end do
             end if
+            flx_mss_vrt_dst(p,n) = + sum1 
          end do
       end do
+
+      !$acc parallel loop independent gang worker default(present) 
+      do fp = 1,num_nolakep
+         p = filter_nolakep(fp)
+         sum1 = 0._r8 
+         
+         if (lnd_frc_mbl(fp) > 0.0_r8) then
+            !$acc loop reduction(+:sum1)
+            do n = 1, ndst
+               sum1 = sum1 + flx_mss_vrt_dst(p,n)
+            end do
+         end if
+         flx_mss_vrt_dst_tot(p) = sum1 
+      end do
+
+
+    !$acc exit data delete(&
+    !$acc flx_mss_vrt_dst_ttl(:), &
+    !$acc lnd_frc_mbl(:), &
+    !$acc ttlai(:), &
+    !$acc tlai_lu(:), &
+    !$acc flx_mss_hrz_slt_ttl, &
+    !$acc sum1, &
+    !$acc sum2)
 
     end associate
 
   end subroutine DustEmission
 
    !------------------------------------------------------------------------
-  subroutine DustDryDep (bounds, &
-       atm2lnd_vars, frictionvel_vars, dust_vars)
+  subroutine DustDryDep (bounds, frictionvel_vars, dust_vars)
     !
     ! !DESCRIPTION:
     !
@@ -495,12 +528,10 @@ contains
     ! Source: C. Zender's dry deposition code
     !
     ! !USES
-      !$acc routine seq
     use shr_const_mod, only : SHR_CONST_PI, SHR_CONST_RDAIR, SHR_CONST_BOLTZ
     !
     ! !ARGUMENTS:
     type(bounds_type)      , intent(in)    :: bounds
-    type(atm2lnd_type)     , intent(in)    :: atm2lnd_vars
     type(frictionvel_type) , intent(in)    :: frictionvel_vars
     type(dust_type)        , intent(inout) :: dust_vars
     !
@@ -525,10 +556,8 @@ contains
          forc_pbot =>    top_as%pbot                           , & ! Input:  [real(r8)  (:)   ]  atm pressure (Pa)
          forc_rho  =>    top_as%rhobot                         , & ! Input:  [real(r8)  (:)   ]  atm density (kg/m**3)
          forc_t    =>    top_as%tbot                           , & ! Input:  [real(r8)  (:)   ]  atm temperature (K)
-
          ram1      =>    frictionvel_vars%ram1_patch           , & ! Input:  [real(r8)  (:)   ]  aerodynamical resistance (s/m)
          fv        =>    frictionvel_vars%fv_patch             , & ! Input:  [real(r8)  (:)   ]  friction velocity (m/s)
-
          vlc_trb   =>    dust_vars%vlc_trb_patch               , & ! Output:  [real(r8) (:,:) ]  Turbulent deposn velocity (m/s)
          vlc_trb_1 =>    dust_vars%vlc_trb_1_patch             , & ! Output:  [real(r8) (:)   ]  Turbulent deposition velocity 1
          vlc_trb_2 =>    dust_vars%vlc_trb_2_patch             , & ! Output:  [real(r8) (:)   ]  Turbulent deposition velocity 2
@@ -536,6 +565,14 @@ contains
          vlc_trb_4 =>    dust_vars%vlc_trb_4_patch               & ! Output:  [real(r8) (:)   ]  Turbulent deposition velocity 4
          )
 
+      !$acc enter data create(&
+      !$acc vsc_dyn_atm(:), &
+      !$acc vsc_knm_atm(:), &
+      !$acc slp_crc(:,:), &
+      !$acc vlc_grv(:,:), &
+      !$acc rss_lmn(:,:))
+
+      !$acc parallel loop independent gang vector default(present)
       do p = bounds%begp,bounds%endp
          if (veg_pp%active(p)) then
             g = veg_pp%gridcell(p)
@@ -555,6 +592,7 @@ contains
                  (forc_pbot(t)*sqrt(8.0_r8/(SHR_CONST_PI*SHR_CONST_RDAIR*forc_t(t))))
             vsc_knm_atm(p) = vsc_dyn_atm(p) / forc_rho(t) ![m2 s-1] Kinematic viscosity of air
 
+            !$acc loop seq
             do m = 1, ndst
                slp_crc(p,m) = 1.0_r8 + 2.0_r8 * mfp_atm * &
                     (1.257_r8+0.4_r8*exp(-1.1_r8*dmt_vwr(m)/(2.0_r8*mfp_atm))) / &
@@ -566,6 +604,7 @@ contains
          end if
       end do
 
+      !$acc parallel loop independent gang vector default(present) collapse(2)
       do m = 1, ndst
          do p = bounds%begp,bounds%endp
             if (veg_pp%active(p)) then
@@ -594,6 +633,7 @@ contains
 
       ! Lowest layer: Turbulent deposition (CAM will calc. gravitational dep)
 
+      !$acc parallel loop independent gang vector default(present) collapse(2) 
       do m = 1, ndst
          do p = bounds%begp,bounds%endp
             if (veg_pp%active(p)) then
@@ -603,6 +643,7 @@ contains
          end do
       end do
 
+      !$acc parallel loop independent gang vector default(present)
       do p = bounds%begp,bounds%endp
          if (veg_pp%active(p)) then
             vlc_trb_1(p) = vlc_trb(p,1)
@@ -611,6 +652,13 @@ contains
             vlc_trb_4(p) = vlc_trb(p,4)
          end if
       end do
+
+    !$acc exit data delete(&
+    !$acc vsc_dyn_atm(:), &
+    !$acc vsc_knm_atm(:), &
+    !$acc slp_crc(:,:), &
+    !$acc vlc_grv(:,:), &
+    !$acc rss_lmn(:,:))
 
     end associate
 
@@ -732,8 +780,8 @@ contains
       ryn_nbr_frc_thr_prx_opt = 0.38_r8 + 1331.0_r8 * (100.0_r8*dmt_slt_opt)**1.56_r8
 
       if (ryn_nbr_frc_thr_prx_opt < 0.03_r8) then
-         !#py write(iulog,*) 'dstmbl: ryn_nbr_frc_thr_prx_opt < 0.03'
-         !#py !#py call endrun(msg=errMsg(__FILE__, __LINE__))
+         write(iulog,*) 'dstmbl: ryn_nbr_frc_thr_prx_opt < 0.03'
+         call endrun(msg=errMsg(__FILE__, __LINE__))
       else if (ryn_nbr_frc_thr_prx_opt < 10.0_r8) then
          ryn_nbr_frc_thr_opt_fnc = -1.0_r8 + 1.928_r8 * (ryn_nbr_frc_thr_prx_opt**0.0922_r8)
          ryn_nbr_frc_thr_opt_fnc = 0.1291_r8 * 0.1291_r8 / ryn_nbr_frc_thr_opt_fnc
@@ -771,8 +819,8 @@ contains
       else
 
 #ifndef _OPENACC
-         !#py write(iulog,*) 'Dustini error: ndst must equal to 4 with current code'
-         !#py !#py call endrun(msg=errMsg(__FILE__, __LINE__))
+         write(iulog,*) 'Dustini error: ndst must equal to 4 with current code'
+         call endrun(msg=errMsg(__FILE__, __LINE__))
          !see more comments above end if ndst == 4
 #endif
       end if
@@ -898,9 +946,9 @@ contains
                cff_drg_grv(m) = 0.44_r8                         !Sep97 p.463 (8.32)
             else
 #ifndef _OPENACC
-               !#py write(iulog,'(a,es9.2)') "ryn_nbr_grv(m) = ",ryn_nbr_grv(m)
-               !#py write(iulog,*)'Dustini error: Reynolds number too large in stk_crc_get()'
-               !#py !#py call endrun(msg=errMsg(__FILE__, __LINE__))
+               write(iulog,'(a,es9.2)') "ryn_nbr_grv(m) = ",ryn_nbr_grv(m)
+               write(iulog,*)'Dustini error: Reynolds number too large in stk_crc_get()'
+               call endrun(msg=errMsg(__FILE__, __LINE__))
 #endif
             end if
 
@@ -916,8 +964,8 @@ contains
                vlc_grv(m) = 0.5_r8 * (vlc_grv(m)+vlc_grv_old)  ! [m s-1]
             end if
             if (itr_idx > 20) then
-               !#py write(iulog,*) 'Dustini error: Terminal velocity not converging ',&
-               !#py ' in stk_crc_get(), breaking loop...'
+               write(iulog,*) 'Dustini error: Terminal velocity not converging ',&
+               ' in stk_crc_get(), breaking loop...'
                goto 100                                        !to next iteration
             end if
             itr_idx = itr_idx + 1

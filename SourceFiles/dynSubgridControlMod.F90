@@ -259,8 +259,6 @@ contains
     character(len=*), parameter :: subname = 'get_flanduse_timeseries'
     !-----------------------------------------------------------------------
 
-    SHR_ASSERT(dyn_subgrid_control_inst%initialized, errMsg(sourcefile, __LINE__))
-
     get_flanduse_timeseries = dyn_subgrid_control_inst%flanduse_timeseries
 
   end function get_flanduse_timeseries

@@ -1,9 +1,10 @@
 module ForcingUpdateMod
 
   use shr_kind_mod     , only : r8 => shr_kind_r8
-  use atm2lndType      , only : atm2lnd_type
+  use atm2lndType      , only : atm2lnd_type, cplbypass_atminput_type
   use TopounitDataType , only : top_af, top_as
   use GridcellType     , only : grc_pp
+  use TopounitType     , only : top_pp 
   use shr_const_mod    , only : SHR_CONST_TKFRZ, SHR_CONST_STEBOL
   use elm_varctl       , only: const_climate_hist, add_temperature, add_co2, use_cn
   use elm_varctl       , only: startdate_add_temperature, startdate_add_co2
@@ -11,7 +12,8 @@ module ForcingUpdateMod
 
   use elm_varcon       , only: rair, o2_molar_const, c13ratio
   use decompMod        , only : bounds_type
-  use domainMod        , only : ldomain
+  use domainMod        , only : ldomain_gpu
+
   ! Constants to compute vapor pressure
   real(r8),parameter :: a0=6.107799961_r8, a1=4.436518521e-01_r8, &
        a2=1.428945805e-02_r8, a3=2.650648471e-04_r8, &
@@ -23,12 +25,12 @@ module ForcingUpdateMod
        b4=5.824720280e-06_r8, b5=4.838803174e-08_r8, &
        b6=1.838826904e-10_r8
 
-  integer, dimension(13) :: caldaym= (/ 1, 32, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366 /)
+  integer, dimension(13) :: caldaym = (/ 1, 32, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366 /)
   !$acc declare copyin(caldaym)
   !$acc declare copyin(a0,a1,a2,a3,a4,a5,a6)
   !$acc declare copyin(b0,b1,b2,b3,b4,b5,b6)
 
-  public :: update_forcings_CPLBYPASS
+  public :: update_forcings_cplbypass
   private :: szenith
 contains
 
@@ -51,19 +53,19 @@ contains
     esati= 100._r8*(b0+t*(b1+t*(b2+t*(b3+t*(b4+t*(b5+t*b6))))))
   end function esati
 
-  subroutine update_forcings_CPLBYPASS(bounds, atm2lnd_vars, dtime, thiscalday, &
-    tod, yr, mon, nstep)
-    !$acc routine seq
+  subroutine update_forcings_cplbypass(bounds, atm2lnd_vars, cpl_bypass_input, &
+            dtime, thiscalday,tod, yr, mon, nstep)
     implicit none
     type(bounds_type)  , intent(in)   :: bounds
     type(atm2lnd_type), intent(inout) :: atm2lnd_vars
-    integer , value   , intent(in)    :: dtime
-    real(r8), value   , intent(in)    :: thiscalday
-    integer , value   , intent(in)    :: tod, yr, mon, nstep
-    integer :: v, i, g, av, topo
+    type(cplbypass_atminput_type), intent(in) :: cpl_bypass_input 
+    real(r8)  , intent(in)    :: dtime
+    real(r8)  , intent(in)    :: thiscalday
+    integer   , intent(in)    :: tod, yr, mon, nstep
+    integer :: v, g, av, topo
     integer, parameter :: met_nvars = 7
     integer  :: swrad_period_len, swrad_period_start, thishr, thismin
-    integer ::  aindex(2), starti(3), counti(3), tm,nindex(2)
+    integer ::  aindex(2), starti(3), counti(3), tm, nindex(2)
     real(r8) :: wt1(14), wt2(14), tbot, t, qsat
     real(r8) :: swndf, swndr, swvdf, swvdr, ratio_rvrf, frac, q
     real(r8) :: e, ea, vp  ! vapor pressure (Pa)
@@ -81,14 +83,22 @@ contains
     real(r8) :: co2_ppmv_prog ! temporary
     real(r8) :: co2_ppmv_val  ! temporary
     integer  :: co2_type_idx  ! integer flag for co2_type
+    integer :: igridcell
+    integer :: begg, endg, begt, endt 
 
     associate(  &
       tindex => atm2lnd_vars%tindex  &
       )
-    do g = bounds%begg,bounds%endg
-       i = 1 + (g - bounds%begg)
-       !!
-       do v=1,met_nvars
+      igridcell = bounds%begg
+      begg = bounds%begg
+      endg = bounds%endg 
+      begt = bounds%begt 
+      endt = bounds%endt  
+   
+      !$acc enter data create(wt1(:), wt2(:),aindex(:),starti(:),counti(:),nindex(:))
+   !$acc parallel loop independent gang vector collapse(2) default(present)
+   do v=1,met_nvars
+      do g = bounds%begg,bounds%endg
          if (atm2lnd_vars%npf(v) - 1._r8 .gt. 1e-3) then
            if (v .eq. 4 .or. v .eq. 5 .or. (v .ge. 8 .and. v .le. 13)) then    !rad/Precipitation
              if (mod(tod/int(dtime),nint(atm2lnd_vars%npf(v))) == 1 .and. nstep .gt. 3) then
@@ -118,9 +128,11 @@ contains
               tindex(g,v,2) = atm2lnd_vars%timelen(v)-atm2lnd_vars%timelen_spinup(v)+1
            end if
          end if
-       end do
-       !!
-       !get weights for linear interpolation
+       end do ! end gridcell 
+      end do 
+      !!
+      !get weights for linear interpolation
+      !$acc parallel loop independent gang vector default(present)
        do v=1,met_nvars
          if (atm2lnd_vars%npf(v) - 1._r8 .gt. 1e-3) then
             wt1(v) = 1._r8 - (mod((tod+86400)/dtime-atm2lnd_vars%npf(v)/2._r8, &
@@ -131,29 +143,32 @@ contains
             wt2(v) = 1._r8
           end if
         end do
-
+      
+      !$acc parallel loop independent gang vector default(present)  
+      do g = begg, endg 
         !Air temperature
-        atm2lnd_vars%forc_t_not_downscaled_grc(g)  = min(((atm2lnd_vars%atm_input(1,g,1,tindex(g,1,1))*atm2lnd_vars%scale_factors(1)+ &
-                                                  atm2lnd_vars%add_offsets(1))*wt1(1) + (atm2lnd_vars%atm_input(1,g,1,tindex(g,1,2))* &
+        atm2lnd_vars%forc_t_not_downscaled_grc(g)  = min(((cpl_bypass_input%atm_input(1,g,1,tindex(g,1,1))*atm2lnd_vars%scale_factors(1)+ &
+                                                  atm2lnd_vars%add_offsets(1))*wt1(1) + (cpl_bypass_input%atm_input(1,g,1,tindex(g,1,2))* &
                                                   atm2lnd_vars%scale_factors(1)+atm2lnd_vars%add_offsets(1))*wt2(1)) * &
                                                   atm2lnd_vars%var_mult(1,g,mon) + atm2lnd_vars%var_offset(1,g,mon), 323._r8)
 
-        atm2lnd_vars%forc_th_not_downscaled_grc(g) = min(((atm2lnd_vars%atm_input(1,g,1,tindex(g,1,1))*atm2lnd_vars%scale_factors(1)+ &
-                                                  atm2lnd_vars%add_offsets(1))*wt1(1) + (atm2lnd_vars%atm_input(1,g,1,tindex(g,1,2))* &
+        !Note: looks like same calculation as above 
+        atm2lnd_vars%forc_th_not_downscaled_grc(g) = min(((cpl_bypass_input%atm_input(1,g,1,tindex(g,1,1))*atm2lnd_vars%scale_factors(1)+ &
+                                                  atm2lnd_vars%add_offsets(1))*wt1(1) + (cpl_bypass_input%atm_input(1,g,1,tindex(g,1,2))* &
                                                   atm2lnd_vars%scale_factors(1)+atm2lnd_vars%add_offsets(1))*wt2(1)) * &
                                                   atm2lnd_vars%var_mult(1,g,mon) + atm2lnd_vars%var_offset(1,g,mon), 323._r8)
 
         tbot = atm2lnd_vars%forc_t_not_downscaled_grc(g)
 
         !Air pressure
-        atm2lnd_vars%forc_pbot_not_downscaled_grc(g) = max(((atm2lnd_vars%atm_input(2,g,1,tindex(g,2,1))*atm2lnd_vars%scale_factors(2)+ &
-                                                    atm2lnd_vars%add_offsets(2))*wt1(2) + (atm2lnd_vars%atm_input(2,g,1,tindex(g,2,2)) &
+        atm2lnd_vars%forc_pbot_not_downscaled_grc(g) = max(((cpl_bypass_input%atm_input(2,g,1,tindex(g,2,1))*atm2lnd_vars%scale_factors(2)+ &
+                                                    atm2lnd_vars%add_offsets(2))*wt1(2) + (cpl_bypass_input%atm_input(2,g,1,tindex(g,2,2)) &
                                                     *atm2lnd_vars%scale_factors(2)+atm2lnd_vars%add_offsets(2))*wt2(2)) * &
                                                     atm2lnd_vars%var_mult(2,g,mon) + atm2lnd_vars%var_offset(2,g,mon), 4e4_r8)
 
         !Specific humidity
-        atm2lnd_vars%forc_q_not_downscaled_grc(g) = max(((atm2lnd_vars%atm_input(3,g,1,tindex(g,3,1))*atm2lnd_vars%scale_factors(3)+ &
-                                                 atm2lnd_vars%add_offsets(3))*wt1(3) + (atm2lnd_vars%atm_input(3,g,1,tindex(g,3,2)) &
+        atm2lnd_vars%forc_q_not_downscaled_grc(g) = max(((cpl_bypass_input%atm_input(3,g,1,tindex(g,3,1))*atm2lnd_vars%scale_factors(3)+ &
+                                                 atm2lnd_vars%add_offsets(3))*wt1(3) + (cpl_bypass_input%atm_input(3,g,1,tindex(g,3,2)) &
                                                  *atm2lnd_vars%scale_factors(3)+atm2lnd_vars%add_offsets(3))*wt2(3)) * &
                                                  atm2lnd_vars%var_mult(3,g,mon) + atm2lnd_vars%var_offset(3,g,mon), 1e-9_r8)
         if (atm2lnd_vars%metsource == 2) then  !convert RH to qbot
@@ -167,15 +182,15 @@ contains
         end if
 
         !use longwave from file if provided
-        atm2lnd_vars%forc_lwrad_not_downscaled_grc(g) = ((atm2lnd_vars%atm_input(7,g,1,tindex(g,7,1))*atm2lnd_vars%scale_factors(7)+ &
-                                                    atm2lnd_vars%add_offsets(7))*wt1(7) + (atm2lnd_vars%atm_input(7,g,1,tindex(g,7,2)) &
+        atm2lnd_vars%forc_lwrad_not_downscaled_grc(g) = ((cpl_bypass_input%atm_input(7,g,1,tindex(g,7,1))*atm2lnd_vars%scale_factors(7)+ &
+                                                    atm2lnd_vars%add_offsets(7))*wt1(7) + (cpl_bypass_input%atm_input(7,g,1,tindex(g,7,2)) &
                                                     *atm2lnd_vars%scale_factors(7)+atm2lnd_vars%add_offsets(7))*wt2(7)) * &
                                                     atm2lnd_vars%var_mult(7,g,mon) + atm2lnd_vars%var_offset(7,g,mon)
         !=======================================================================================================!!
          if (atm2lnd_vars%forc_lwrad_not_downscaled_grc(g) .le. 50 .or. atm2lnd_vars%forc_lwrad_not_downscaled_grc(g) .ge. 600) then
          !Longwave radiation (calculated from air temperature, humidity)
             e =  atm2lnd_vars%forc_pbot_not_downscaled_grc(g) * atm2lnd_vars%forc_q_not_downscaled_grc(g) / &
-             (0.622_R8 + 0.378_R8 * atm2lnd_vars%forc_q_not_downscaled_grc(g) )
+                  (0.622_R8 + 0.378_R8 * atm2lnd_vars%forc_q_not_downscaled_grc(g) )
             ea = 0.70_R8 + 5.95e-05_R8 * 0.01_R8 * e * exp(1500.0_R8/tbot)
             atm2lnd_vars%forc_lwrad_not_downscaled_grc(g) = ea * SHR_CONST_STEBOL * tbot**4
           end if
@@ -183,7 +198,7 @@ contains
     thishr = (tod-dtime/2)/3600
     if (thishr < 0) thishr=thishr+24
     thismin = mod((tod-dtime/2)/60, 60)
-    thiscosz = max(cos(szenith(ldomain%lonc(g),ldomain%latc(g),0,int(thiscalday),thishr,thismin,0)* &
+    thiscosz = max(cos(szenith(ldomain_gpu%lonc(g),ldomain_gpu%latc(g),0,int(thiscalday),thishr,thismin,0)* &
                     3.14159265358979/180.0d0), 0.001d0)
     avgcosz = 0d0
     if (atm2lnd_vars%npf(4) - 1._r8 .gt. 1e-3) then
@@ -196,7 +211,7 @@ contains
         thishr  = (swrad_period_start+(tm-1)*dtime+dtime/2)/3600
         if (thishr > 23) thishr=thishr-24
         thismin = mod((swrad_period_start+(tm-1)*dtime+dtime/2)/60, 60)
-        avgcosz  = avgcosz + max(cos(szenith(ldomain%lonc(g),ldomain%latc(g),0,int(thiscalday),thishr, thismin, 0) &
+        avgcosz  = avgcosz + max(cos(szenith(ldomain_gpu%lonc(g),ldomain_gpu%latc(g),0,int(thiscalday),thishr, thismin, 0) &
                    *3.14159265358979/180.0d0), 0.001d0)/atm2lnd_vars%npf(4)
       end do
 
@@ -209,16 +224,16 @@ contains
         wt2(4) = 0d0
     end if
 
-    swndr = max(((atm2lnd_vars%atm_input(4,g,1,tindex(g,4,2))*atm2lnd_vars%scale_factors(4)+ &
+    swndr = max(((cpl_bypass_input%atm_input(4,g,1,tindex(g,4,2))*atm2lnd_vars%scale_factors(4)+ &
                              atm2lnd_vars%add_offsets(4))*wt2(4)) * 0.50_R8, 0.0_r8)
 
-    swndf = max(((atm2lnd_vars%atm_input(4,g,1,tindex(g,4,2))*atm2lnd_vars%scale_factors(4)+ &
+    swndf = max(((cpl_bypass_input%atm_input(4,g,1,tindex(g,4,2))*atm2lnd_vars%scale_factors(4)+ &
                             atm2lnd_vars%add_offsets(4))*wt2(4))*0.50_R8, 0.0_r8)
 
-    swvdr = max(((atm2lnd_vars%atm_input(4,g,1,tindex(g,4,2))*atm2lnd_vars%scale_factors(4)+ &
+    swvdr = max(((cpl_bypass_input%atm_input(4,g,1,tindex(g,4,2))*atm2lnd_vars%scale_factors(4)+ &
                             atm2lnd_vars%add_offsets(4))*wt2(4))*0.50_R8, 0.0_r8)
 
-    swvdf = max(((atm2lnd_vars%atm_input(4,g,1,tindex(g,4,2))*atm2lnd_vars%scale_factors(4)+ &
+    swvdf = max(((cpl_bypass_input%atm_input(4,g,1,tindex(g,4,2))*atm2lnd_vars%scale_factors(4)+ &
                             atm2lnd_vars%add_offsets(4))*wt2(4))*0.50_R8, 0.0_r8)
 
     ratio_rvrf =   min(0.99_R8,max(0.29548_R8 + 0.00504_R8*swndr &
@@ -232,92 +247,99 @@ contains
     atm2lnd_vars%forc_solai_grc(g,1) = (1._R8 - ratio_rvrf)*swvdf
 
     frac = (atm2lnd_vars%forc_t_not_downscaled_grc(g) - SHR_CONST_TKFRZ)*0.5_R8       ! ramp near freezing
-    frac = min(1.0_R8,max(0.0_R8,frac))           ! bound in [0,1]
+    frac = min(1.0_R8,max(0.0_R8,frac)) 
 
     !Don't interpolate rainfall data
-    forc_rainc = 0.1_R8 * frac * max((((atm2lnd_vars%atm_input(5,g,1,tindex(g,5,2))*atm2lnd_vars%scale_factors(5)+ &
+    forc_rainc = 0.1_R8 * frac * max((((cpl_bypass_input%atm_input(5,g,1,tindex(g,5,2))*atm2lnd_vars%scale_factors(5)+ &
                                   atm2lnd_vars%add_offsets(5)))*atm2lnd_vars%var_mult(5,g,mon) + &
                                   atm2lnd_vars%var_offset(5,g,mon)), 0.0_r8)
     !!!!
-    forc_rainl = 0.9_R8 * frac * max((((atm2lnd_vars%atm_input(5,g,1,tindex(g,5,2))*atm2lnd_vars%scale_factors(5)+ &
+    forc_rainl = 0.9_R8 * frac * max((((cpl_bypass_input%atm_input(5,g,1,tindex(g,5,2))*atm2lnd_vars%scale_factors(5)+ &
                                    atm2lnd_vars%add_offsets(5)))*atm2lnd_vars%var_mult(5,g,mon) + &
                                    atm2lnd_vars%var_offset(5,g,mon)), 0.0_r8)
     !!!!
-    forc_snowc = 0.1_R8 * (1.0_R8 - frac) * max((((atm2lnd_vars%atm_input(5,g,1,tindex(g,5,2))*atm2lnd_vars%scale_factors(5)+ &
+    forc_snowc = 0.1_R8 * (1.0_R8 - frac) * max((((cpl_bypass_input%atm_input(5,g,1,tindex(g,5,2))*atm2lnd_vars%scale_factors(5)+ &
             atm2lnd_vars%add_offsets(5)))*atm2lnd_vars%var_mult(5,g,mon) + atm2lnd_vars%var_offset(5,g,mon)), 0.0_r8)
     !!!!
-    forc_snowl = 0.9_R8 * (1.0_R8 - frac) * max((((atm2lnd_vars%atm_input(5,g,1,tindex(g,5,2))*atm2lnd_vars%scale_factors(5)+ &
+    forc_snowl = 0.9_R8 * (1.0_R8 - frac) * max((((cpl_bypass_input%atm_input(5,g,1,tindex(g,5,2))*atm2lnd_vars%scale_factors(5)+ &
             atm2lnd_vars%add_offsets(5))) * atm2lnd_vars%var_mult(5,g,mon) + atm2lnd_vars%var_offset(5,g,mon)), 0.0_r8)
 
 
     !Wind
-    atm2lnd_vars%forc_u_grc(g) = (atm2lnd_vars%atm_input(6,g,1,tindex(g,6,1))*atm2lnd_vars%scale_factors(6)+ &
-                                 atm2lnd_vars%add_offsets(6))*wt1(6) + (atm2lnd_vars%atm_input(6,g,1,tindex(g,6,2))* &
+    atm2lnd_vars%forc_u_grc(g) = (cpl_bypass_input%atm_input(6,g,1,tindex(g,6,1))*atm2lnd_vars%scale_factors(6)+ &
+                                 atm2lnd_vars%add_offsets(6))*wt1(6) + (cpl_bypass_input%atm_input(6,g,1,tindex(g,6,2))* &
                                  atm2lnd_vars%scale_factors(6)+atm2lnd_vars%add_offsets(6))*wt2(6)
     if (atm2lnd_vars%metsource == 5) then
-      atm2lnd_vars%forc_v_grc(g) = (atm2lnd_vars%atm_input(14,g,1,tindex(g,14,1))*atm2lnd_vars%scale_factors(14)+ &
-                                 atm2lnd_vars%add_offsets(14))*wt1(14) + (atm2lnd_vars%atm_input(14,g,1,tindex(g,14,2))* &
+      atm2lnd_vars%forc_v_grc(g) = (cpl_bypass_input%atm_input(14,g,1,tindex(g,14,1))*atm2lnd_vars%scale_factors(14)+ &
+                                 atm2lnd_vars%add_offsets(14))*wt1(14) + (cpl_bypass_input%atm_input(14,g,1,tindex(g,14,2))* &
                                  atm2lnd_vars%scale_factors(14)+atm2lnd_vars%add_offsets(14))*wt2(14)
     else
         atm2lnd_vars%forc_v_grc(g) = 0.0_R8
     end if
-    atm2lnd_vars%forc_hgt_grc(g) = 30.0_R8 !(atm2lnd_vars%atm_input(8,g,1,tindex(1))*wt1 + &
-                                        !atm2lnd_vars%atm_input(8,g,1,tindex(2))*wt2)    ! zgcmxy  Atm state, default=30m
+    atm2lnd_vars%forc_hgt_grc(g) = 30.0_R8
+   end do 
 
-
-    !!!!
-    !------------------------------------Fire data -------------------------------------------------------
-    !get weights for interpolation
-    wt1(1) = 1._r8 - (thiscalday -1._r8)/365._r8
-    wt2(1) = 1._r8 - wt1(1)
-    atm2lnd_vars%forc_hdm(g) = atm2lnd_vars%hdm1(atm2lnd_vars%hdmind(g,1),atm2lnd_vars%hdmind(g,2),1)*wt1(1) + &
+   !!!!
+   !------------------------------------Fire data -------------------------------------------------------
+   !get weights for interpolation
+   !$acc parallel loop independent gang vector default(present) 
+   do g = begg, endg 
+      wt1(1) = 1._r8 - (thiscalday -1._r8)/365._r8
+      wt2(1) = 1._r8 - wt1(1)
+      atm2lnd_vars%forc_hdm(g) = atm2lnd_vars%hdm1(atm2lnd_vars%hdmind(g,1),atm2lnd_vars%hdmind(g,2),1)*wt1(1) + &
                                atm2lnd_vars%hdm2(atm2lnd_vars%hdmind(g,1),atm2lnd_vars%hdmind(g,2),1)*wt2(1)
-    !------------------------------------------------------!
-    atm2lnd_vars%forc_lnfm(g) = atm2lnd_vars%lnfm(g, ((int(thiscalday)-1)*8+tod/(3600*3))+1)
+      !------------------------------------------------------!
+      atm2lnd_vars%forc_lnfm(g) = atm2lnd_vars%lnfm(g, ((int(thiscalday)-1)*8+tod/(3600*3))+1)
 
-    !DMR note - ndep will NOT be correct if more than 1850 years of model
-    !spinup (model year > 1850)
-    nindex(1) = min(max(yr-1848,2), 168)
-    nindex(2) = min(nindex(1)+1, 168)
+      !DMR note - ndep will NOT be correct if more than 1850 years of model
+      !spinup (model year > 1850)
+      nindex(1) = min(max(yr-1848,2), 168)
+      nindex(2) = min(nindex(1)+1, 168)
 
-    !get weights for interpolation
-    wt1(1) = 1._r8 - (thiscalday -1._r8)/365._r8
-    wt2(1) = 1._r8 - wt1(1)
+      !get weights for interpolation
+      wt1(1) = 1._r8 - (thiscalday -1._r8)/365._r8
+      wt2(1) = 1._r8 - wt1(1)
 
-    atm2lnd_vars%forc_ndep_grc(g)    = (atm2lnd_vars%ndep1(atm2lnd_vars%ndepind(g,1),atm2lnd_vars%ndepind(g,2),1)*wt1(1) + &
+      atm2lnd_vars%forc_ndep_grc(g) = (atm2lnd_vars%ndep1(atm2lnd_vars%ndepind(g,1),atm2lnd_vars%ndepind(g,2),1)*wt1(1) + &
                                         atm2lnd_vars%ndep2(atm2lnd_vars%ndepind(g,1),atm2lnd_vars%ndepind(g,2),1)*wt2(1)) / (365._r8 * 86400._r8)
-    !!!!!!!!!!!!!!!!!!
-    !------------------------------------Aerosol forcing--------------------------------------------------
+   end do 
+   
+   !------------------------------------Aerosol forcing--------------------------------------------------
 
-    !get weights for interpolation (note this method doesn't get the month boundaries quite right..)
-    aindex(1) = mon+1
-    if (thiscalday .le. (caldaym(mon+1)+caldaym(mon))/2._r8) then
-       wt1(1) = 0.5_r8 + (thiscalday-caldaym(mon))/(caldaym(mon+1)-caldaym(mon))
-       aindex(2) = aindex(1)-1
-    else
-       wt1(1) = 1.0_r8 - (thiscalday-(caldaym(mon+1)+caldaym(mon))/2._r8)/   &
-                      (caldaym(mon+1)-caldaym(mon))
-       aindex(2) = aindex(1)+1
-    end if
-    wt2(1) = 1._r8 - wt1(1)
+    !get weights for interpolation (note this method doesn't get the month boundaries quite right..
+   !$acc parallel loop independent gang vector default(present) collapse(2) 
+   do av = 1,14
+      do g = begg, endg 
+      
+         aindex(1) = mon+1
+         if (thiscalday .le. (caldaym(mon+1)+caldaym(mon))/2._r8) then
+            wt1(1) = 0.5_r8 + (thiscalday-caldaym(mon))/(caldaym(mon+1)-caldaym(mon))
+            aindex(2) = aindex(1)-1
+         else
+            wt1(1) = 1.0_r8 - (thiscalday-(caldaym(mon+1)+caldaym(mon))/2._r8)/   &
+                           (caldaym(mon+1)-caldaym(mon))
+            aindex(2) = aindex(1)+1
+         end if
+         wt2(1) = 1._r8 - wt1(1)
 
-     do av = 1,14
        atm2lnd_vars%forc_aer_grc(g,av)  =  atm2lnd_vars%aerodata(av,atm2lnd_vars%ndepind(g,1), &
          atm2lnd_vars%ndepind(g,2),aindex(1))*wt1(1)+atm2lnd_vars%aerodata(av,atm2lnd_vars%ndepind(g,1), &
          atm2lnd_vars%ndepind(g,2),aindex(2))*wt2(1)
      end do
+   end do 
 
-     !set the topounit-level atmospheric state and flux forcings (bypass mode)
-     do topo = grc_pp%topi(g), grc_pp%topf(g)
+   !set the topounit-level atmospheric state and flux forcings (bypass mode)
+   !$acc parallel loop independent gang vector default(present) 
+   do topo = begt, endt 
+       g = top_pp%gridcell(topo) 
        ! first, all the state forcings
-       top_as%tbot(topo)    = atm2lnd_vars%forc_t_not_downscaled_grc(g)      ! forc_txy  Atm state K
-       top_as%thbot(topo)   = atm2lnd_vars%forc_th_not_downscaled_grc(g)     ! forc_thxy Atm state K
-       top_as%pbot(topo)    = atm2lnd_vars%forc_pbot_not_downscaled_grc(g)   ! ptcmxy    Atm state Pa
-       top_as%qbot(topo)    = atm2lnd_vars%forc_q_not_downscaled_grc(g)      ! forc_qxy  Atm state kg/kg
-       top_as%ubot(topo)    = atm2lnd_vars%forc_u_grc(g)                     ! forc_uxy  Atm state m/s
-       top_as%vbot(topo)    = atm2lnd_vars%forc_v_grc(g)                     ! forc_vxy  Atm state m/s
-       top_as%zbot(topo)    = atm2lnd_vars%forc_hgt_grc(g)                   ! zgcmxy    Atm state m
-
+       top_as%tbot(topo)    = atm2lnd_vars%forc_t_not_downscaled_grc(g)     ! forc_txy  Atm state K
+       top_as%thbot(topo)   = atm2lnd_vars%forc_th_not_downscaled_grc(g)    ! forc_thxy Atm state K
+       top_as%pbot(topo)    = atm2lnd_vars%forc_pbot_not_downscaled_grc(g)  ! ptcmxy    Atm state Pa
+       top_as%qbot(topo)    = atm2lnd_vars%forc_q_not_downscaled_grc(g)     ! forc_qxy  Atm state kg/kg
+       top_as%ubot(topo)    = atm2lnd_vars%forc_u_grc(g)                    ! forc_uxy  Atm state m/s
+       top_as%vbot(topo)    = atm2lnd_vars%forc_v_grc(g)                    ! forc_vxy  Atm state m/s
+       top_as%zbot(topo)    = atm2lnd_vars%forc_hgt_grc(g)                  ! zgcmxy    Atm state m
 
        ! assign the state forcing fields derived from other inputs
        ! Horizontal windspeed (m/s)
@@ -347,19 +369,19 @@ contains
        ! derived flux forcings
        top_af%solar(topo) = top_af%solad(topo,2) + top_af%solad(topo,1) + &
                             top_af%solai(topo,2) + top_af%solai(topo,1)
-     end do
-    !!This is for co2_type_idx = 0
-     co2_ppmv_val = co2_ppmv
-     !!!!!========================================= !!!!!
-     do topo = grc_pp%topi(g), grc_pp%topf(g)
+      !!This is for co2_type_idx = 0
+       co2_ppmv_val = co2_ppmv
+       !
+       co2_ppmv_prog = co2_ppmv
+       co2_ppmv_diag = co2_ppmv
        top_as%pco2bot(topo) = co2_ppmv_val * 1.e-6_r8 * top_as%pbot(topo)
        if (use_c13) then
-          top_as%pc13o2bot(topo) = top_as%pco2bot(topo) * c13ratio;
+          top_as%pc13o2bot(topo) = top_as%pco2bot(topo) * c13ratio
        end if
-     end do
-     !
-     co2_ppmv_prog = co2_ppmv
-     co2_ppmv_diag = co2_ppmv
+   end do
+   
+   !$acc parallel loop independent gang vector default(present) 
+   do g = begg, endg 
      ! Determine derived quantities for required fields
      forc_t = atm2lnd_vars%forc_t_not_downscaled_grc(g)
      forc_q = atm2lnd_vars%forc_q_not_downscaled_grc(g)
@@ -405,12 +427,6 @@ contains
      wt2(1) = 1._r8 - wt1(1)
 
      co2_ppmv_val = atm2lnd_vars%co2_input(1,1,nindex(1))*wt1(1) + atm2lnd_vars%co2_input(1,1,nindex(2))*wt2(1)
-     !if (startdate_add_co2 .ne. '') then
-     !  if ((yr == sy_addco2 .and. mon == sm_addco2 .and. day >= sd_addco2) .or. &
-     !      (yr == sy_addco2 .and. mon > sm_addco2) .or. (yr > sy_addco2)) then
-     !    co2_ppmv_val=co2_ppmv_val + add_co2
-     !  end if
-     !end if
 
      if (use_c13) then
        atm2lnd_vars%forc_pc13o2_grc(g) = (atm2lnd_vars%c13o2_input(1,1,nindex(1))*wt1(1) + &
@@ -419,19 +435,22 @@ contains
 
      co2_type_idx = 1
      atm2lnd_vars%forc_pco2_grc(g)   = co2_ppmv_val * 1.e-6_r8 * forc_pbot
-     do topo = grc_pp%topi(g), grc_pp%topf(g)
+   end do 
+
+   !$acc parallel loop independent gang vector default(present) 
+   do topo = begt, endt
+       g = top_pp%gridcell(topo) 
        top_as%pco2bot(topo) = atm2lnd_vars%forc_pco2_grc(g)
        if (use_c13) then
           top_as%pc13o2bot(topo) = atm2lnd_vars%forc_pc13o2_grc(g)
        end if
-     end do
-
-
    end do
 
-    end associate
+      !$acc exit data delete(wt1(:), wt2(:),aindex(:),starti(:),counti(:),nindex(:))
 
-  end subroutine update_forcings_CPLBYPASS
+   end associate
+
+  end subroutine update_forcings_cplbypass
 
   real(r8) function szenith(xcoor, ycoor, ltm, jday, hr, min, offset)
     !Function to calcualte solar zenith angle

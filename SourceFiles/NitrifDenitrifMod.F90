@@ -5,13 +5,13 @@ module NitrifDenitrifMod
   !
   use shr_kind_mod        , only : r8 => shr_kind_r8
   use shr_const_mod       , only : SHR_CONST_TKFRZ
-  !#py !#py use shr_log_mod         , only : errMsg => shr_log_errMsg
+  use shr_log_mod         , only : errMsg => shr_log_errMsg
   use shr_const_mod       , only : SHR_CONST_TKFRZ
   use elm_varpar          , only : nlevgrnd,nlevdecomp
   use elm_varcon          , only : rpi, denh2o, dzsoi, zisoi, grav
   use elm_varcon          , only : d_con_g, d_con_w, spval, secspday
   use elm_varctl          , only : use_lch4, iulog
-  !#py use abortutils          , only : endrun
+  use abortutils          , only : endrun
   use decompMod           , only : bounds_type
   use SoilStatetype       , only : soilstate_type
   use ch4Mod              , only : ch4_type
@@ -23,7 +23,7 @@ module NitrifDenitrifMod
   private
   !
   public :: nitrif_denitrif
-  !#py public :: readNitrifDenitrifParams
+  public :: readNitrifDenitrifParams
   !
   type, public :: NitrifDenitrifParamsType
    real(r8), pointer :: k_nitr_max             => null()   !  maximum nitrification rate constant (1/s)
@@ -45,78 +45,76 @@ module NitrifDenitrifMod
 contains
 
   !-----------------------------------------------------------------------
-!#py   subroutine readNitrifDenitrifParams ( ncid )
-!#py     !
-!#py     use ncdio_pio    , only: file_desc_t,ncd_io
-!#py     !
-!#py     ! !ARGUMENTS:
-!#py     type(file_desc_t),intent(inout) :: ncid   ! pio netCDF file id
-!#py     !
-!#py     ! !LOCAL VARIABLES:
-!#py     character(len=32)  :: subname = 'NitrifDenitrifParamsType'
-!#py     character(len=100) :: errCode = '-Error reading in parameters file:'
-!#py     logical            :: readv ! has variable been read in or not
-!#py     real(r8)           :: tempr ! temporary to read in constant
-!#py     character(len=100) :: tString ! temp. var for reading
-!#py     !-----------------------------------------------------------------------
-!#py     !
-!#py     ! read in constants
-!#py     !
-!#py 
-!#py     allocate(NitrifDenitrifParamsInst%k_nitr_max           )
-!#py     allocate(NitrifDenitrifParamsInst%surface_tension_water)
-!#py     allocate(NitrifDenitrifParamsInst%rij_kro_a            )
-!#py     allocate(NitrifDenitrifParamsInst%rij_kro_alpha        )
-!#py     allocate(NitrifDenitrifParamsInst%rij_kro_beta         )
-!#py     allocate(NitrifDenitrifParamsInst%rij_kro_gamma        )
-!#py     allocate(NitrifDenitrifParamsInst%rij_kro_delta        )
-!#py 
-!#py     tString='k_nitr_max'
-!#py     call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
-!#py     if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
-!#py     NitrifDenitrifParamsInst%k_nitr_max=tempr
-!#py 
-!#py     tString='surface_tension_water'
-!#py     call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
-!#py     if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
-!#py     NitrifDenitrifParamsInst%surface_tension_water=tempr
-!#py 
-!#py     tString='rij_kro_a'
-!#py     call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
-!#py     if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
-!#py     NitrifDenitrifParamsInst%rij_kro_a=tempr
-!#py 
-!#py     tString='rij_kro_alpha'
-!#py     call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
-!#py     if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
-!#py     NitrifDenitrifParamsInst%rij_kro_alpha=tempr
-!#py 
-!#py     tString='rij_kro_beta'
-!#py     call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
-!#py     if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
-!#py     NitrifDenitrifParamsInst%rij_kro_beta=tempr
-!#py 
-!#py     tString='rij_kro_gamma'
-!#py     call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
-!#py     if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
-!#py     NitrifDenitrifParamsInst%rij_kro_gamma=tempr
-!#py 
-!#py     tString='rij_kro_delta'
-!#py     call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
-!#py     if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
-!#py     NitrifDenitrifParamsInst%rij_kro_delta=tempr
-!#py 
-!#py   end subroutine readNitrifDenitrifParams
+  subroutine readNitrifDenitrifParams ( ncid )
+    !
+    use ncdio_pio    , only: file_desc_t,ncd_io
+    !
+    ! !ARGUMENTS:
+    type(file_desc_t),intent(inout) :: ncid   ! pio netCDF file id
+    !
+    ! !LOCAL VARIABLES:
+    character(len=32)  :: subname = 'NitrifDenitrifParamsType'
+    character(len=100) :: errCode = '-Error reading in parameters file:'
+    logical            :: readv ! has variable been read in or not
+    real(r8)           :: tempr ! temporary to read in constant
+    character(len=100) :: tString ! temp. var for reading
+    !-----------------------------------------------------------------------
+    !
+    ! read in constants
+    !
+
+    allocate(NitrifDenitrifParamsInst%k_nitr_max           )
+    allocate(NitrifDenitrifParamsInst%surface_tension_water)
+    allocate(NitrifDenitrifParamsInst%rij_kro_a            )
+    allocate(NitrifDenitrifParamsInst%rij_kro_alpha        )
+    allocate(NitrifDenitrifParamsInst%rij_kro_beta         )
+    allocate(NitrifDenitrifParamsInst%rij_kro_gamma        )
+    allocate(NitrifDenitrifParamsInst%rij_kro_delta        )
+
+    tString='k_nitr_max'
+    call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
+    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
+    NitrifDenitrifParamsInst%k_nitr_max=tempr
+
+    tString='surface_tension_water'
+    call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
+    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
+    NitrifDenitrifParamsInst%surface_tension_water=tempr
+
+    tString='rij_kro_a'
+    call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
+    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
+    NitrifDenitrifParamsInst%rij_kro_a=tempr
+
+    tString='rij_kro_alpha'
+    call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
+    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
+    NitrifDenitrifParamsInst%rij_kro_alpha=tempr
+
+    tString='rij_kro_beta'
+    call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
+    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
+    NitrifDenitrifParamsInst%rij_kro_beta=tempr
+
+    tString='rij_kro_gamma'
+    call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
+    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
+    NitrifDenitrifParamsInst%rij_kro_gamma=tempr
+
+    tString='rij_kro_delta'
+    call ncd_io(trim(tString),tempr, 'read', ncid, readvar=readv)
+    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
+    NitrifDenitrifParamsInst%rij_kro_delta=tempr
+
+  end subroutine readNitrifDenitrifParams
 
   !-----------------------------------------------------------------------
-  subroutine nitrif_denitrif( num_soilc, filter_soilc, &
-       soilstate_vars, ch4_vars)
+  subroutine nitrif_denitrif( num_soilc,filter_soilc,soilstate_vars, ch4_vars)
     !
     ! !DESCRIPTION:
     !  calculate nitrification and denitrification rates
     !
     ! !USES:
-      !$acc routine seq
     use SharedParamsMod , only : anoxia_wtsat,ParamsShareInst
     !
     ! !ARGUMENTS:
@@ -126,16 +124,16 @@ contains
     type(ch4_type)           , intent(in)    :: ch4_vars
     !
     ! !LOCAL VARIABLES:
-    integer  :: c, fc, reflev, j
+    integer  :: reflev
     !real(r8) :: soil_hr_vr ! total soil respiration rate (g C / m3 / s)
     real(r8) :: g_per_m3__to__ug_per_gsoil
     real(r8) :: g_per_m3_sec__to__ug_per_gsoil_day
-    real(r8) :: k_nitr_max                          ! maximum nitrification rate constant (1/s)
+    real(r8) :: k_nitr_max            ! maximum nitrification rate constant (1/s)
     real(r8) :: mu, sigma
     real(r8) :: t
     real(r8) :: pH
     !debug-- put these type structure for outing to hist files
-    real(r8) :: co2diff_con(2)                      ! diffusion constants for CO2
+    real(r8) :: co2diff_con(2)        ! diffusion constants for CO2
     real(r8) :: eps
     real(r8) :: f_a
     real(r8) :: surface_tension_water ! (J/m^2), Arah and Vinten 1995
@@ -144,17 +142,16 @@ contains
     real(r8) :: rij_kro_beta          !  Arah and Vinten 1995
     real(r8) :: rij_kro_gamma         !  Arah and Vinten 1995
     real(r8) :: rij_kro_delta         !  Arah and Vinten 1995
-    real(r8) :: rho_w  = 1.e3_r8                   ! (kg/m3)
+    real(r8),parameter :: rho_w  = 1.e3_r8                   ! (kg/m3)
     real(r8) :: r_max
     real(r8) :: r_min
     real(r8) :: ratio_diffusivity_water_gas
     real(r8) :: om_frac
     real(r8) :: anaerobic_frac_sat, r_psi_sat, r_min_sat ! scalar values in sat portion for averaging
-    real(r8) :: organic_max              ! organic matter content (kg/m3) where
-                                         ! soil is assumed to act like peat
-    !character(len=32) :: subname='nitrif_denitrif' ! subroutine name
+    real(r8) :: organic_max             ! organic matter content (kg/m3) where
+                                        ! soil is assumed to act like peat
+    integer :: fc, j, c 
     !-----------------------------------------------------------------------
-
     associate(                                                                                     &
          watsat                        =>    soilstate_vars%watsat_col                           , & ! Input:  [real(r8) (:,:)  ]  volumetric soil water at saturation (porosity) (nlevgrnd)
          bd                            =>    soilstate_vars%bd_col                               , & ! Input:  [real(r8) (:,:)  ]  bulk density of dry soil material [kg/m3]
@@ -202,34 +199,33 @@ contains
          soil_bulkdensity              =>    col_nf%soil_bulkdensity              , & ! Output:  [real(r8) (:,:) ]  (kg soil / m3) bulk density of soil (including water)
          pot_f_nit_vr                  =>    col_nf%pot_f_nit_vr                  , & ! Output:  [real(r8) (:,:) ]  (gN/m3/s) potential soil nitrification flux
          pot_f_denit_vr                =>    col_nf%pot_f_denit_vr                , & ! Output:  [real(r8) (:,:) ]  (gN/m3/s) potential soil denitrification flux
-         n2_n2o_ratio_denit_vr         =>    col_nf%n2_n2o_ratio_denit_vr           & ! Output:  [real(r8) (:,:) ]  ratio of N2 to N2O production by denitrification [gN/gN]
+         n2_n2o_ratio_denit_vr         =>    col_nf%n2_n2o_ratio_denit_vr         ,  & ! Output:  [real(r8) (:,:) ]  ratio of N2 to N2O production by denitrification [gN/gN]
+         surface_tension_water => NitrifDenitrifParamsInst%surface_tension_water  , &
+
+         ! Set parameters from simple-structure model to calculate anoxic fratction (Arah and Vinten 1995)
+         rij_kro_a     => NitrifDenitrifParamsInst%rij_kro_a     ,&
+         rij_kro_alpha => NitrifDenitrifParamsInst%rij_kro_alpha ,&
+         rij_kro_beta  => NitrifDenitrifParamsInst%rij_kro_beta  ,&
+         rij_kro_gamma => NitrifDenitrifParamsInst%rij_kro_gamma ,&
+         rij_kro_delta => NitrifDenitrifParamsInst%rij_kro_delta ,&
+
+         organic_max => ParamsShareInst%organic_max
          )
 
       ! Set maximum nitrification rate constant
-      k_nitr_max =  0.1_r8 / secspday   ! [1/sec] 10%/day  Parton et al., 2001
 
       ! Todo:  FIX(SPM,032414) - the explicit divide gives different results than when that
       ! value is placed in the parameters netcdf file.  To get bfb, keep the
       ! divide in source.
       !k_nitr_max = NitrifDenitrifParamsInst%k_nitr_max
 
-      surface_tension_water = NitrifDenitrifParamsInst%surface_tension_water
-
-      ! Set parameters from simple-structure model to calculate anoxic fratction (Arah and Vinten 1995)
-      rij_kro_a     = NitrifDenitrifParamsInst%rij_kro_a
-      rij_kro_alpha = NitrifDenitrifParamsInst%rij_kro_alpha
-      rij_kro_beta  = NitrifDenitrifParamsInst%rij_kro_beta
-      rij_kro_gamma = NitrifDenitrifParamsInst%rij_kro_gamma
-      rij_kro_delta = NitrifDenitrifParamsInst%rij_kro_delta
-
-      organic_max = ParamsShareInst%organic_max
-
       co2diff_con(1) =   0.1325_r8
       co2diff_con(2) =   0.0009_r8
-
+      !$acc parallel loop independent gang vector collapse(2) default(present)
       do j = 1, nlevdecomp
          do fc = 1,num_soilc
             c = filter_soilc(fc)
+             k_nitr_max =  0.1_r8 / secspday   ! [1/sec] 10%/day  Parton et al., 2001
 
             !---------------- calculate soil anoxia state
             ! calculate gas diffusivity of soil at field capacity here
@@ -293,10 +289,8 @@ contains
                !call endrun(msg=' ERROR: NITRIF_DENITRIF requires Methane model to be active'//errMsg(__FILE__, __LINE__) )
             end if
 
-
             !---------------- nitrification
             ! follows CENTURY nitrification scheme (Parton et al., (2001, 1996))
-
             ! assume nitrification temp function equal to the HR scalar
             k_nitr_t_vr(c,j) = min(t_scalar(c,j), 1._r8)
 
@@ -368,7 +362,7 @@ contains
                ! fucntion saturates at large no3/co2 ratios, so set as some nominally large number
                ratio_no3_co2(c,j) = 100._r8
             endif
-
+            !
             ! total water limitation function (Del Grosso et al., 2000, figure 7a)
             wfps_vr(c,j) = max(min(h2osoi_vol(c,j)/watsat(c, j), 1._r8), 0._r8) * 100._r8
             fr_WFPS(c,j) = max(0.1_r8, 0.015_r8 * wfps_vr(c,j) - 0.32_r8)
@@ -380,9 +374,7 @@ contains
 
             ! final ratio expression
             n2_n2o_ratio_denit_vr(c,j) = max(0.16*ratio_k1(c,j), ratio_k1(c,j)*exp(-0.8 * ratio_no3_co2(c,j))) * fr_WFPS(c,j)
-
          end do
-
       end do
 
     end associate

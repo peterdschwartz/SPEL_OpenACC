@@ -8,6 +8,7 @@ module elm_driver
    ! parallelized by looping over clumps on each process using shared memory OpenMP.
    !
    ! !USES:
+   use write_filterMod, only: write_filter 
    use shr_kind_mod           , only : r8 => shr_kind_r8
    use shr_sys_mod            , only : shr_sys_flush
    use shr_log_mod            , only : errMsg => shr_log_errMsg
@@ -57,7 +58,7 @@ module elm_driver
    !
    use SedFluxType            , only : sedflux_type
    !clm_interface
-   use EcosystemDynMod      , only : EcosystemDynNoLeaching1, EcosystemDynNoLeaching2
+   !use EcosystemDynMod      , only : EcosystemDynNoLeaching1, EcosystemDynNoLeaching2
    
    use EcosystemDynMod      , only : EcosystemDynLeaching
    use VegStructUpdateMod   , only : VegStructUpdate
@@ -70,7 +71,7 @@ module elm_driver
    use EcosystemBalanceCheckMod      , only : EndGridCBalanceAfterDynSubgridDriver
    use EcosystemBalanceCheckMod      , only : EndGridNBalanceAfterDynSubgridDriver
    use EcosystemBalanceCheckMod      , only : EndGridPBalanceAfterDynSubgridDriver
-   use VerticalProfileMod   , only : decomp_vertprofiles_gpu,decomp_vertprofiles
+   use VerticalProfileMod   , only : decomp_vertprofiles
    use FireMod              , only : FireInterp
    use SatellitePhenologyMod  , only : SatellitePhenology, interpMonthlyVeg
    use ndepStreamMod          , only : ndep_interp
@@ -199,7 +200,7 @@ module elm_driver
    use elm_instMod , only : column_state_updater
    use domainMod , only : ldomain_gpu
    use histGPUMod , only : tape_gpu, htape_gpu_init, hist_update_hbuf_gpu
-   use histFileMod , only : elmptr_ra, elmptr_rs
+   use histFileMod , only : elmptr_ra, elmptr_rs, tape
    use update_accMod
    use timeinfoMod
    use ColumnDataType, only : col_cs_summary, col_ns_summary,col_ps_summary
@@ -275,15 +276,22 @@ module elm_driver
       use dynPriorWeightsMod  , only : set_prior_weights
       use dynUpdateModAcc 
       use glc2lndMod  , only : glc2lnd_vars_update_glc2lnd_acc
-      ! use dynPatchStateUpdaterMod , only : set_old_patch_weights 
-      ! use dynColumnStateUpdaterMod, only : set_old_column_weights
       use ColumnWorkRoutinesMod
       use dynpftFileMod, only : dynpft_interp
       use dynHarvestMod, only : dynHarvest_interp
       use dyncropFileMod      , only : dyncrop_init, dyncrop_interp
       use writeMod , only : write_vars 
-
+      use histFileMod, only : ntapes  
       use dynSubgridAdjustmentsMod, only : dyn_col_cs_Adjustments,dyn_col_ns_Adjustments,dyn_col_ps_Adjustments
+      use verificationMod
+      use ForcingUpdateMod , only : update_forcings_cplbypass
+      use elm_instMod , only : cpl_bypass_input   
+      #ifdef _OPENACC 
+      #define gpuflag 1
+      #else
+      #define gpuflag 0
+      #endif
+
       !
       ! !ARGUMENTS:
       implicit none
@@ -298,7 +306,7 @@ module elm_driver
       ! !LOCAL VARIABLES:
       integer            :: nstep                   ! time step number
       real(r8)           :: dtime                   ! land model time step (sec)
-      integer            :: nc, c, p, l, g, fp, j   ! indices
+      integer            :: nc, c, p, l, g, fp, j,t ! indices
       integer            :: nclumps                 ! number of clumps on this processor
       integer            :: yrp1                    ! year (0, ...) for nstep+1
       integer            :: monp1                   ! month (1, ..., 12) for nstep+1
@@ -322,7 +330,11 @@ module elm_driver
       integer(kind=cuda_count_kind) :: heapsize,free1,free2,total
       integer  :: istat, val
       #endif
-      
+      integer :: maxcols, begg,endg, i,maxpfts,begc,begp, endc, endp
+      integer, allocatable :: ncols(:) 
+      integer, allocatable :: npfts(:) 
+      character(len=8) :: desc
+      logical :: transfer_tapes  
       !-----------------------------------------------------------------------
       call get_curr_time_string(dateTimeString)
       if (masterproc) then
@@ -337,6 +349,9 @@ module elm_driver
       dtime_mod = real(get_step_size(),r8)
       call get_curr_date(year_curr,mon_curr,day_curr,secs_curr)
       call get_prev_date(year_prev,mon_prev,day_prev,secs_prev)
+      print *, "TIME AND DATE INFO FOR STEP :", nstep_mod 
+      print *, year_curr,mon_curr, day_curr, secs_curr 
+      print *, year_prev, mon_prev, day_prev, secs_prev 
       dayspyr_mod = get_days_per_year()
       jday_mod = get_curr_calday()
       
@@ -349,16 +364,16 @@ module elm_driver
       end if
       ! Determine processor bounds and clumps for this processor
       write(iulog,*) "TOTAL Gridcells/clumps:",bounds_proc%endg,nclumps
-      #if _CUDA
-      istat = cudaDeviceGetLimit(heapsize, cudaLimitMallocHeapSize)
-      write(iulog,*) "SETTING Heap Limit from", heapsize
-      heapsize = 1000_8*1024_8*1024_8
-      write(iulog,*) "TO:",heapsize
-      istat = cudaDeviceSetLimit(cudaLimitMallocHeapSize,heapsize)
-      istat = cudaMemGetInfo(free1, total)
-      write(iulog,*) iam,"Free1:",free1
-      #endif 
       if(nstep_mod == 0 ) then
+        #if _CUDA
+        istat = cudaDeviceGetLimit(heapsize, cudaLimitMallocHeapSize)
+        write(iulog,*) "SETTING Heap Limit from", heapsize
+        heapsize = 1000_8*1024_8*1024_8
+        write(iulog,*) "TO:",heapsize
+        istat = cudaDeviceSetLimit(cudaLimitMallocHeapSize,heapsize)
+        istat = cudaMemGetInfo(free1, total)
+        write(iulog,*) iam,"Free1:",free1
+        #endif 
          write(iulog,*) "transferring data to GPU"
          call init_proc_clump_info()
          call createLitterTransportList() 
@@ -368,7 +383,61 @@ module elm_driver
             urban_hac_int = 0 
          elseif(trim(urban_hac) == urban_wasteheat_on) then 
             urban_hac_int = 2 
-         end if 
+         end if
+
+         begg = bounds_proc%begg; endg = bounds_proc%endg 
+         begc = bounds_proc%begc; endc = bounds_proc%endc 
+         begp = bounds_proc%begp; endp = bounds_proc%endp 
+         
+         allocate(ncols(begg:endg)); ncols(:) = 0 
+          do c = bounds_proc%begc, bounds_proc%endc
+              g = col_pp%gridcell(c) 
+              ncols(g) = ncols(g) + 1  
+          end do 
+          maxcols = maxval(ncols)
+          ncols(:) = 1 
+
+          allocate(grc_pp%cols(begg:endg,maxcols))  
+          do c = begc, endc 
+              g = col_pp%gridcell(c) 
+              i = ncols(g) 
+              grc_pp%cols(g,i) = c 
+              grc_pp%ncolumns(g) = i 
+              ncols(g) = ncols(g) + 1
+          end do 
+           
+          deallocate(ncols(:))  
+
+          allocate(npfts(begg:endg)); 
+          npfts(:) = 0
+          allocate(grc_pp%npfts(begg:endg)) 
+
+          do p = begp, endp
+              c = veg_pp%column(p) 
+              g = col_pp%gridcell(c) 
+              npfts(g) = npfts(g) + 1 
+              grc_pp%npfts(g) = npfts(g)  
+          end do 
+
+          maxpfts = maxval(npfts)
+          write(iulog,*) "maxpfts",maxpfts 
+          
+          npfts(:) = 1 
+          
+          allocate(grc_pp%pfts(maxpfts,begg:endg)) 
+
+          do p = begp, endp
+              c = veg_pp%column(p)  
+              g = col_pp%gridcell(c) 
+             
+              i = npfts(g) 
+              grc_pp%pfts(i,g) = p
+              npfts(g) = npfts(g) + 1
+          end do
+
+         deallocate(npfts(:)) 
+         write(iulog,*) "Deallocated npfts"  
+         call shr_sys_flush(iulog) 
          !$acc update device( &
          !$acc        spinup_state            &
          !$acc       ,nyears_ad_carbon_only   &
@@ -396,7 +465,6 @@ module elm_driver
          !$acc     )
          !$acc update device(first_step, nlevgrnd) ! TODO!!!!!!, eccen, obliqr, lambm0, mvelpp )
          call update_acc_variables()
-         !
          
          !$acc update device ( &
          !$acc       noveg                &
@@ -441,7 +509,6 @@ module elm_driver
         call createProcessorFilter(nclumps, bounds_proc, proc_filter, glc2lnd_vars%icemask_grc)
         call createProcessorFilter(nclumps, bounds_proc, proc_filter_inactive_and_active, glc2lnd_vars%icemask_grc)
         
-        !call initPatchStateUpdaterGPU(patch_state_updater_gpu, patch_state_updater, bounds_proc) 
         !$acc enter data copyin(&
       !$acc aerosol_vars     , &
       !$acc AllocParamsInst  , &
@@ -564,32 +631,32 @@ module elm_driver
       istat = cudaMemGetInfo(free2, total)
       write(iulog,*) iam,"Free after top/veg vars:", free2/1.E9
       #endif
-      !!call htape_gpu_init() 
+      !call htape_gpu_init() 
       !!!$acc enter data copyin(tape_gpu(:),elmptr_ra(:),elmptr_rs(:))
       !$acc enter data copyin( doalb, declinp1, declin )
       !$acc enter data copyin(filter(:), gpu_clumps(:), gpu_procinfo, proc_filter,proc_filter_inactive_and_active  )
       !$acc enter data copyin(filter_inactive_and_active(:),transport_ptr_list(:),bounds_proc )
+      
       #if _CUDA 
       istat = cudaMemGetInfo(free2, total)
       write(iulog,*) iam,"Free after final copyin:", free2/1.E9
       #endif
-      
+      call cpu_time(startt) 
+      call setProcFilters(bounds_proc, proc_filter, .false.)
+      call setProcFilters(bounds_proc, proc_filter_inactive_and_active, .true.)
+      call cpu_time(stopt) 
+      write(iulog,*) iam,"TIMING SetProcFilters :: ",(stopt-startt)*1.E+3, "ms"
+      !$acc enter data copyin(cpl_bypass_input) 
       end if
       
       !$acc enter data copyin(nstep_mod, dtime_mod, &
       !$acc   year_curr,mon_curr,day_curr,secs_curr,&
       !$acc   year_prev,mon_prev,day_prev,secs_prev, dayspyr_mod,jday_mod)
       
-      call cpu_time(startt) 
-      call setProcFilters(bounds_proc, proc_filter, .false., glc2lnd_vars%icemask_grc(:) )
-      call setProcFilters(bounds_proc, proc_filter_inactive_and_active, .true., glc2lnd_vars%icemask_grc(:) )
-      call cpu_time(stopt) 
-      write(iulog,*) iam,"TIMING SetProcFilters :: ",(stopt-startt)*1.E+3, "ms"
-      
-      #if _CUDA 
-      istat = cudaMemGetInfo(free2, total)
-      write(iulog,*) iam,"Free after SetProcFilters :", free2/1.E9
-      #endif
+     write(iulog,*) "update_forcings cplbypass : " 
+     call shr_sys_flush(iulog)  
+     !call update_forcings_cplbypass(bounds_proc, atm2lnd_vars, cpl_bypass_input, &
+     !       dtime_mod, thiscalday_mod,secs_curr, year_curr, mon_curr, nstep_mod) 
       if (do_budgets) call WaterBudget_Reset()
       
       ! ============================================================================
@@ -627,15 +694,13 @@ module elm_driver
       ! pftdyn_cnbal, and it appears that they need to be called before pftdyn_interp and
       ! the associated filter updates, too (otherwise we get a carbon balance error)
       ! ==================================================================================
-      call shr_sys_flush(iulog) 
-      
       !$acc parallel loop independent gang vector default(present) 
       do nc = 1,nclumps
-         ! call t_startf("decomp_vert")
          call alt_calc(filter(nc)%num_soilc, filter(nc)%soilc,canopystate_vars)
-         
+      
       end do
-
+      
+      call shr_sys_flush(iulog) 
       !  Note (WJS, 6-12-13): Because of this routine's placement in the driver sequence
       !  (it is called very early in each timestep, before weights are adjusted and
       !  filters are updated), it may be necessary for this routine to compute values over
@@ -645,44 +710,45 @@ module elm_driver
       !  valid over inactive as well as active points.
       if(use_fates .or. use_cn) then 
          call cpu_time(startt)
-         call decomp_vertprofiles_gpu(bounds_proc,      &
+         call decomp_vertprofiles(bounds_proc,      &
             proc_filter_inactive_and_active%num_soilc, proc_filter_inactive_and_active%soilc, &
             proc_filter_inactive_and_active%num_soilp, proc_filter_inactive_and_active%soilp, &
             soilstate_vars, canopystate_vars, cnstate_vars)
          call cpu_time(stopt)
          write(iulog,*) iam, "TIMING Decomp vert_profiles",(stopt-startt)*1.E+3,"ms"
-         #if _CUDA 
-         istat = cudaMemGetInfo(free2, total)
-         write(iulog,*) iam,"Free after vert_profiles:", free2/1.E9
-         #endif
-      end if 
+      end if
       ! ============================================================================
       ! Zero fluxes for transient land cover
       ! ============================================================================
       call t_startf('cnpinit')
       call cpu_time(startt) 
-      !$acc parallel loop independent gang vector default(present) private(bounds_clump)
-      do nc = 1,nclumps
-         call get_clump_bounds_gpu(nc, bounds_clump)
          
          ! call t_startf('beggridwbal')
-         call BeginGridWaterBalance(bounds_clump,               &
-            filter(nc)%num_nolakec, filter(nc)%nolakec,       &
-            filter(nc)%num_lakec, filter(nc)%lakec,           &
-            filter(nc)%num_hydrologyc, filter(nc)%hydrologyc, &
+         call BeginGridWaterBalance(bounds_proc,               &
+            proc_filter%num_nolakec, proc_filter%nolakec,       &
+            proc_filter%num_lakec, proc_filter%lakec,           &
+            proc_filter%num_hydrologyc, proc_filter%hydrologyc, &
             soilhydrology_vars )
          ! call t_stopf('beggridwbal')
          
-         #ifndef _OPENACC
+      #ifndef _OPENACC
+      !$acc parallel loop independent gang vector default(present) private(bounds_clump)
+      do nc = 1,nclumps
+         call get_clump_bounds_gpu(nc, bounds_clump)
          if (use_betr) then
             dtime=get_step_size(); nstep=get_nstep()
             call ep_betr%SetClock(dtime= dtime, nelapstep=nstep)
             call ep_betr%BeginMassBalanceCheck(bounds_clump)
          endif
-         #endif 
-      end do 
+      end do
+      #endif 
       
-      if(use_cn) then 
+     call cpu_time(stopt) 
+     write(iulog,*) "TIMING BeginGridWaterBalance :: ",(stopt-startt)*1.E+3,"ms"
+
+     call cpu_time(startt)
+
+      if(use_cn) then
          call t_startf('cnpvegzero')
          call zero_elm_weights(bounds_proc)
          call t_stopf('cnpvegzero')
@@ -712,11 +778,6 @@ module elm_driver
       call cpu_time(stopt) 
       write(iulog,*) iam,"TIMING cnpvegsum ",(stopt-startt)*1.E+3,"ms"
       
-      #if _CUDA 
-      istat = cudaMemGetInfo(free2, total)
-      write(iulog,*) iam,"Free after cnpvegsum:", free2/1.E9
-      #endif
-
       call t_stopf('cnpvegsumm')
       
       if(use_cn .or. use_fates)then
@@ -727,47 +788,29 @@ module elm_driver
          call col_cs_summary_acc(col_cs,proc_filter%num_soilc, proc_filter%soilc)
          call col_ns_Summary_acc(col_ns,proc_filter%num_soilc, proc_filter%soilc)
          call col_ps_Summary_acc(col_ps,proc_filter%num_soilc, proc_filter%soilc)
-         
-
-         !$acc parallel loop independent gang vector default(present) private(bounds_clump)
-         do nc = 1, nclumps 
-            call get_clump_bounds_gpu(nc, bounds_clump)  
-            call BeginGridCBalance(bounds_clump, col_cs, grc_cs)
-            call BeginGridNBalance(bounds_clump, col_ns, grc_ns)
-            call BeginGridPBalance(bounds_clump, col_ps, grc_ps)
-         end do 
          call cpu_time(stopt) 
-         write(iulog,*) iam,"TIMING cnpinit :: ",(stopt-startt)*1.E+3,"ms"
+         write(iulog,*) iam, "TIMING col_summary :: ",(stopt-startt)*1.E+3,"ms" 
+         
+         call cpu_time(startt) 
+         call BeginGridCBalance(bounds_proc, col_cs, grc_cs)
+         call BeginGridNBalance(bounds_proc, col_ns, grc_ns)
+         call BeginGridPBalance(bounds_proc, col_ps, grc_ps)
+         call cpu_time(stopt) 
+         write(iulog,*) iam,"TIMING cnp_grid_balance :: ",(stopt-startt)*1.E+3,"ms"
       end if
       call t_stopf('cnpinit')
-      #if _CUDA 
-      istat = cudaMemGetInfo(free2, total)
-      write(iulog,*) iam,"Free after cnpinit:", free2/1.E9
-      #endif
       ! ============================================================================
       ! Update subgrid weights with dynamic landcover (prescribed transient patches,
       ! and or dynamic landunits), and do related adjustments. Note that this
       ! call needs to happen outside loops over nclumps.
       ! ============================================================================
       
-     call cpu_time(startt) 
-     !$acc parallel loop independent gang vector default(present) private(bounds_clump) 
-     do nc = 1, nclumps
-        call get_clump_bounds_gpu(nc, bounds_clump)
-        
-        call dyn_hwcontent_init(bounds_clump, &
-        filter(nc)%num_nolakec, filter(nc)%nolakec, &
-        filter(nc)%num_lakec, filter(nc)%lakec, &
-        urbanparams_vars, soilstate_vars, soilhydrology_vars, lakestate_vars, &
-        energyflux_vars)
-        
-     end do
-     #if _CUDA 
-     istat = cudaMemGetInfo(free2, total)
-     write(iulog,*) iam,"Free after dynhw_init:", free2/1.E9
-     #endif
+     call cpu_time(startt)
+     call dyn_hwcontent_init(bounds_proc, &
+      proc_filter%num_nolakec, proc_filter%nolakec, &
+      proc_filter%num_lakec, proc_filter%lakec, &
+      urbanparams_vars, soilstate_vars, soilhydrology_vars, lakestate_vars )
 
-   !   call cpu_time(startt)
      !$acc parallel loop independent gang vector default(present) private(bounds_clump) 
      do nc = 1, nclumps
         call get_clump_bounds_gpu(nc, bounds_clump)
@@ -775,15 +818,9 @@ module elm_driver
         call set_old_patch_weightsAcc  (patch_state_updater,bounds_clump)
         call set_old_column_weightsAcc (column_state_updater,bounds_clump)
      end do
-      ! call cpu_time(stopt) 
-      ! write(iulog,*) iam,"TIMING set_old_weights :: ",(stopt-startt)*1.E+3, "ms"
      call cpu_time(stopt) 
      write(iulog,*) iam, "TIMING dynhwcontent_init :: ",(stopt-startt)*1.E+3,"ms"
-
-      #if _CUDA 
-      istat = cudaMemGetInfo(free2, total)
-      write(iulog,*) iam,"Free after set_old_weights:", free2/1.E9
-      #endif
+     
       ! ==========================================================================
       ! Do land cover change that requires I/O, and thus must be outside a threaded region
       ! ==========================================================================
@@ -801,8 +838,6 @@ module elm_driver
       ! ==========================================================================
       ! Do everything else related to land cover change
       ! ==========================================================================
-   
-      call cpu_time(startt) 
       !$acc parallel loop independent gang vector default(present) private(bounds_clump)
       do nc = 1, nclumps
          call get_clump_bounds_gpu(nc, bounds_clump)
@@ -820,16 +855,17 @@ module elm_driver
          ! (particularly mask that is past through coupler).
          call dynSubgrid_wrapup_weight_changes(bounds_clump, glc2lnd_vars)
          call column_set_new_weightsAcc(column_state_updater,bounds_clump, nc)
-      end do 
+      end do
       
+      write(iulog,*) "setProcFilters:"
+      call shr_sys_flush(iulog)
+      call setProcFilters(bounds_proc, proc_filter, .false.)
+      
+      write(iulog,*) "set new weights Acc" 
+      call shr_sys_flush(iulog)  
       call patch_set_new_weightsAcc(patch_state_updater ,bounds_proc)
-      call cpu_time(stopt) 
-      write(iulog,*) iam,"TIMING set_weights :: ",(stopt-startt)*1.E+3,"ms"
-      #if _CUDA 
-      istat = cudaMemGetInfo(free2, total)
-      write(iulog,*) iam,"Free after set_weights:", free2/1.E9
-      #endif
-      
+       
+      call shr_sys_flush(iulog)  
       call cpu_time(startt)  
       !$acc parallel loop independent gang vector default(present) private(bounds_clump)
       do nc = 1, nclumps 
@@ -838,37 +874,31 @@ module elm_driver
          
          call initialize_new_columns(bounds_clump, &
             prior_weights%cactive, soilhydrology_vars )
-         
-         call dyn_hwcontent_final(bounds_clump, &
-            filter(nc)%num_nolakec, filter(nc)%nolakec, &
-            filter(nc)%num_lakec, filter(nc)%lakec, &
-            urbanparams_vars, soilstate_vars, soilhydrology_vars, lakestate_vars, &
-            energyflux_vars, dtime_mod)
       end do 
+
+      call dyn_hwcontent_final(bounds_proc, &
+            proc_filter%num_nolakec, proc_filter%nolakec, &
+            proc_filter%num_lakec, proc_filter%lakec, &
+            urbanparams_vars, soilstate_vars, soilhydrology_vars, lakestate_vars, &
+            dtime_mod)
+
       call cpu_time(stopt) 
       write(iulog,*) iam,"TIMING dyn_hwcontent_final :: ",(stopt-startt)*1.E+3,"ms" 
-      #if _CUDA 
-      istat = cudaMemGetInfo(free2, total)
-      write(iulog,*) iam,"Free after dyn_hwcontent_final:", free2/1.E9
-      #endif
-
+      call shr_sys_flush(iulog)  
       if (use_cn) then
          call cpu_time(startt) 
-         call dyn_cnbal_patch(bounds_proc, &
-            proc_filter_inactive_and_active%num_soilp, proc_filter_inactive_and_active%soilp, &
-            proc_filter_inactive_and_active%num_soilc, proc_filter_inactive_and_active%soilc, &
-            prior_weights, &
-            patch_state_updater, &
-            canopystate_vars, photosyns_vars, cnstate_vars, &
-            veg_cs, c13_veg_cs, c14_veg_cs, &
-            veg_ns, veg_ps, dtime_mod) 
+        ! call dyn_cnbal_patch(bounds_proc, &
+        !    proc_filter_inactive_and_active%num_soilp, proc_filter_inactive_and_active%soilp, &
+        !    proc_filter_inactive_and_active%num_soilc, proc_filter_inactive_and_active%soilc, &
+        !    prior_weights, &
+        !    patch_state_updater, &
+        !    canopystate_vars, photosyns_vars, cnstate_vars, &
+        !    veg_cs, c13_veg_cs, c14_veg_cs, &
+        !    veg_ns, veg_ps, dtime_mod) 
           
          call cpu_time(stopt)
          write(iulog,*) iam,"TIMING dyn_cnbal_patch :: ",(stopt-startt)*1.E+3,"ms" 
-         #if _CUDA 
-         istat = cudaMemGetInfo(free2, total)
-         write(iulog,*) iam,"Free after dyn_cnbal_patch:", free2/1.E9
-         #endif
+         call shr_sys_flush(iulog) 
          if(.not. use_fates ) then 
             call cpu_time(startt) 
             !$acc parallel loop independent gang vector default(present) 
@@ -890,28 +920,20 @@ module elm_driver
 
             call cpu_time(stopt) 
             write(iulog,*) iam,"TIMING DynGridPatch :: ",(stopt-startt)*1.E+3, "ms"
-            #if _CUDA 
-         istat = cudaMemGetInfo(free2, total)
-         write(iulog,*) iam,"Free after DynGridPatch:", free2/1.E9
-         #endif
          end if 
          
       end if
       
       if(use_cn .or. use_fates)then
          call cpu_time(startt) 
-         call dyn_col_cs_Adjustments(bounds_proc%begc,bounds_proc%endc, nclumps, column_state_updater, col_cs)
-         call dyn_col_ns_Adjustments(bounds_proc%begc,bounds_proc%endc, nclumps, column_state_updater, col_ns)
-         call dyn_col_ps_Adjustments(bounds_proc%begc,bounds_proc%endc, nclumps, column_state_updater, col_ps)
+        ! call dyn_col_cs_Adjustments(bounds_proc%begc,bounds_proc%endc, nclumps, column_state_updater, col_cs)
+        ! call dyn_col_ns_Adjustments(bounds_proc%begc,bounds_proc%endc, nclumps, column_state_updater, col_ns)
+        ! call dyn_col_ps_Adjustments(bounds_proc%begc,bounds_proc%endc, nclumps, column_state_updater, col_ps)
          call cpu_time(stopt) 
          write(iulog,*) iam,"TIMING dyn_cnbal_column :: ",(stopt-startt)*1.E+3,"ms"
-         #if _CUDA 
-         istat = cudaMemGetInfo(free2, total)
-         write(iulog,*) iam,"Free after cnbal_column:", free2/1.E9
-         #endif
       end if
+      call shr_sys_flush(iulog)   
       
-      !call t_stopf('dyn_subgrid')
       
       if (use_cn  .or. use_fates) then
          nstep = get_nstep()
@@ -973,10 +995,6 @@ module elm_driver
             call t_stopf('cnbalchk_at_grid')
             call cpu_time(stopt) 
             write(iulog,*) iam,"TIMING cnbalchk_at_grid :: ",(stopt-startt)*1.E+3, "ms"
-            #if _CUDA 
-         istat = cudaMemGetInfo(free2, total)
-         write(iulog,*) iam,"Free after cnbalchk_at_grid:", free2/1.E9
-         #endif
          end if
       end if
          
@@ -1052,10 +1070,6 @@ module elm_driver
             call t_stopf('begcnpbalwf')
             call cpu_time(stopt) 
             write(iulog,*) iam,"TIMING ColBalanceCheck :: ",(stopt-startt)*1.E+3,"ms"
-            #if _CUDA 
-            istat = cudaMemGetInfo(free2, total)
-            write(iulog,*) iam,"Free after ColBalanceCheck:", free2/1.E9
-            #endif
          end if
                if (do_budgets) then
                   call WaterBudget_SetBeginningMonthlyStates(bounds_clump )
@@ -1137,7 +1151,6 @@ module elm_driver
                ! (3) fraction of foliage covered by water and the fraction is dry and transpiring
                ! (4) snow layer initialization if the snow accumulation exceeds 10 mm.
                ! ============================================================================
-               ! print *, "CanopyHydrology"
                call CanopyHydrology(bounds_clump, &
                   filter(nc)%num_nolakec, filter(nc)%nolakec, &
                   filter(nc)%num_nolakep, filter(nc)%nolakep, &
@@ -1146,68 +1159,53 @@ module elm_driver
             end do
             call cpu_time(stopt) 
             write(iulog,*) iam,"TIMING Biogeophys setup :: ", (stopt-startt)*1.E+3, "ms"
-            #if _CUDA 
-            istat = cudaMemGetInfo(free2, total)
-            write(iulog,*) iam,"Free after Biogeophys setup:", free2/1.E9
-            #endif
-
+            
+            call shr_sys_flush(iulog) 
+            
+            
             call cpu_time(startt) 
             !NOTE: canopystate_vars%frac_veg_nosno_alb_patch may be sufficient here?
             call updateFracNoSnoFilters(bounds_proc,proc_filter, canopystate_vars%frac_veg_nosno_patch)
             call cpu_time(stopt)
             write(iulog,*) iam,"TIMING updateFracNoSnoFilters :: ",(stopt-startt)*1.E+3,"ms"
-            #if _CUDA 
-            istat = cudaMemGetInfo(free2, total)
-            write(iulog,*) iam,"Free after updateFracNoSnoFilters:", free2/1.E9
-            #endif
 
             call cpu_time(startt)
-            !$acc parallel loop independent gang private(nc,bounds_clump)
-            do nc = 1,nclumps
-               call get_clump_bounds_gpu(nc, bounds_clump)
-               ! ============================================================================
-               ! Surface Radiation
-               ! ============================================================================
-               
-               !call t_startf('surfrad')
-               
-               ! Surface Radiation primarily for non-urban columns
-               
-               ! Most of the surface radiation calculations are agnostic to the forest-model
-               ! but the calculations of the fractions of sunlit and shaded canopies
-               ! are specific, calculate them first.
-               ! The nourbanp filter is set in dySubgrid_driver (earlier in this call)
-               ! over the patch index range defined by bounds_clump%begp:bounds_proc%endp
-               
-               ! if(use_fates) then
-               !    call alm_fates%wrap_sunfrac(bounds_clump, top_af, canopystate_vars)
-               ! else
-               call CanopySunShadeFractions(filter(nc)%num_nourbanp, filter(nc)%nourbanp,    &
-               atm2lnd_vars, surfalb_vars, canopystate_vars,    &
-               solarabs_vars)
-               !end if
-               call SurfaceRadiation(bounds_clump,                &
-                  filter(nc)%num_nourbanp, filter(nc)%nourbanp, &
-                  filter(nc)%num_urbanp, filter(nc)%urbanp    , &
-                  filter(nc)%num_urbanc, filter(nc)%urbanc,     &
-                  atm2lnd_vars, canopystate_vars, surfalb_vars, &
-                  solarabs_vars, surfrad_vars)
-               
-               ! Surface Radiation for only urban columns
-               call UrbanRadiation(                   &
-                  filter(nc)%num_nourbanl, filter(nc)%nourbanl,    &
-                  filter(nc)%num_urbanl, filter(nc)%urbanl,        &
-                  atm2lnd_vars, urbanparams_vars, &
-                  solarabs_vars, surfalb_vars, energyflux_vars)
-            end do
-            !call t_stopf('surfrad')
+            ! ============================================================================
+            ! Surface Radiation
+            ! ============================================================================
+            
+            !call t_startf('surfrad')
+            
+            ! Surface Radiation primarily for non-urban columns
+            
+            ! Most of the surface radiation calculations are agnostic to the forest-model
+            ! but the calculations of the fractions of sunlit and shaded canopies
+            ! are specific, calculate them first.
+            ! The nourbanp filter is set in dySubgrid_driver (earlier in this call)
+            ! over the patch index range defined by bounds_clump%begp:bounds_proc%endp
+            
+            ! if(use_fates) then
+            !    call alm_fates%wrap_sunfrac(bounds_clump, top_af, canopystate_vars)
+            ! else
+            call CanopySunShadeFractions(proc_filter%num_nourbanp, proc_filter%nourbanp,    &
+                surfalb_vars, canopystate_vars, solarabs_vars)
+    
+            call SurfaceRadiation(bounds_proc,                &
+                proc_filter%num_nourbanp, proc_filter%nourbanp, &
+                proc_filter%num_urbanp, proc_filter%urbanp    , &
+                proc_filter%num_urbanc, proc_filter%urbanc,     &
+                canopystate_vars, surfalb_vars, &
+                solarabs_vars, surfrad_vars)
+             
+             ! Surface Radiation for only urban columns
+            call UrbanRadiation(                   &
+                proc_filter%num_nourbanl, proc_filter%nourbanl,    &
+                proc_filter%num_urbanl, proc_filter%urbanl,        &
+                urbanparams_vars, solarabs_vars, surfalb_vars)
+            
             call cpu_time(stopt) 
             write(iulog,*) iam,"TIMING Radiation :: ",(stopt-startt)*1.E+3, "ms" 
-            #if _CUDA 
-            istat = cudaMemGetInfo(free2, total)
-            write(iulog,*) iam,"Free after Radiation:", free2/1.E9
-            #endif
-
+            call shr_sys_flush(iulog) 
             call cpu_time(startt)
             !$acc parallel loop independent gang private(nc,bounds_clump)
             do nc = 1,nclumps
@@ -1235,10 +1233,6 @@ module elm_driver
             
             call cpu_time(stopt)
             write(iulog,*) iam,"TIMING CanopyTemp :: ",(stopt-startt)*1.E+3,"ms"
-            #if _CUDA 
-            istat = cudaMemGetInfo(free2, total)
-            write(iulog,*) iam,"Free after CanopyTemp:", free2/1.E9
-            #endif
             ! Bareground fluxes for all patches except lakes and urban landunits
             ! ============================================================================
             ! Determine fluxes
@@ -1252,12 +1246,6 @@ module elm_driver
                frictionvel_vars, ch4_vars)
             end do
             call cpu_time(stopt)
-            write(iulog,*) iam, "TIMING BareGroundFluxes :: ",(stopt-startt)*1.E+3,"ms"
-            #if _CUDA 
-            istat = cudaMemGetInfo(free2, total)
-            write(iulog,*) iam,"Free after BareGroundFluxes :", free2/1.E9
-            #endif
-
             call cpu_time(startt)
             call CanopyFluxes(bounds_proc, proc_filter%num_nolu_barep, proc_filter%nolu_barep, &
                    proc_filter%num_nolu_vegp, proc_filter%nolu_vegp , &
@@ -1265,12 +1253,8 @@ module elm_driver
                    frictionvel_vars, soilstate_vars, solarabs_vars, surfalb_vars, &
                    ch4_vars, photosyns_vars)
             call cpu_time(stopt)
-            write(iulog,*) iam,"TIMING CanopyFluxes :: ",(stopt-startt)*1.E+3,"ms"
-            #if _CUDA 
-            istat = cudaMemGetInfo(free2, total)
-            write(iulog,*) iam,"Free after CanopyFluxes:", free2/1.E9
-            #endif
 
+            write(iulog,*) iam,"TIMING CanopyFluxes :: ",(stopt-startt)*1.E+3,"ms"
             call cpu_time(startt)
             ! Define fields that appear on the restart file for non-urban landunits
             !$acc parallel loop independent gang vector default(present) private(l)
@@ -1287,61 +1271,44 @@ module elm_driver
                   proc_filter%num_urbanc, proc_filter%urbanc,        &
                   proc_filter%num_urbanp, proc_filter%urbanp,        &
                   urbanparams_vars, soilstate_vars,  &
-                  frictionvel_vars, energyflux_vars)
+                  frictionvel_vars )
             endif
             
             call cpu_time(stopt)
             write(iulog,*) iam, "TIMING UrbanFluxes :: ",(stopt-startt)*1.E+3,"ms"
-            #if _CUDA 
-            istat = cudaMemGetInfo(free2, total)
-            write(iulog,*) iam,"Free after UrbanFluxes:", free2/1.E9
-            #endif
-
+            call shr_sys_flush(iulog) 
             call cpu_time(startt)
             call LakeFluxes(proc_filter%num_lakep, proc_filter%lakep, &
                        solarabs_vars, frictionvel_vars, &
                        energyflux_vars, lakestate_vars)
             call cpu_time(stopt)
             write(iulog,*)iam, "TIMING LakeFluxes :",(stopt-startt)*1.E+3,"ms"
-            #if _CUDA 
-            istat = cudaMemGetInfo(free2, total)
-            write(iulog,*) iam,"Free after LakeFluxes:", free2/1.E9
-            #endif
             ! ============================================================================
             ! DUST and VOC emissions
             ! ============================================================================
             call cpu_time(startt)
 
-            !$acc parallel loop independent gang vector private(nc,bounds_clump)
-            do nc = 1,nclumps
-               call get_clump_bounds_gpu(nc, bounds_clump)
-               !call t_startf('bgc')
-               ! Dust mobilization (C. Zender's modified codes)
-               call DustEmission(bounds_clump,                      &
-               filter(nc)%num_nolakep, filter(nc)%nolakep,     &
-               atm2lnd_vars, soilstate_vars, canopystate_vars, &
-               frictionvel_vars, dust_vars)
-               
-               ! Dust dry deposition (C. Zender's modified codes)
-               call DustDryDep(bounds_clump, &
-               atm2lnd_vars, frictionvel_vars, dust_vars)
-               
-               ! VOC emission (A. Guenther's MEGAN (2006) model)
-               ! if (use_voc) then
-               !    call VOCEmission(bounds_clump,                                         &
-               !         filter(nc)%num_soilp, filter(nc)%soilp,                           &
-               !         atm2lnd_vars, canopystate_vars, photosyns_vars, temperature_vars, &
-               !         vocemis_vars)
-               ! end if
-            enddo
-            !call t_stopf('bgc')
+            !call t_startf('bgc')
+            ! Dust mobilization (C. Zender's modified codes)
+            call DustEmission(bounds_proc,      &
+            proc_filter%num_nolakep, proc_filter%nolakep, &
+            soilstate_vars, canopystate_vars, &
+            frictionvel_vars, dust_vars)
+            
+            ! Dust dry deposition (C. Zender's modified codes)
+            call DustDryDep(bounds_proc, frictionvel_vars, dust_vars)
+            
+            ! VOC emission (A. Guenther's MEGAN (2006) model)
+            call shr_sys_flush(iulog) 
+            !if (use_voc) then
+            !   call VOCEmission(bounds_clump,                                         &
+            !        filter(nc)%num_soilp, filter(nc)%soilp,                           &
+            !        atm2lnd_vars, canopystate_vars, photosyns_vars, temperature_vars, &
+            !        vocemis_vars)
+            !end if
             
             call cpu_time(stopt)
             write(iulog,*)iam, "TIMING Dust :: ",(stopt-startt)*1.E+3, "ms"
-            #if _CUDA 
-            istat = cudaMemGetInfo(free2, total)
-            write(iulog,*) iam,"Free after Dust:", free2/1.E9
-            #endif
             
             ! ============================================================================
             ! Determine temperatures
@@ -1353,34 +1320,21 @@ module elm_driver
                lakestate_vars)
             call cpu_time(stopt) 
             write(iulog,*) iam, "TIMING LakeTemps :: ",(stopt-startt)*1.E+3,"ms"
-            #if _CUDA 
-            istat = cudaMemGetInfo(free2, total)
-            write(iulog,*) iam,"Free after LakeTemps:", free2/1.E9
-            #endif
+            
             ! Set soil/snow temperatures including ground temperature
-            !call t_startf('soiltemperature')
-            
-            write(iulog,*) "SoilTemperature"
-            write(iulog,*) "size of col_pp%snl", size(col_pp%snl,1)
-            write(iulog,*) "bounds_proc:",bounds_proc%begc, bounds_proc%endc 
-            
-            write(iulog,*) "filter nolakec", proc_filter%num_nolakec 
+            call t_startf('soiltemperature')
             call shr_sys_flush(iulog) 
-        
-            call cpu_time(startt) 
-            !call SoilTemperature(bounds_proc,  &
-            !   proc_filter%num_urbanl  , proc_filter%urbanl,   &
-            !   proc_filter%num_nolakec , proc_filter%nolakec,  &
-            !   urbanparams_vars, canopystate_vars, &
-            !   solarabs_vars, soilstate_vars )
+            
+            call cpu_time(startt)
+             
+            call SoilTemperature(bounds_proc,  &
+               proc_filter%num_urbanl  , proc_filter%urbanl,   &
+               proc_filter%num_nolakec , proc_filter%nolakec,  &
+               urbanparams_vars, canopystate_vars, &
+               solarabs_vars, soilstate_vars )
             call cpu_time(stopt) 
-            write(iulog,*) iam, "TIMING SoilTemps :: ",(stopt-startt)*1.E+3,"ms"
-            #if _CUDA 
-            istat = cudaMemGetInfo(free2, total)
-            write(iulog,*) iam,"Free after SoilTemps:", free2/1.E9
-            #endif
-            !call t_stopf('soiltemperature')
-
+            call t_stopf('soiltemperature')
+            
             call cpu_time(startt) 
             !$acc parallel loop independent gang vector private(nc,bounds_clump)
             do nc = 1,nclumps
@@ -1389,7 +1343,6 @@ module elm_driver
                ! update surface fluxes for new ground temperature.
                ! ============================================================================
                !call t_startf('bgp2')
-               ! print *, "SoilFluxes"
                call SoilFluxes(bounds_clump,                       &
                filter(nc)%num_urbanl,  filter(nc)%urbanl,     &
                filter(nc)%num_nolakec, filter(nc)%nolakec,    &
@@ -1407,52 +1360,45 @@ module elm_driver
             end do
             call cpu_time(stopt) 
             write(iulog,*) iam, "TIMING SoilFlux/p2c ",(stopt-startt)*1.E+3,"ms"
-            #if _CUDA 
-            istat = cudaMemGetInfo(free2, total)
-            write(iulog,*) iam,"Free after SoilFlux/p2c:", free2/1.E9
-            #endif
+            
+            call shr_sys_flush(iulog) 
             call cpu_time(outer_start)
             call cpu_time(startt) 
-            !$acc parallel loop independent gang vector private(nc,bounds_clump)
-            do nc = 1,nclumps
-               call get_clump_bounds_gpu(nc, bounds_clump)
                ! ============================================================================
                ! Vertical (column) soil and surface hydrology
                ! ============================================================================
                ! Note that filter_snowc and filter_nosnowc are returned by
                ! LakeHydrology after the new snow filter is built
                !call t_startf('hydro without drainage')
+
+              call HydrologyNoDrainage(bounds_proc,                   &
+                proc_filter%num_nolakec, proc_filter%nolakec,           &
+                proc_filter%num_hydrologyc, proc_filter%hydrologyc,     &
+                proc_filter%num_hydrononsoic, proc_filter%hydrononsoic, &
+                proc_filter%num_urbanc, proc_filter%urbanc,             &
+                proc_filter%num_snowc, proc_filter%snowc,               &
+                proc_filter%num_nosnowc, proc_filter%nosnowc,           &
+                canopystate_vars, atm2lnd_vars, soilstate_vars,  &
+                soilhydrology_vars, aerosol_vars )
                
-               call HydrologyNoDrainage(bounds_clump,                                &
-               filter(nc)%num_nolakec, filter(nc)%nolakec,                      &
-               filter(nc)%num_hydrologyc, filter(nc)%hydrologyc,                &
-               filter(nc)%num_hydrononsoic, filter(nc)%hydrononsoic,            &
-               filter(nc)%num_urbanc, filter(nc)%urbanc,                        &
-               filter(nc)%num_snowc, filter(nc)%snowc,                          &
-               filter(nc)%num_nosnowc, filter(nc)%nosnowc,canopystate_vars,     &
-               atm2lnd_vars, soilstate_vars, energyflux_vars,  &
-               soilhydrology_vars, aerosol_vars )
-               
-            end do 
             call cpu_time(stopt) 
             write(iulog,*) iam, "TIMING HydroNoDrainage :: ",(stopt-startt)*1.E+3,"ms" 
+            call shr_sys_flush(iulog) 
 
-               !  Calculate column-integrated aerosol masses, and
-               !  mass concentrations for radiative calculations and output
-               !  (based on new snow level state, after SnowFilter is rebuilt.
-               !  NEEDS TO BE AFTER SnowFiler is rebuilt, otherwise there
-               !  can be zero snow layers but an active column in filter)
+            ! Calculate column-integrated aerosol masses, and
+            ! mass concentrations for radiative calculations and output
+            ! (based on new snow level state, after SnowFilter is rebuilt.
+            ! NEEDS TO BE AFTER SnowFiler is rebuilt, otherwise there
+            ! can be zero snow layers but an active column in filter)
+            
             call cpu_time(startt)
-            !$acc parallel loop independent gang vector private(nc,bounds_clump)
-            do nc = 1,nclumps
-               call get_clump_bounds_gpu(nc, bounds_clump)
-               call AerosolMasses( bounds_clump,                                   &
-               num_on=filter(nc)%num_snowc, filter_on=filter(nc)%snowc,       &
-               num_off=filter(nc)%num_nosnowc, filter_off=filter(nc)%nosnowc, &
-               aerosol_vars=aerosol_vars)
-            end do 
+            call AerosolMasses( bounds_proc,                                   &
+            num_on=proc_filter%num_snowc, filter_on=proc_filter%snowc,       &
+            num_off=proc_filter%num_nosnowc, filter_off=proc_filter%nosnowc, &
+            aerosol_vars=aerosol_vars)
             call cpu_time(stopt)
             write(iulog,*) iam, "TIMING AerosolMasses :: ",(stopt-startt)*1.E+3,"ms" 
+            call shr_sys_flush(iulog) 
 
             !call t_stopf('hydro without drainage')
                
@@ -1463,57 +1409,41 @@ module elm_driver
                ! LakeHydrology after the new snow filter is built
             !call t_startf('hylake')
             call cpu_time(startt)
-            !$acc parallel loop independent gang vector private(nc,bounds_clump)
-            do nc = 1,nclumps
-               call get_clump_bounds_gpu(nc, bounds_clump)
-               call LakeHydrology(bounds_clump,                       &
-               filter(nc)%num_lakec, filter(nc)%lakec,                &
-               filter(nc)%num_lakep, filter(nc)%lakep,                &
-               filter(nc)%num_lakesnowc, filter(nc)%lakesnowc,        &
-               filter(nc)%num_lakenosnowc, filter(nc)%lakenosnowc,    &
-               atm2lnd_vars, soilstate_vars,  &
-               energyflux_vars, aerosol_vars, lakestate_vars)
-            end do 
+            call LakeHydrology(bounds_proc,                       &
+            proc_filter%num_lakec, proc_filter%lakec,                &
+            proc_filter%num_lakep, proc_filter%lakep,                &
+            proc_filter%num_lakesnowc, proc_filter%lakesnowc,        &
+            proc_filter%num_lakenosnowc, proc_filter%lakenosnowc,    &
+            atm2lnd_vars, soilstate_vars,  &
+            aerosol_vars, lakestate_vars)
             call cpu_time(stopt) 
-            write(iulog,*) iam, "TIMING LakeHydrology :: ",(stopt-startt)*1.E+3,"ms" 
 
-               !  Calculate column-integrated aerosol masses, and
-               !  mass concentrations for radiative calculations and output
-               !  (based on new snow level state, after SnowFilter is rebuilt.
-               !  NEEDS TO BE AFTER SnowFiler is rebuilt, otherwise there
-               !  can be zero snow layers but an active column in filter)
+            !  Calculate column-integrated aerosol masses, and
+            !  mass concentrations for radiative calculations and output
+            !  (based on new snow level state, after SnowFilter is rebuilt.
+            !  NEEDS TO BE AFTER SnowFiler is rebuilt, otherwise there
+            !  can be zero snow layers but an active column in filter)
             call cpu_time(startt)
-            !$acc parallel loop independent gang vector private(nc,bounds_clump)
-            do nc = 1,nclumps
-               call get_clump_bounds_gpu(nc, bounds_clump)
-               call AerosolMasses(bounds_clump,                                       &
-               num_on=filter(nc)%num_lakesnowc, filter_on=filter(nc)%lakesnowc,       &
-               num_off=filter(nc)%num_lakenosnowc, filter_off=filter(nc)%lakenosnowc, &
-               aerosol_vars=aerosol_vars)
-            end do 
+            call AerosolMasses(bounds_proc,                                       &
+            num_on=proc_filter%num_lakesnowc, filter_on=proc_filter%lakesnowc,       &
+            num_off=proc_filter%num_lakenosnowc, filter_off=proc_filter%lakenosnowc, &
+            aerosol_vars=aerosol_vars)
             call cpu_time(stopt) 
             write(iulog,*) iam, "TIMING AerosolMasses :: ",(stopt-startt)*1.E+3,"ms" 
 
+            call shr_sys_flush(iulog) 
             call cpu_time(startt) 
-            !$acc parallel loop independent gang vector private(nc,bounds_clump)
-            do nc = 1,nclumps
-               call get_clump_bounds_gpu(nc, bounds_clump)
-               ! Must be done here because must use a snow filter for lake columns
-               call SnowAge_grain(bounds_clump,                &
-               filter(nc)%num_lakesnowc, filter(nc)%lakesnowc, &
-               filter(nc)%num_lakenosnowc, filter(nc)%lakenosnowc )
+            ! Must be done here because must use a snow filter for lake columns
+            call SnowAge_grain(bounds_proc,                &
+            proc_filter%num_lakesnowc, proc_filter%lakesnowc, &
+            proc_filter%num_lakenosnowc, proc_filter%lakenosnowc )
                
-               !call t_stopf('hylake')
-            end do
             call cpu_time(stopt)
             call cpu_time(outer_stop)
             write(iulog,*) iam, "TIMING SnowAgeGrain :: ",(stopt-startt)*1.E+3,"ms" 
 
             write(iulog,*) iam, "TIMING Hydro-Aerosol :: ",(outer_stop-outer_start)*1.E+3,"ms" 
-            #if _CUDA 
-            istat = cudaMemGetInfo(free2, total)
-            write(iulog,*) iam,"Free after Hydro-Aerosol :", free2/1.E9
-            #endif
+            call shr_sys_flush(iulog) 
 
             ! ============================================================================
             ! ! Fraction of soil covered by snow (Z.-L. Yang U. Texas)
@@ -1529,52 +1459,41 @@ module elm_driver
             end do
             call cpu_time(stopt) 
             write(iulog,*) iam,"TIMING frac_sno :: ",(stopt-startt)*1.E+3,"ms" 
-            #if _CUDA 
-            istat = cudaMemGetInfo(free2, total)
-            write(iulog,*) iam,"Free after frac_sno :", free2/1.E9
-            #endif
+            call shr_sys_flush(iulog) 
 
 
             call cpu_time(startt) 
-            !$acc parallel loop independent gang vector private(nc,bounds_clump)
-            do nc = 1,nclumps
-               call get_clump_bounds_gpu(nc, bounds_clump)
-               ! ============================================================================
-               ! Snow aging routine based on Flanner and Zender (2006), Linking snowpack
-               ! microphysics and albedo evolution, JGR, and Brun (1989), Investigation of
-               ! wet-snow metamorphism in respect of liquid-water content, Ann. Glaciol.
-               ! ============================================================================
-               ! Note the snow filters here do not include lakes
-               ! TODO: move this up
-               !call t_startf('snow_init')
-               call SnowAge_grain(bounds_clump,                 &
-               filter(nc)%num_snowc, filter(nc)%snowc,     &
-               filter(nc)%num_nosnowc, filter(nc)%nosnowc )
-               !call t_stopf('snow_init')
-               !
-               ! ============================================================================
-               ! Update sediment fluxes from land unit
-               ! ============================================================================
-               !if (use_erosion) then
-               !   !call t_startf('erosion')
-               !   call SoilErosion(bounds_clump, filter(nc)%num_soilc, filter(nc)%soilc, &
-               !        atm2lnd_vars, canopystate_vars, soilstate_vars,  sedflux_vars)
-               !   !call t_stopf('erosion')
-               !end if
-               ! ============================================================================
-               ! Ecosystem dynamics: Uses CN, or static parameterizations
-               ! ============================================================================
-               !call t_startf('ecosysdyn')
-               ! if (use_cn)then
-               !!call crop_vars%CropIncrementYear(filter(nc)%num_pcropp, filter(nc)%pcropp)
-               ! endif
-            end do
+            ! ============================================================================
+            ! Snow aging routine based on Flanner and Zender (2006), Linking snowpack
+            ! microphysics and albedo evolution, JGR, and Brun (1989), Investigation of
+            ! wet-snow metamorphism in respect of liquid-water content, Ann. Glaciol.
+            ! ============================================================================
+            ! Note the snow filters here do not include lakes
+            ! TODO: move this up
+            !call t_startf('snow_init')
+            call SnowAge_grain(bounds_proc,                 &
+            proc_filter%num_snowc, proc_filter%snowc,     &
+            proc_filter%num_nosnowc, proc_filter%nosnowc )
+            !call t_stopf('snow_init')
+            ! ============================================================================
+            ! Update sediment fluxes from land unit
+            ! ============================================================================
+            if (use_erosion) then
+               !call t_startf('erosion')
+               call SoilErosion(bounds_clump, filter(nc)%num_soilc, filter(nc)%soilc, &
+                    atm2lnd_vars, canopystate_vars, soilstate_vars,  sedflux_vars)
+               !call t_stopf('erosion')
+            end if
+            ! ============================================================================
+            ! Ecosystem dynamics: Uses CN, or static parameterizations
+            ! ============================================================================
+            call t_startf('ecosysdyn')
+            !if (use_cn)then
+            !    call crop_vars%CropIncrementYear(filter(nc)%num_pcropp, filter(nc)%pcropp)
+            !endif
             call cpu_time(stopt) 
             write(iulog,*) iam,"TIMING SnowAge_grain :: ",(stopt-startt)*1.E+3,"ms" 
-            #if _CUDA 
-            istat = cudaMemGetInfo(free2, total)
-            write(iulog,*) iam,"Free after SnowAge_grain :", free2/1.E9
-            #endif
+            call shr_sys_flush(iulog) 
             
             ! fully prognostic canopy structure and C-N biogeochemistry
             ! - crop model:  crop algorithms called from within CNEcosystemDyn
@@ -1592,7 +1511,7 @@ module elm_driver
             call col_pf_SetValues_acc(col_pf,proc_filter%num_soilc, proc_filter%soilc)
             call cpu_time(stopt) 
             write(iulog,*) iam, "TIMING Set Values COLUMNS only ", (stopt-startt)*1.E+3,"ms"
-            
+            call shr_sys_flush(iulog) 
 
             call cpu_time(startt) 
             !$acc parallel loop independent gang vector default(present) private(p) async(1)
@@ -1615,6 +1534,7 @@ module elm_driver
             !$acc wait
             call cpu_time(stopt)
             write(iulog,*) iam, "TIMING Veg SetValues ",(stopt-startt)*1.E+3,"ms"
+            call shr_sys_flush(iulog) 
             
             call cpu_time(startt)
             call NitrogenDeposition(proc_filter%num_soilc, proc_filter%soilc, &
@@ -1678,6 +1598,7 @@ module elm_driver
             call cpu_time(stopt)
             
             write(iulog,*) iam, "TIMING MR/P-Deposition: ",(stopt-startt)*1.E+3, "ms"
+            call shr_sys_flush(iulog) 
             !-------------------------------------------------------------------------------------------------
             ! plfotran: 'decomp_rate_constants' must be calculated before entering "clm_interface"
             call cpu_time(startt)
@@ -1686,16 +1607,18 @@ module elm_driver
             canopystate_vars, soilstate_vars,  ch4_vars, cnstate_vars)
             call cpu_time(stopt)
             write(iulog,*) iam, "TIMING Decomp Rate:",(stopt-startt)*1.E+3,"ms"
+            call shr_sys_flush(iulog) 
             !-------------------------------------------------------------------------------------------------
             ! 'decomp_vertprofiles' (calc nfixation_prof) is moved from SoilLittDecompAlloc:
             ! ------------------------------------------------------------------------------------------------
             call cpu_time(startt)
-            call decomp_vertprofiles_gpu(bounds_proc,      &
+            call decomp_vertprofiles(bounds_proc,      &
             proc_filter%num_soilc, proc_filter%soilc, &
             proc_filter%num_soilp, proc_filter%soilp, &
             soilstate_vars, canopystate_vars, cnstate_vars)
             call cpu_time(stopt)
             write(iulog,*) iam, "TIMING Decomp vert_profiles",(stopt-startt)*1.E+3,"ms"
+            call shr_sys_flush(iulog) 
             
             !-------------------------------------------------------------------------------------------------
             ! Allocation1 is always called (w/ or w/o use_elm_interface)
@@ -1722,6 +1645,7 @@ module elm_driver
             call cpu_time(stopt)
             write(iulog,*) iam, "TIMING SoilLittDecompAlloc:",(stopt-startt)*1.E+3,"ms"
             
+            call shr_sys_flush(iulog) 
             !----------------------------------------------------------------
             ! SoilLittDecompAlloc2 is called by both elm-bgc & pflotran
             ! pflotran: call 'SoilLittDecompAlloc2' to calculate some diagnostic variables and 'fpg' for plant N uptake
@@ -1734,6 +1658,7 @@ module elm_driver
             call cpu_time(stopt)
             write(iulog,*) iam, "TIMING SoilLittDecompAlloc2:",(stopt-startt)*1.E+3,"ms"
             
+            call shr_sys_flush(iulog) 
             !--------------------------------------------
             ! Phenology
             !--------------------------------------------
@@ -1758,10 +1683,11 @@ module elm_driver
                call GrowthResp(p)
             end do
             call veg_cf_summary_rr(veg_cf, proc_filter%num_soilp, proc_filter%soilp, &
-            proc_filter%num_soilc, proc_filter%soilc, col_cf)
+                                   proc_filter%num_soilc, proc_filter%soilc, col_cf)
             call cpu_time(stopt)
             write(iulog,*) iam, "TIMING: GrowthResp,RR ",(stopt-startt)*1.E+3, "ms"
             
+            call shr_sys_flush(iulog) 
             call cpu_time(startt)
             
             !$acc parallel loop independent gang vector private(p)
@@ -1778,9 +1704,10 @@ module elm_driver
             call cpu_time(stopt) 
             write(iulog,*) "Update0 :",(stopt-startt)*1.E+3,"ms" 
             call cpu_time(startt) 
-            ! call CNLitterToColumn(proc_filter%num_soilp, proc_filter%soilp, cnstate_vars )
+            call CNLitterToColumn(proc_filter%num_soilc, proc_filter%soilc, cnstate_vars )
             call cpu_time(stopt) 
             write(iulog,*) "LtoC :",(stopt-startt)*1.E+3,"ms" 
+            call shr_sys_flush(iulog) 
             
             call cpu_time(startt) 
             call CarbonStateUpdate_Phase1_col(proc_filter%num_soilc, proc_filter%soilc, col_cs, col_cf, dtime_mod)
@@ -1788,6 +1715,7 @@ module elm_driver
             call PhosphorusStateUpdate_Phase1_col(proc_filter%num_soilc, proc_filter%soilc, cnstate_vars, dtime_mod)
             call cpu_time(stopt) 
             write(iulog,*) "Phase1_col", (stopt-startt)*1.E+3, "ms" 
+            call shr_sys_flush(iulog) 
             
             if(.not. use_fates) then 
                call cpu_time(startt) 
@@ -1800,8 +1728,8 @@ module elm_driver
                end do 
                call cpu_time(stopt)
                write(iulog,*)"StateUpdate_pft: ",(stopt-startt)*1.E+3,"ms"
+            call shr_sys_flush(iulog) 
             end if 
-            
             call cpu_time(startt)
             call SoilLittVertTransp( proc_filter%num_soilc, proc_filter%soilc, &
             canopystate_vars, cnstate_vars )
@@ -1815,6 +1743,7 @@ module elm_driver
             cnstate_vars )
             call cpu_time(stopt)
             write(iulog,*) iam, "TIMING GapMortality: ",(stopt-startt)*1.E+3, "ms"
+            call shr_sys_flush(iulog) 
             !--------------------------------------------
             ! Update2
             !--------------------------------------------
@@ -1823,6 +1752,7 @@ module elm_driver
             proc_filter%num_soilp, proc_filter%soilp, &
             col_cs, veg_cs, col_cf, veg_cf)
             
+            call shr_sys_flush(iulog) 
             call NitrogenStateUpdate2(proc_filter%num_soilc, proc_filter%soilc, &
             proc_filter%num_soilp, proc_filter%soilp )
             
@@ -1858,10 +1788,7 @@ module elm_driver
             write(iulog,*) iam, "TIMING FireMod :: ", (stopt-startt)*1.E+3,"ms"
 
             write(iulog,*) iam, "TIMING EcosystemDynNoLeaching :: ", (eco_stopt-eco_startt)*1.E+3,"ms"
-            #if _CUDA 
-            istat = cudaMemGetInfo(free2, total)
-            write(iulog,*) iam,"Free after EcosystemDynNoLeaching :", free2/1.E9
-            #endif
+            call shr_sys_flush(iulog) 
 
             !===========================================================================================
             ! elm_interface: 'EcosystemDynNoLeaching' is divided into 2 subroutines (1 & 2): END
@@ -1887,25 +1814,18 @@ module elm_driver
             end do
             call cpu_time(stopt) 
             write(iulog,*) iam, "TIMING AnnualUpdate: ", (stopt-startt)*1.E+3,"ms"
-            #if _CUDA 
-            istat = cudaMemGetInfo(free2, total)
-            write(iulog,*) iam,"Free after AnnualUpdate :", free2/1.E9
-            #endif
             
             if (use_lch4 .and. .not. is_active_betr_bgc) then
                !warning: do not call ch4 before AnnualUpdate, which will fail the ch4 model
-               !call t_startf('ch4')
-               !! !$acc parallel loop independent gang private(nc,bounds_clump)
-               ! do nc = 1,nclumps
-               !   call get_clump_bounds_gpu(nc, bounds_clump)
-               !   call CH4 (bounds_clump,                                                                &
-               !      filter(nc)%num_soilc, filter(nc)%soilc,                                             &
-               !      filter(nc)%num_lakec, filter(nc)%lakec,                                             &
-               !      filter(nc)%num_soilp, filter(nc)%soilp,                                             &
-               !      atm2lnd_vars, lakestate_vars, canopystate_vars, soilstate_vars, soilhydrology_vars, &
-               !      energyflux_vars, ch4_vars, lnd2atm_vars)
-               ! end do
-               !call t_stopf('ch4')
+               call t_startf('ch4')
+               call CH4 (bounds_proc,                        &
+                  proc_filter%num_soilc, proc_filter%soilc,  &
+                  proc_filter%num_lakec, proc_filter%lakec,  &
+                  proc_filter%num_soilp, proc_filter%soilp,  &
+                  lakestate_vars, canopystate_vars, &
+                  soilstate_vars, soilhydrology_vars, &
+                  energyflux_vars, ch4_vars, lnd2atm_vars)
+               call t_stopf('ch4')
             end if
 
             call cpu_time(startt) 
@@ -1938,28 +1858,21 @@ module elm_driver
                atm2lnd_vars, glc2lnd_vars,      &
                soilhydrology_vars, soilstate_vars)
                !call t_stopf('hydro2 drainage')
-               
-            end do
-            !$acc end parallel 
+            end do 
+            !$acc end parallel  
             call cpu_time(stopt)
             write(iulog,*) iam,"TIMING Depvel/HydroDrainage :: ",(stopt-startt)*1.E+3,"ms"
-            #if _CUDA 
-            istat = cudaMemGetInfo(free2, total)
-            write(iulog,*) iam,"Free after DepVel/HydroDrainage :", free2/1.E9
-            #endif
+            
             if (use_cn .or. use_fates) then
                call cpu_time(startt)
-               call EcosystemDynLeaching(nclumps,filter,                &
+               call EcosystemDynLeaching(               &
                   proc_filter%num_soilc, proc_filter%soilc,             &
                   proc_filter%num_soilp, proc_filter%soilp,             &
                   cnstate_vars )
                call cpu_time(stopt)
                write(iulog,*) iam,"TIMING EcosystemDynLeaching :: ",(stopt-startt)*1.E+3,"ms"
-               #if _CUDA 
-               istat = cudaMemGetInfo(free2, total)
-               write(iulog,*) iam,"Free after EcosystemDynLeaching :", free2/1.E9
-               #endif
             end if
+            call shr_sys_flush(iulog) 
             ! ============================================================================
             ! Update Vegetation
             ! ============================================================================
@@ -2039,16 +1952,12 @@ module elm_driver
             !$acc end parallel
             call cpu_time(stopt)
             write(iulog,*) iam,"TIMING VegStruct/BalanceCheck :: ",(stopt-startt)*1.E+3,"ms" 
-            #if _CUDA 
-               istat = cudaMemGetInfo(free2, total)
-               write(iulog,*) iam,"Free after VegStruct/BalanceCheck :", free2/1.E9
-               #endif
             ! ============================================================================
             ! Determine albedos for next time step
             ! ============================================================================
             
-            if (doalb) then
-               !! !$acc parallel loop independent gang private(nc,bounds_clump)
+            if (.false.) then !doalb) then
+               !$acc parallel loop independent gang private(nc,bounds_clump)
                do nc = 1,nclumps
                   call get_clump_bounds_gpu(nc, bounds_clump)
                   ! Albedos for  non-urban columns
@@ -2098,18 +2007,14 @@ module elm_driver
             
             call t_startf('lnd2atm')
             call cpu_time(startt) 
-            !$acc parallel loop independent gang vector default(present) private(bounds_clump) 
-            do nc =1, nclumps 
-               call get_clump_bounds_gpu(nc, bounds_clump)
-
-               call lnd2atm(bounds_clump,       &
-                  atm2lnd_vars, surfalb_vars, frictionvel_vars,    &
-                  energyflux_vars, solarabs_vars, drydepvel_vars,  &
-                  dust_vars, ch4_vars, soilhydrology_vars, lnd2atm_vars)
-            end do 
+            call lnd2atm(bounds_proc,       &
+               atm2lnd_vars, surfalb_vars, frictionvel_vars,    &
+               energyflux_vars, solarabs_vars, drydepvel_vars,  &
+               dust_vars, ch4_vars, soilhydrology_vars, lnd2atm_vars)
             call cpu_time(stopt) 
             write(iulog,*) iam, "TIMING lnd2atm :: ", (stopt-startt)*1.E+3,"ms"
             call t_stopf('lnd2atm')
+            call shr_sys_flush(iulog) 
             
             ! ============================================================================
             ! Determine gridcell averaged properties to send to glc
@@ -2142,7 +2047,7 @@ module elm_driver
             
             ! FIX(SPM,032414) double check why this isn't called for ED
             
-            if (nstep > 0) then
+            if (nstep_mod > 0) then
                
                call t_startf('accum')
                
@@ -2170,93 +2075,30 @@ module elm_driver
             ! Update history buffer
             ! ============================================================================
             
+            ! Determine if end of history interval
+            transfer_tapes = .false.
+            do t = 1, ntapes 
+               if (tape(t)%nhtfrq==0) then   !monthly average
+                  if (mon_curr /= mon_prev) then 
+                     tape(t)%is_endhist = .true.
+                     transfer_tapes = .true. 
+                  end if 
+               else
+                  write(iulog,*) "nhtfrq: ", tape(t)%nhtfrq 
+                  if (mod(nstep_mod,tape(t)%nhtfrq) == 0 .and. nstep_mod .ne. 0) then
+                     tape(t)%is_endhist = .true.
+                     transfer_tapes = .true.
+                  end if 
+               end if
+            end do 
+            print *, "Update History Buffer!" 
             call t_startf('hbuf')
             call cpu_time(startt) 
-            call hist_update_hbuf_gpu(nstep_mod,24, nclumps)
+            !call hist_update_hbuf_gpu(nstep_mod,transfer_tapes, nclumps)
             call cpu_time(stopt) 
             call t_stopf('hbuf')
             write(iulog,*) iam, "TIMING hist_update_hbuf :: ",(stopt-startt)*1.E+3,"ms"
             
-            if(nstep_mod == 1) then
-               !$acc exit data copyout(&
-               !$acc aerosol_vars     , &
-               !$acc AllocParamsInst  , &
-               !$acc atm2lnd_vars     , &
-               !$acc canopystate_vars, &
-               !$acc CH4ParamsInst     , &
-               !$acc ch4_vars          , &
-               !$acc CNDecompParamsInst     , &
-               !$acc CNGapMortParamsInst     , &
-               !$acc CNNDynamicsParamsInst     , &
-               !$acc cnstate_vars      , &
-               !$acc col_cf     , &
-               !$acc col_cs     , &
-               !$acc col_ef     , &
-               !$acc col_es     , &
-               !$acc col_nf     , &
-               !$acc col_ns     , &
-               !$acc col_pf     , &
-               !$acc col_pp     , &
-               !$acc col_ps     , &
-               !$acc col_wf     , &
-               !$acc col_ws     , &
-               !$acc crop_vars  , &
-               !$acc DecompBGCParamsInst     , &
-               !$acc DecompCNParamsInst     , &
-               !$acc decomp_cascade_con     , &
-               !$acc drydepvel_vars     , &
-               !$acc dust_vars     , &
-               !$acc energyflux_vars     , &
-               !$acc frictionvel_vars     , &
-               !$acc glc2lnd_vars  , &
-               !$acc grc_cf     , &
-               !$acc grc_cs     , &
-               !$acc grc_ef     , &
-               !$acc grc_es     , &
-               !$acc grc_nf     , &
-               !$acc grc_ns     , &
-               !$acc grc_pf     , &
-               !$acc grc_pp     , &
-               !$acc grc_ps     , &
-               !$acc grc_wf     , &
-               !$acc grc_ws     , &
-               !$acc lakestate_vars , &
-               !$acc ldomain_gpu  ,&
-               !$acc lnd2glc_vars   , &
-               !$acc lnd2atm_vars   , &
-               !$acc lun_ef     , &
-               !$acc lun_es     , &
-               !$acc lun_pp     , &
-               !$acc lun_ws     , &
-               !$acc NitrifDenitrifParamsInst     , &
-               !$acc ParamsShareInst     , &
-               !$acc params_inst     , &
-               !$acc photosyns_vars     , &
-               !$acc sedflux_vars     , &
-               !$acc soilhydrology_vars     , &
-               !$acc soilstate_vars     , &
-               !$acc solarabs_vars     , &
-               !$acc surfalb_vars     , &
-               !$acc surfrad_vars     , &
-               !$acc top_af     , &
-               !$acc top_as     , &
-               !$acc top_pp     , &
-               !$acc urbanparams_vars , &
-               !$acc veg_cf     , &
-               !$acc veg_cs     , &
-               !$acc veg_ef     , &
-               !$acc veg_es     , &
-               !$acc veg_nf     , &
-               !$acc veg_ns     , &
-               !$acc veg_pf     , &
-               !$acc veg_pp     , &
-               !$acc veg_ps     , &
-               !$acc veg_vp     , &
-               !$acc veg_wf     , &
-               !$acc veg_ws      &
-               !$acc   )
-            end if
-            ! call endrun("Force Ending" ) 
             ! ============================================================================
             ! Compute water budget
             ! ============================================================================
@@ -2577,9 +2419,9 @@ module elm_driver
                      ! overwritten in LakeHydrologyMod, both on the patch and the column
                      ! level.
                      
-                     ! call p2c (bounds, num_allc, filter_allc, &
-                     !      veg_wf%qflx_snwcp_ice(bounds%begp:bounds%endp), &
-                     !      col_wf%qflx_snwcp_ice(bounds%begc:bounds%endc))
+                     call p2c (bounds, num_allc, filter_allc, &
+                          veg_wf%qflx_snwcp_ice(bounds%begp:bounds%endp), &
+                          col_wf%qflx_snwcp_ice(bounds%begc:bounds%endc))
                   end if
                   #ENDIF
                   call p2c (bounds, num_allc, filter_allc, &
@@ -2718,9 +2560,9 @@ module elm_driver
                   !$acc parallel loop independent gang vector default(present) 
                   do p = bounds%begp,bounds%endp
                      !C
-                     veg_cs%dispvegc(p)   = 0._r8
-                     veg_cs%storvegc(p)   = 0._r8
-                     veg_cs%totpftc(p)    = 0._r8
+                     veg_cs%dispvegc(p) = 0._r8
+                     veg_cs%storvegc(p) = 0._r8
+                     veg_cs%totpftc(p)  = 0._r8
                      !N
                      veg_ns%dispvegn(p) = 0._r8
                      veg_ns%storvegn(p) = 0._r8

@@ -238,22 +238,21 @@ module PhosphorusStateUpdate1Mod
          
    end subroutine PhosphorusStateUpdate_Phase1_col
       
-      subroutine PhosphorusStateUpdate_Phase1_pft(p, dt)
-         !$acc routine seq 
+      subroutine PhosphorusStateUpdate_Phase1_pft(num_soilp, filter_soilp, dt)
          implicit none 
-         !integer  , intent(in)    :: num_soilp       ! number of soil patches in filter
-         !integer  , intent(in)    :: filter_soilp(:) ! filter for soil patches
-         integer, intent(in), value :: p 
+         integer  , intent(in)    :: num_soilp       ! number of soil patches in filter
+         integer  , intent(in)    :: filter_soilp(:) ! filter for soil patches
          real(r8) , intent(in)    :: dt 
-
-         associate(                                        &
+         !
+         integer :: fp ,p 
+         associate(    &
             ivt                   => veg_pp%itype        , & ! Input:  [integer  (:)     ]  pft vegetation type
             woody                 => veg_vp%woody          & ! Input:  [real(r8) (:)     ]  binary flag for woody lifeform (1=woody, 0=not woody)
-         )
+            )
             ! patch loop (veg)
-            !!!$acc parallel loop independent gang vector default(present) private(p) 
-            !do fp = 1,num_soilp
-            !   p = filter_soilp(fp)
+            !$acc parallel loop independent gang vector default(present) private(p) 
+            do fp = 1,num_soilp
+               p = filter_soilp(fp)
                
                ! phenology: transfer growth fluxes
                veg_ps%leafp(p)       = veg_ps%leafp(p)       + veg_pf%leafp_xfer_to_leafp(p)*dt
@@ -383,7 +382,7 @@ module PhosphorusStateUpdate1Mod
                   veg_ps%grainp_xfer(p)        = veg_ps%grainp_xfer(p)       + veg_pf%grainp_storage_to_xfer(p)*dt
                end if
                
-            !end do ! num_soilp
+            end do ! num_soilp
 
          end associate
 
