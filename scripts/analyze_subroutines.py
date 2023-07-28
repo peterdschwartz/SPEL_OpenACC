@@ -3,7 +3,8 @@ import re
 import sys
 import os.path
 from process_associate import getAssociateClauseVars
-from mod_config import elm_files,home_dir,_bc
+from mod_config import home_dir,_bc
+import mod_config 
 from LoopConstructs import Loop, exportVariableDependency
 from utilityFunctions import adjust_array_access_and_allocation, find_file_for_subroutine,getLocalVariables
 
@@ -74,7 +75,7 @@ def add_acc_routine_info(sub):
     """
     filename = sub.filepath
 
-    file = open(elm_files+filename,'r')
+    file = open(mod_config.elm_files+filename,'r')
     lines = file.readlines() # read entire file
     file.close()
 
@@ -98,7 +99,7 @@ def add_acc_routine_info(sub):
     print(f'first_use = {first_use}')
     lines.insert(first_use,'      !$acc routine seq \n')
     print(f"Added !$acc to {sub.name} in {filename}")
-    with open(elm_files+filename,'w') as ofile:
+    with open(mod_config.elm_files+filename,'w') as ofile:
         ofile.writelines(lines)
 
 class Subroutine(object):
@@ -107,7 +108,10 @@ class Subroutine(object):
         
         # find subroutine
         if(not ignore_interface):
-            file, start, end = find_file_for_subroutine(name)
+            if(file):
+                file, start, end = find_file_for_subroutine(name=name,fn=file)
+            else:
+                file, start, end = find_file_for_subroutine(name=name) 
 
         self.filepath = file
         self.startline = start
@@ -124,7 +128,6 @@ class Subroutine(object):
         
         self.calltree = list(calltree)
         self.calltree.append(name)
-        print(f"CallTree for {self.name} is {self.calltree}")
         self.associate_vars = {}
 
         # Get associate vars 
@@ -148,6 +151,7 @@ class Subroutine(object):
         self.LocalVariables['arrays'] = {}; self.LocalVariables['scalars'] = []
         self.VariablesPassedToSubs = {} # {'var' : [Subroutine, 'keyword', Variable?]} maybe extend Variable class to an Argument class?
         self.status = False
+        self.class_var = ''
 
     def printSubroutineInfo(self,long=False):
         from mod_config import _bc
@@ -183,7 +187,7 @@ class Subroutine(object):
         """
         from utilityFunctions import getArguments
 
-        ifile = open(elm_files+self.filepath,'r')
+        ifile = open(mod_config.elm_files+self.filepath,'r')
         lines = ifile.readlines()
         ifile.close() 
         ln = self.startline-1 
@@ -210,7 +214,7 @@ class Subroutine(object):
         const_mods = ['elm_varcon','elm_varpar',
                       'landunit_varcon','column_varcon','pftvarcon',
                       'elm_varctl']
-        file = open(elm_files+self.filepath,'r')
+        file = open(mod_config.elm_files+self.filepath,'r')
         lines = file.readlines()
         print(f"opened file {self.filepath}")
         ct = 0
@@ -245,11 +249,11 @@ class Subroutine(object):
 
         self._check_acc_status()
         m_skip = regex_skip_string.search(self.name)
-        if(not self.acc_status and not m_skip):
-            print(f"Must Add Acc Routine Directive to {self.name}")
-            add_acc_routine_info(self)
+        #if(not self.acc_status and not m_skip):
+        #    print(f"Must Add Acc Routine Directive to {self.name}")
+        #    add_acc_routine_info(self)
              
-        file = open(elm_files+self.filepath,'r')
+        file = open(mod_config.elm_files+self.filepath,'r')
         lines = file.readlines()
         file.close()
 
@@ -265,7 +269,7 @@ class Subroutine(object):
                 method = False
                 x = line.strip().replace('(',' ').replace(')',' ').split()
                 child_sub_name = ''
-                ignore = bool(x[1].lower() in ['cpu_time','get_curr_date'] or 'update_vars' in x[1].lower())
+                ignore = bool(x[1].lower() in ['cpu_time','get_curr_date','t_start_lnd','t_stop_lnd','endrun'] or 'update_vars' in x[1].lower() or "_oacc" in x[1].lower())
                 if(not ignore):
                     child_sub_name = x[1]
                     if(child_sub_name.lower() in interface_list):
@@ -275,6 +279,7 @@ class Subroutine(object):
                             ct += 1
                             l = l[:-1] + lines[ct].strip('\n').strip()
                         l = l.strip()
+                        print(f"preprocess file:", l)
                         args = getArguments(l)
 
                         child_sub_name, childsub = resolve_interface(self,child_sub_name,args,varlist,verbose=True)
@@ -299,7 +304,7 @@ class Subroutine(object):
             ct+=1
 
         if(rewrite):
-            with open(elm_files+self.filepath,'w') as ofile:
+            with open(mod_config.elm_files+self.filepath,'w') as ofile:
                 ofile.writelines(lines)
 
         # cover case where no derived types but still has child
@@ -314,7 +319,7 @@ class Subroutine(object):
         checks if subroutine already has !$acc directives
         """
         filename = self.filepath
-        file = open(elm_files+filename,'r')
+        file = open(mod_config.elm_files+filename,'r')
         lines = file.readlines() # read entire file
         for ct in range(self.startline, self.endline):
             line = lines[ct]
@@ -334,7 +339,7 @@ class Subroutine(object):
         results of unit-testing.
         """
         #dictionary to be returned
-        file = open(elm_files+self.filepath,'r')
+        file = open(mod_config.elm_files+self.filepath,'r')
         lines = file.readlines()
         file.close()
 
@@ -422,6 +427,7 @@ class Subroutine(object):
         currently varlist holds all derived types known to be used in ELM.
         """
         from utilityFunctions import get_interface_list # just make this a global variable? 
+        from utilityFunctions import determine_class_instance 
 
         ignoreList = ['this','self','colpf','colnf','colps','colcf','colns',
                       'vegcf','vegcs','vegps','vegpf','vegns','vegnf','bounds',
@@ -430,7 +436,7 @@ class Subroutine(object):
 
         interface_list = get_interface_list()
 
-        self.printSubroutineInfo()
+        # self.printSubroutineInfo()
 
         # preprocess file so to get child subroutines
         associate_end = self._preprocess_file(elmvar,interface_list,verbose=verbose)
@@ -451,8 +457,8 @@ class Subroutine(object):
         else:
             ct = associate_end
 
-        fname = elm_files+self.filepath
-        file = open(elm_files+self.filepath,'r')
+        fname = mod_config.elm_files+self.filepath
+        file = open(mod_config.elm_files+self.filepath,'r')
         lines = file.readlines()
         file.close()
         class_routine = False
@@ -478,8 +484,9 @@ class Subroutine(object):
                     typename = dtype.split('%')[0]
                     if(typename.lower() in ['this'] and not class_routine ):
                         if(verbose): print(f"Inside 'class' routine {self.name}")
-                        class_routine = True
-                        class_routine_info["bool"] = True
+                        
+                        determine_class_instance(self)
+                        sys.exit() 
                         #
                         var_type, varname = getLocalVariables(self,class_var=True)
                         err = True
@@ -502,7 +509,9 @@ class Subroutine(object):
         dtype_var_list = list(set(dtype_var_list))
         self.elmtypes  = list(set(temp_dtype_names))
 
-        if(verbose): print(f"analyzing associate list variables for sub {self.name}")
+        if(verbose): 
+            print(f"analyzing associate list variables for sub {self.name}")
+            print(associated_list)
         vardict_associate = self._analyze_variables(associate_end,associated_list, class_routine_info)
 
         # Need to match read/write status of associate pointer to the derived type:
@@ -530,7 +539,6 @@ class Subroutine(object):
                 if('w' in values): self.elmtype_w.setdefault(varname,[]).append(component)
 
 
-        print(f"analyzing other list variables for sub {self.name}")
         vardict_dtypes = self._analyze_variables(associate_end, dtype_var_list,class_routine_info)
         for key, values in vardict_dtypes.items():
             varname   = key.split('%')[0]
@@ -566,7 +574,8 @@ class Subroutine(object):
             self.child_Subroutine[child_sub.name].parse_subroutine(elmvar)
 
             if(sub.child_subroutine_list):
-                sub.child_subroutines_analysis(elmvar)
+                if("_oacc" not in sub.name): 
+                    sub.child_subroutines_analysis(elmvar)
 
             #add needed elmtypes to parent subroutine
             self.elmtypes.extend(sub.elmtypes)
@@ -597,7 +606,7 @@ class Subroutine(object):
             el = tree[i]
             tree_to_write = determine_level_in_tree(branch=el,tree_to_write=tree_to_write)
 
-        ofile = open(f"{self.name}CallTree.dat",'w')
+        ofile = open(f"script-output/{self.name}CallTree.dat",'w')
         for branch in tree_to_write:
             level=branch[1];sub = branch[0]
             print(level*"|---->"+sub)
@@ -679,7 +688,7 @@ class Subroutine(object):
         ofile.close()
     
     
-    def examineLoops(self,global_vars,varlist,add_acc=False,subcall=False,
+    def examineLoops(self,global_vars,varlist,main_sub_dict,add_acc=False,subcall=False,
                         verbose=False,adjust_allocation=False):
         """
         Function that will parse the loop structure of a subroutine
@@ -696,6 +705,9 @@ class Subroutine(object):
             associate_keys = self.associate_vars.keys()
             temp_global_vars = [key for key in associate_keys]
             global_vars = temp_global_vars[:]
+        else: 
+            if(self.name not in main_sub_dict): 
+                main_sub_dict[self.name] = self
         
         # Check if associated derived types need to be analyzed 
         convertAssociateDict(self.associate_vars,varlist)
@@ -707,11 +719,11 @@ class Subroutine(object):
             local_array_list = [v for v in self.LocalVariables['arrays']]
             print(f"local_array for {self.name} \n",local_array_list)
 
-        if(verbose): print(f"Opening file {elm_files+self.filepath} ")
-        ifile = open(elm_files+self.filepath,'r')
+        if(verbose): print(f"Opening file {mod_config.elm_files+self.filepath} ")
+        ifile = open(mod_config.elm_files+self.filepath,'r')
         lines = ifile.readlines() # read entire file
         ifile.close()
-
+        
         loop_start = 0 
         loop_end = 0
         regex_do = re.compile(r'\s*(do)\s+\w+\s*(?=[=])',re.IGNORECASE)
@@ -745,7 +757,8 @@ class Subroutine(object):
             if(m_call):
                 x = l.replace('(',' ').replace(')',' ').split()
                 child_sub_name = ''
-                if(x[1].lower() not in ['cpu_time','get_curr_date','endrun'] and 'update_vars' not in x[1].lower()):
+                ignore_subs = ['cpu_time','get_curr_date','endrun','banddiagonal']
+                if(x[1].lower() not in ignore_subs and 'update_vars' not in x[1].lower() and "_oacc" not in x[1].lower()):
                     child_sub_name = x[1]
 
                     args = getArguments(l)
@@ -794,7 +807,8 @@ class Subroutine(object):
                     if(verbose): 
                         print(f"Instantiated new Subroutine {child_sub_name}\n in file {file} L{startline}-{endline}")
                     
-                    childloops = childsub.examineLoops(global_vars=global_vars,varlist=varlist,subcall=True,
+                    childloops = childsub.examineLoops(global_vars=global_vars,varlist=varlist,
+                            main_sub_dict=main_sub_dict,subcall=True,
                             verbose=verbose,adjust_allocation=adjust_allocation,add_acc=False)
                     if(verbose): 
                         print(f"Adding {len(childloops)} loops from {childsub.name}")
@@ -811,8 +825,8 @@ class Subroutine(object):
                     if(verbose): print("New loop at line ",n+self.startline)
                     loop_start = n+self.startline
                     newloop = Loop(loop_start,index,self.filepath,self)
-                #Found an inner loop
                 else :
+                    #Found an inner loop
                     newloop.index.append(index)
                     loop_start = n+self.startline; newloop.nested += 1
                     newloop.start.append(loop_start)
@@ -857,27 +871,44 @@ class Subroutine(object):
         if(subcall):
             return self.DoLoops
         
-        if(add_acc): 
-            # Create dictionary to hold subroutines found so far 
-            # and their initial startlines to help adjust for line insertions later.
-            sub_dict = {}
+        # Create dictionary to hold subroutines found so far 
+        # and their initial startlines to help adjust for line insertions later.
+        sub_dict = {}
+        # dictionary of the loops to avoid adding OpenACC directives to the same 
+        # Loop more than once 
+        loop_dict = {} 
+        num_reduction_loops = 0 
+        ofile = open(f"loops-{self.name}.txt",'w')
+        for loop in self.DoLoops: 
+            loopkey = f"{loop.subcall.name}:L{loop.start[0]}"
+            if(loopkey not in loop_dict):
+                loop_dict[loopkey] = loop
+                if(loop.reduction):
+                    print(_bc.BOLD+_bc.WARNING+f"{loopkey} {loop.reduce_vars}"+ _bc.ENDC)
+                    ofile.write(f"{loopkey} {loop.reduce_vars}"+"\n")
+                    num_reduction_loops += 1 
+                else:
+                    print(loopkey)
+                    ofile.write(loopkey+'\n')
+            if(loop.subcall.name not in sub_dict):
+                file,startline,endline = find_file_for_subroutine(loop.subcall.name)
+                sub_dict[loop.subcall.name] = startline
+        loopids = [k for k in loop_dict.keys()]
+        print(_bc.OKGREEN+ f"{len(loopids)} | {num_reduction_loops} w/ Race Conditions"+_bc.ENDC)            
+        ofile.write( f"{len(loopids)} | {num_reduction_loops} w/ Race Conditions"+"\n")
 
-            # dictionary of the loops to avoid adding OpenACC directives to the same 
-            # Loop more than once 
-            loop_dict = {} 
-            for loop in self.DoLoops: 
-                loopkey = f"{loop.subcall.name}:L{loop.start[0]}"
-                if(loopkey not in loop_dict):
-                    loop_dict[loopkey] = loop
-                    loop.printLoop(long=False)
-                if(loop.subcall.name not in sub_dict):
-                    file,startline,endline = find_file_for_subroutine(loop.subcall.name)
-                    sub_dict[loop.subcall.name] = startline
-            
-            print("Final subroutine dictionary:",sub_dict)
+        ofile.close()
+        count = 0
+        for s in main_sub_dict.values(): 
+            arrs = s.LocalVariables['arrays']
+            for arr in arrs:
+                v = arrs[arr] 
+                if("num_" in v.declaration):
+                    count += 1 
+                    print(f"{count}  {s.name}::{v.name} -- {v.declaration}")
+        if(add_acc): 
             lines_adjusted = {}
             for key, loop in loop_dict.items(): 
-                loop.printLoop(long=False)
                 if(loop.subcall.name not in lines_adjusted):
                     # This keeps track of the number of line adjustments
                     # inside a given subroutine.  The start of the subroutine 
@@ -907,7 +938,7 @@ class Subroutine(object):
             if(v in global_vars or "filter" in v):
                 global_loop_vars.append(v)
         
-        exportVariableDependency(self.name,var_list,global_loop_vars,local_vars_only,self.DoLoops)
+        # exportVariableDependency(self.name,var_list,global_loop_vars,local_vars_only,self.DoLoops)
 
         return
 
@@ -921,7 +952,7 @@ class Subroutine(object):
         all_flat = [] 
         maxlen = 0
         #read variables
-        print("exportReadWriteVariables ===================") 
+        print("============= exportReadWriteVariables ===================") 
         print(self.elmtype_r)
         for varname, components in self.elmtype_r.items():
             for c in components:
@@ -1002,8 +1033,8 @@ class Subroutine(object):
             print(_bc.BOLD+_bc.WARNING+f"Opening file "+home_dir+"modified-files/"+self.filepath+_bc.ENDC)
             ifile = open(home_dir+"modified-files/"+self.filepath,'r')
         else:
-            print(_bc.BOLD+_bc.WARNING+f"Opening file {elm_files}{self.filepath}"+_bc.ENDC)
-            ifile = open(elm_files+self.filepath,'r')
+            print(_bc.BOLD+_bc.WARNING+f"Opening file {mod_config.elm_files}{self.filepath}"+_bc.ENDC)
+            ifile = open(mod_config.elm_files+self.filepath,'r')
         
         lines = ifile.readlines() 
 
@@ -1157,8 +1188,8 @@ class Subroutine(object):
 
             # Overwrite File:
             if("modified-files" in self.filepath):
-                print(_bc.BOLD+_bc.WARNING+f"Writing to file {elm_files}{self.filepath}"+_bc.ENDC)
-                ofile = open(elm_files+self.filepath,'w')
+                print(_bc.BOLD+_bc.WARNING+f"Writing to file {mod_config.elm_files}{self.filepath}"+_bc.ENDC)
+                ofile = open(mod_config.elm_files+self.filepath,'w')
             else:
                 print(_bc.BOLD+_bc.WARNING+f"Writing to file "+home_dir+"modified-files/"+self.filepath+_bc.ENDC)
                 ofile = open(home_dir+"modified-files/"+self.filepath,'w')

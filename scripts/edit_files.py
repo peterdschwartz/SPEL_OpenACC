@@ -144,12 +144,17 @@ def process_fates_or_betr(lines,mode):
 
     return lines
 
-def get_used_mods(ifile,mods,verbose):
+def get_used_mods(ifile,mods,verbose,singlefile):
     """
     checks to see what mods are needed to compile the file
     and then analyze them
     """
-    file = open(elm_files+ifile,'r')
+    if(singlefile): 
+        fn = ifile
+    else:
+        fn = elm_files+ifile 
+
+    file = open(fn,'r')
     lines = file.readlines()
     file.close()
 
@@ -163,7 +168,7 @@ def get_used_mods(ifile,mods,verbose):
             continue
         match_use = re.search(r'^(use)[\s]+',l)
         if(match_use):
-            l = l.replace(',',' ') #get rid of comma if no space
+            l = l.replace(',',' ') # get rid of comma if no space
             mod = l.split()[1]
             mod = mod.strip()
             #needed since FORTRAN is not case-sensitive!
@@ -196,11 +201,11 @@ def get_used_mods(ifile,mods,verbose):
     #Recursive call to the mods that need to be processed
     if(files_to_parse): 
         for f in files_to_parse:
-            mods = get_used_mods(ifile=f,mods=mods,verbose=verbose)
+            mods = get_used_mods(ifile=f,mods=mods,verbose=verbose,singlefile=singlefile)
     
     return mods
 
-def modify_file(lines,casename,fn,verbose=False,overwrite=False): 
+def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False): 
     """
     Function that modifies the source code of the file
     """
@@ -249,7 +254,7 @@ def modify_file(lines,casename,fn,verbose=False,overwrite=False):
             
             subname = l.split()[1].split('(')[0]
             interface_list = get_interface_list()
-            if(subname in interface_list): 
+            if(subname in interface_list or "_oacc" in subname): 
                 ct += 1 
                 continue 
             if(verbose): print(f"found subroutine {subname} at {ct+1}")
@@ -263,10 +268,9 @@ def modify_file(lines,casename,fn,verbose=False,overwrite=False):
             #
             # Instantiate Subroutine
             #   
-            # sub.startline = startline; sub.endline = endline;
             sub = Subroutine(subname,fn1,[''],start=startline,end=endline)
             x = getLocalVariables(sub,verbose=False)
-            # sub.printSubroutineInfo()
+            sub_list.append(sub)
 
             # rm_sub_string = '|'.join(remove_subs); rm_sub_string = f'({rm_sub_string})'
             # match_remove = re.search(f'[\s]+(call)[\s]+{rm_sub_string}',l.lower())
@@ -303,10 +307,10 @@ def modify_file(lines,casename,fn,verbose=False,overwrite=False):
     
     # added to try and avoid the compilation 
     # warnings concerning not declared procedures
-    if(subs_removed):
+    if(subs_removed and overwrite):
         lines = remove_reference_to_subroutine(lines=lines,subnames=subs_removed)
-
-def process_for_unit_test(fname,casename,mods=None,overwrite=False,verbose=False):
+    
+def process_for_unit_test(fname,casename,mods=None,overwrite=False,verbose=False,singlefile=False):
     """
     This function looks at the whole .F90 file.
     Comments out functions that are cumbersome
@@ -314,15 +318,17 @@ def process_for_unit_test(fname,casename,mods=None,overwrite=False,verbose=False
     Gets module dependencies of the module and
     process them recursively 
     """
-    
+    sub_list = []
     initial_mods = mods[:]
     # First, get complete list of modules to be processed 
     # and removed.
-    #add just processed file to list of mods:
+    # add just processed file to list of mods:
     lower_mods =  [m.lower() for m in mods]
+    print(f"fname = {fname}")
     if (fname.lower() not in lower_mods): mods.append(fname)
-    #find if this file has any not-processed mods
-    mods = get_used_mods(ifile=fname,mods=mods,verbose=verbose)
+    # find if this file has any not-processed mods
+    if(not singlefile):
+        mods = get_used_mods(ifile=fname,mods=mods,verbose=verbose,singlefile=singlefile)
 
     if(verbose):
         print("Total modules to edit are\n",mods)
@@ -330,18 +336,19 @@ def process_for_unit_test(fname,casename,mods=None,overwrite=False,verbose=False
         print("Modules to be removed list\n", bad_modules)
     
     for mod_file in mods:
-        if (mod_file in initial_mods): continue
+        if (mod_file in initial_mods): continue # Avoid preprocessing files over and over
         file = open(elm_files+mod_file,'r')
         lines = file.readlines()
         file.close()
         if(verbose): print(f"Processing {mod_file}")
-        modify_file(lines,casename,mod_file,verbose=verbose,overwrite=overwrite)
+        modify_file(lines,casename,mod_file,sub_list,verbose=verbose,overwrite=overwrite)
         if(overwrite):
             out_fn = elm_files+mod_file
             if(verbose): print("Writing to file:",out_fn)
             with open(out_fn,'w') as ofile:
                 ofile.writelines(lines)
-
+    return sub_list
+    
 
 def remove_reference_to_subroutine(lines, subnames):
     """
@@ -361,11 +368,3 @@ def remove_reference_to_subroutine(lines, subnames):
             lines, ct = comment_line(lines=lines,ct=ct)
         ct+=1
     return lines
-
-    # if(mode == "full"):
-    #     #add just processed file to list of mods:
-    #     lower_mods =  [m.lower() for m in mods]
-    #     if (fname.lower() not in lower_mods): mods.append(fname)
-    #     #find if this file has any not-processed mods
-    #     mods = get_used_mods(ifile=fname,mods=mods,verbose=verbose)
-    #     return mods

@@ -3,6 +3,7 @@ import re
 home_dir = "../"
 elm_files = home_dir+"SourceFiles/"
 unittests_dir = home_dir+"unit-tests/"
+E3SM_dir = "~/master_E3SM/E3SM/components/elm/src"
 
 dont_adjust = ['c2g','p2c','p2g','p2c','c2l','l2g','tridiagonal']
 

@@ -1,21 +1,23 @@
 module readMod 
+use elm_instMod, only : canopystate_vars 
 use GridcellType, only : grc_pp 
+use TopounitDataType, only : top_af 
 use LandunitType, only : lun_pp 
 use ColumnType, only : col_pp 
 use ColumnDataType, only : col_es 
+use ColumnDataType, only : col_ef 
 use ColumnDataType, only : col_ws 
-use ColumnDataType, only : col_wf 
 use VegetationType, only : veg_pp 
+use VegetationDataType, only : veg_wf 
 use VegetationDataType, only : veg_ef 
-use elm_instMod, only : soilstate_vars 
 use elm_instMod, only : solarabs_vars 
 use TopounitType, only : top_pp 
-use elm_instMod, only : lakestate_vars 
 use decompMod, only : bounds_type 
 use elm_varcon 
 use elm_varpar 
 use elm_varctl 
 use landunit_varcon 
+use elm_instMod, only: glc2lnd_vars 
 contains 
 subroutine read_weights(in_file,numg)
      use fileio_mod, only : fio_open, fio_read, fio_close
@@ -237,12 +239,6 @@ subroutine read_vars(in_file,bounds,mode,nsets)
      if (errcode .ne. 0) stop
      call fio_read(18,'veg_pp%active', veg_pp%active(begp:endp), errcode=errcode)
      if (errcode .ne. 0) stop
-     call fio_read(18,'veg_pp%is_veg', veg_pp%is_veg(begp:endp), errcode=errcode)
-     if (errcode .ne. 0) stop
-     call fio_read(18,'veg_pp%is_bareground', veg_pp%is_bareground(begp:endp), errcode=errcode)
-     if (errcode .ne. 0) stop
-     call fio_read(18,'veg_pp%wt_ed', veg_pp%wt_ed(begp:endp), errcode=errcode)
-     if (errcode .ne. 0) stop
      call fio_read(18,'veg_pp%is_fates', veg_pp%is_fates(begp:endp), errcode=errcode)
      if (errcode .ne. 0) stop
      
@@ -294,15 +290,52 @@ subroutine read_vars(in_file,bounds,mode,nsets)
      if (errcode .ne. 0) stop
      call fio_read(18,'top_pp%surfalb_dif', top_pp%surfalb_dif(begt:endt,:), errcode=errcode)
      if (errcode .ne. 0) stop
+     call fio_read(18,"glc2lnd_vars%icemask_grc",glc2lnd_vars%icemask_grc,errcode=errcode)
+     if(errcode .ne. 0) stop
      else
+     
+     !====================== canopystate_vars ======================!
+     
+     call fio_read(18,'canopystate_vars%frac_veg_nosno_patch', canopystate_vars%frac_veg_nosno_patch(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     
+     !====================== top_af ======================!
+     
+     call fio_read(18,'top_af%lwrad', top_af%lwrad(begt:endt), errcode=errcode)
+     if (errcode .ne. 0) stop
      
      !====================== col_es ======================!
      
      call fio_read(18,'col_es%t_soisno', col_es%t_soisno(begc:endc,:), errcode=errcode)
      if (errcode .ne. 0) stop
+     call fio_read(18,'col_es%t_ssbef', col_es%t_ssbef(begc:endc,:), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'col_es%t_h2osfc', col_es%t_h2osfc(begc:endc), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'col_es%t_h2osfc_bef', col_es%t_h2osfc_bef(begc:endc), errcode=errcode)
+     if (errcode .ne. 0) stop
      call fio_read(18,'col_es%t_grnd', col_es%t_grnd(begc:endc), errcode=errcode)
      if (errcode .ne. 0) stop
-     call fio_read(18,'col_es%t_lake', col_es%t_lake(begc:endc,:), errcode=errcode)
+     call fio_read(18,'col_es%emg', col_es%emg(begc:endc), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'col_es%fact', col_es%fact(begc:endc,:), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'col_es%c_h2osfc', col_es%c_h2osfc(begc:endc), errcode=errcode)
+     if (errcode .ne. 0) stop
+     
+     !====================== col_ef ======================!
+     
+     call fio_read(18,'col_ef%eflx_h2osfc_to_snow', col_ef%eflx_h2osfc_to_snow(begc:endc), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'col_ef%eflx_building_heat', col_ef%eflx_building_heat(begc:endc), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'col_ef%htvp', col_ef%htvp(begc:endc), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'col_ef%xmf', col_ef%xmf(begc:endc), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'col_ef%xmf_h2osfc', col_ef%xmf_h2osfc(begc:endc), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'col_ef%errsoi', col_ef%errsoi(begc:endc), errcode=errcode)
      if (errcode .ne. 0) stop
      
      !====================== col_ws ======================!
@@ -311,68 +344,110 @@ subroutine read_vars(in_file,bounds,mode,nsets)
      if (errcode .ne. 0) stop
      call fio_read(18,'col_ws%h2osoi_ice', col_ws%h2osoi_ice(begc:endc,:), errcode=errcode)
      if (errcode .ne. 0) stop
-     call fio_read(18,'col_ws%h2osno', col_ws%h2osno(begc:endc), errcode=errcode)
+     call fio_read(18,'col_ws%do_capsnow', col_ws%do_capsnow(begc:endc), errcode=errcode)
      if (errcode .ne. 0) stop
-     call fio_read(18,'col_ws%snow_depth', col_ws%snow_depth(begc:endc), errcode=errcode)
+     call fio_read(18,'col_ws%frac_sno_eff', col_ws%frac_sno_eff(begc:endc), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'col_ws%frac_h2osfc', col_ws%frac_h2osfc(begc:endc), errcode=errcode)
      if (errcode .ne. 0) stop
      
-     !====================== col_wf ======================!
+     !====================== veg_wf ======================!
      
-     call fio_read(18,'col_wf%qflx_snofrz', col_wf%qflx_snofrz(begc:endc), errcode=errcode)
+     call fio_read(18,'veg_wf%qflx_sub_snow', veg_wf%qflx_sub_snow(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_wf%qflx_evap_soi', veg_wf%qflx_evap_soi(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_wf%qflx_evap_veg', veg_wf%qflx_evap_veg(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_wf%qflx_evap_can', veg_wf%qflx_evap_can(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_wf%qflx_evap_tot', veg_wf%qflx_evap_tot(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_wf%qflx_evap_grnd', veg_wf%qflx_evap_grnd(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_wf%qflx_snwcp_liq', veg_wf%qflx_snwcp_liq(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_wf%qflx_snwcp_ice', veg_wf%qflx_snwcp_ice(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_wf%qflx_tran_veg', veg_wf%qflx_tran_veg(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_wf%qflx_dew_snow', veg_wf%qflx_dew_snow(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_wf%qflx_dew_grnd', veg_wf%qflx_dew_grnd(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_wf%qflx_ev_snow', veg_wf%qflx_ev_snow(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_wf%qflx_ev_soil', veg_wf%qflx_ev_soil(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_wf%qflx_ev_h2osfc', veg_wf%qflx_ev_h2osfc(begp:endp), errcode=errcode)
      if (errcode .ne. 0) stop
      
      !====================== veg_ef ======================!
      
      call fio_read(18,'veg_ef%eflx_sh_grnd', veg_ef%eflx_sh_grnd(begp:endp), errcode=errcode)
      if (errcode .ne. 0) stop
+     call fio_read(18,'veg_ef%eflx_sh_veg', veg_ef%eflx_sh_veg(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
      call fio_read(18,'veg_ef%eflx_sh_tot', veg_ef%eflx_sh_tot(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_ef%eflx_sh_tot_u', veg_ef%eflx_sh_tot_u(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_ef%eflx_sh_tot_r', veg_ef%eflx_sh_tot_r(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_ef%eflx_lh_tot', veg_ef%eflx_lh_tot(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_ef%eflx_lh_tot_u', veg_ef%eflx_lh_tot_u(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_ef%eflx_lh_tot_r', veg_ef%eflx_lh_tot_r(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_ef%eflx_lh_vegt', veg_ef%eflx_lh_vegt(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_ef%eflx_lh_vege', veg_ef%eflx_lh_vege(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_ef%eflx_lh_grnd', veg_ef%eflx_lh_grnd(begp:endp), errcode=errcode)
      if (errcode .ne. 0) stop
      call fio_read(18,'veg_ef%eflx_soil_grnd', veg_ef%eflx_soil_grnd(begp:endp), errcode=errcode)
      if (errcode .ne. 0) stop
-     call fio_read(18,'veg_ef%eflx_gnet', veg_ef%eflx_gnet(begp:endp), errcode=errcode)
+     call fio_read(18,'veg_ef%eflx_soil_grnd_u', veg_ef%eflx_soil_grnd_u(begp:endp), errcode=errcode)
      if (errcode .ne. 0) stop
-     
-     !====================== soilstate_vars ======================!
-     
-     call fio_read(18,'soilstate_vars%watsat_col', soilstate_vars%watsat_col(begc:endc,:), errcode=errcode)
+     call fio_read(18,'veg_ef%eflx_soil_grnd_r', veg_ef%eflx_soil_grnd_r(begp:endp), errcode=errcode)
      if (errcode .ne. 0) stop
-     call fio_read(18,'soilstate_vars%tkmg_col', soilstate_vars%tkmg_col(begc:endc,:), errcode=errcode)
+     call fio_read(18,'veg_ef%eflx_lwrad_net', veg_ef%eflx_lwrad_net(begp:endp), errcode=errcode)
      if (errcode .ne. 0) stop
-     call fio_read(18,'soilstate_vars%tkdry_col', soilstate_vars%tkdry_col(begc:endc,:), errcode=errcode)
+     call fio_read(18,'veg_ef%eflx_lwrad_net_r', veg_ef%eflx_lwrad_net_r(begp:endp), errcode=errcode)
      if (errcode .ne. 0) stop
-     call fio_read(18,'soilstate_vars%tksatu_col', soilstate_vars%tksatu_col(begc:endc,:), errcode=errcode)
+     call fio_read(18,'veg_ef%eflx_lwrad_net_u', veg_ef%eflx_lwrad_net_u(begp:endp), errcode=errcode)
      if (errcode .ne. 0) stop
-     call fio_read(18,'soilstate_vars%csol_col', soilstate_vars%csol_col(begc:endc,:), errcode=errcode)
+     call fio_read(18,'veg_ef%eflx_lwrad_out', veg_ef%eflx_lwrad_out(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_ef%eflx_lwrad_out_r', veg_ef%eflx_lwrad_out_r(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_ef%eflx_lwrad_out_u', veg_ef%eflx_lwrad_out_u(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_ef%eflx_traffic', veg_ef%eflx_traffic(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_ef%eflx_wasteheat', veg_ef%eflx_wasteheat(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_ef%eflx_heat_from_ac', veg_ef%eflx_heat_from_ac(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_ef%dlrad', veg_ef%dlrad(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_ef%ulrad', veg_ef%ulrad(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_ef%cgrndl', veg_ef%cgrndl(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_ef%cgrnds', veg_ef%cgrnds(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'veg_ef%errsoi', veg_ef%errsoi(begp:endp), errcode=errcode)
      if (errcode .ne. 0) stop
      
      !====================== solarabs_vars ======================!
      
+     call fio_read(18,'solarabs_vars%sabg_soil_patch', solarabs_vars%sabg_soil_patch(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
+     call fio_read(18,'solarabs_vars%sabg_snow_patch', solarabs_vars%sabg_snow_patch(begp:endp), errcode=errcode)
+     if (errcode .ne. 0) stop
      call fio_read(18,'solarabs_vars%sabg_patch', solarabs_vars%sabg_patch(begp:endp), errcode=errcode)
-     if (errcode .ne. 0) stop
-     call fio_read(18,'solarabs_vars%sabg_lyr_patch', solarabs_vars%sabg_lyr_patch(begp:endp,:), errcode=errcode)
-     if (errcode .ne. 0) stop
-     call fio_read(18,'solarabs_vars%fsds_nir_d_patch', solarabs_vars%fsds_nir_d_patch(begp:endp), errcode=errcode)
-     if (errcode .ne. 0) stop
-     call fio_read(18,'solarabs_vars%fsds_nir_i_patch', solarabs_vars%fsds_nir_i_patch(begp:endp), errcode=errcode)
-     if (errcode .ne. 0) stop
-     call fio_read(18,'solarabs_vars%fsr_nir_d_patch', solarabs_vars%fsr_nir_d_patch(begp:endp), errcode=errcode)
-     if (errcode .ne. 0) stop
-     call fio_read(18,'solarabs_vars%fsr_nir_i_patch', solarabs_vars%fsr_nir_i_patch(begp:endp), errcode=errcode)
-     if (errcode .ne. 0) stop
-     
-     !====================== lakestate_vars ======================!
-     
-     call fio_read(18,'lakestate_vars%etal_col', lakestate_vars%etal_col(begc:endc), errcode=errcode)
-     if (errcode .ne. 0) stop
-     call fio_read(18,'lakestate_vars%lake_raw_col', lakestate_vars%lake_raw_col(begc:endc), errcode=errcode)
-     if (errcode .ne. 0) stop
-     call fio_read(18,'lakestate_vars%ks_col', lakestate_vars%ks_col(begc:endc), errcode=errcode)
-     if (errcode .ne. 0) stop
-     call fio_read(18,'lakestate_vars%ws_col', lakestate_vars%ws_col(begc:endc), errcode=errcode)
-     if (errcode .ne. 0) stop
-     call fio_read(18,'lakestate_vars%lake_icefrac_col', lakestate_vars%lake_icefrac_col(begc:endc,:), errcode=errcode)
-     if (errcode .ne. 0) stop
-     call fio_read(18,'lakestate_vars%lake_icethick_col', lakestate_vars%lake_icethick_col(begc:endc), errcode=errcode)
      if (errcode .ne. 0) stop
      end if 
      call fio_close(18) 

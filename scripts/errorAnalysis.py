@@ -31,6 +31,14 @@ def errorVerification(cpufn,gpufn):
    """
    import numpy as np 
    import sys
+   
+   # Flag to control if only average diffs should be recorded:
+   average = True 
+   if(average):
+      num = 4
+   else:
+      num = 100
+
    # Read files to compare 
    print(f"CPU file {cpufn} ::: : ::: GPU file {gpufn}")
    file = open(cpufn, 'r')
@@ -40,12 +48,12 @@ def errorVerification(cpufn,gpufn):
    file = open(gpufn,'r') 
    gpufile = file.readlines() 
    file.close() 
-
+   
    cpudata = loadData(cpufile)
    gpudata = loadData(gpufile)
+
    for var in cpudata.keys():
       info = [] 
-      # print(f"Analyzing {var}")
       cpu_arr = np.array(cpudata[var])
       gpu_arr = np.array(gpudata[var]) 
       if(len(cpu_arr) != len(gpu_arr)): 
@@ -53,13 +61,31 @@ def errorVerification(cpufn,gpufn):
          sys.exit()
       compare =  cpu_arr - gpu_arr
       compare = np.abs(compare)
+      # compute squared error:
+      sqred = compare**2
+      # reference total 
+      rmse = np.sqrt(np.sum(sqred)/len(cpu_arr)) 
+      if(rmse > 1.E-10):
+         print(f"{var}  rmse:  {rmse}")
+
       for i in range(0,len(cpu_arr)):
-         if(compare[i] > 0.0):
-            info.append([cpu_arr[i],gpu_arr[i],compare[i]])
+         if(cpu_arr[i] > 0.0):
+            norm = np.abs(compare[i]/cpu_arr[i]) 
+         else:
+            norm = compare[i] 
+
+         if(norm > 1.E-10):
+            info.append([i+1,cpu_arr[i],gpu_arr[i],compare[i],norm])
       if(info):
-         print(var)
+         count = 1
          for el in info:
-            print(el)
+            if(count < num) :
+               print(el)
+               count += 1 
+            else:
+               break
+
+            
       
 def findDataFiles(unittest): 
    import subprocess as sp

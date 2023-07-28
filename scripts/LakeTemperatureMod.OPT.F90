@@ -19,7 +19,8 @@ module LakeTemperatureMod
   use VegetationDataType, only : veg_ef
 
   use timeinfoMod
-!   use verificationMod, only : update_vars_LakeTemperature
+  ! use verificationMod, only : update_vars_LakeTemperature
+  
   !
   ! !PUBLIC TYPES:
   implicit none
@@ -191,20 +192,9 @@ contains
     real(r8) :: dzp                                                        ! used in computing tridiagonal matrix [m]
     integer  :: jprime                                                     ! j - nlevlak
     real(r8) :: factx(1:num_lakec,-nlevsno+1:nlevlak+nlevgrnd) ! coefficient used in computing tridiagonal matrix
-    !NOTE: t_lake_bef, t_soisno_bef are not used ????
-    !real(r8) :: t_lake_bef(bounds%begc:bounds%endc,1:nlevlak)              ! beginning lake temp for energy conservation check [K]
-    !real(r8) :: t_soisno_bef(bounds%begc:bounds%endc,-nlevsno+1:nlevgrnd)  ! beginning soil temp for E cons. check [K]
 
-    !NOTE: lhabs is passed to PhaseChange_Lake but is not used for calculations?? 
-    !real(r8) :: lhabs(bounds%begc:bounds%endc)                             ! total per-column latent heat abs. from phase change  (J/m^2)
-    !NOTE: esum1, esum2 are not used 
-    !real(r8) :: esum1(bounds%begc:bounds%endc)                             ! temp for checking energy (J/m^2)
-    !real(r8) :: esum2(bounds%begc:bounds%endc)                             ! ""
-    
     !NOTE: replace zsum with a scalar !
     real(r8) :: zsum(1:num_lakec)                              ! temp for putting ice at the top during convection (m)
-    !real(r8) :: sabg_col(bounds%begc:bounds%endc)     ! absorbed ground solar for column (W/m^2)
-
     !NOTE: sabg_lyr_col seems poorly implemented
     real(r8) :: sabg_lyr_col(1:num_lakec,-nlevsno+1:1)         ! absorbed ground solar in layer for column (W/m^2)
     real(r8) :: sabg_nir                                                   ! NIR that is absorbed (W/m^2)
@@ -381,7 +371,7 @@ contains
     end do
 
     ! Prepare for lake layer temperature calculations below
-    !$acc parallel loop independent gang vector default(present) private(p,c,fc) async(2)
+    !$acc parallel loop independent gang vector default(present) private(p,c,fc)
     do fp = 1, num_lakep
        p = filter_lakep(fp)
        c = veg_pp%column(p)
@@ -404,6 +394,7 @@ contains
 
     end do
     !$acc wait 
+    
     ! 2!) Lake density
     !$acc parallel loop independent gang vector collapse(2) default(present) private(c)
     do j = 1, nlevlak
@@ -584,17 +575,6 @@ contains
 
     ! This will need to be over all soil / lake / snow layers. Lake is below.
     call cpu_time(startt) 
-   ! !$acc parallel loop independent gang vector collapse(2) default(present) private(c,temp) 
-   !  do j = 1, nlevlak
-   !     do fc = 1, num_lakec
-   !        c = filter_lakec(fc)
-   !       temp = cv_lake(fc,j)*(t_lake(c,j)-tfrz) + cfus*dz_lake(c,j)*(1._r8-lake_icefrac(c,j))
-   !       !$acc atomic update
-   !       ocvts(fc) = ocvts(fc) + temp
-   !       !$acc end atomic
-   !        !t_lake_bef(c,j) = t_lake(c,j)
-   !     end do
-   !  end do
 
     !$acc parallel loop independent gang worker default(present) private(c,temp) 
     do fc = 1, num_lakec
@@ -608,7 +588,6 @@ contains
       ocvts(fc) = ocvts(fc) + temp
     end do
       
-       
     ! Now do for soil / snow layers
     !$acc parallel loop independent gang worker default(present) private(temp,c)
     do fc = 1, num_lakec
@@ -657,7 +636,8 @@ contains
     print *, "Free after EnergyCheck:",free1/1.E+9
     #endif
     
-   ! Set up interface depths, zx, heat capacities, cvx, solar source terms, phix, and temperatures, tx.
+   ! Set up interface depths, zx, heat capacities, cvx, solar sour
+    ce terms, phix, and temperatures, tx.
     call cpu_time(startt) 
 
     !$acc parallel loop independent gang vector collapse(2) default(present) private(c, jprime)
@@ -730,7 +710,6 @@ contains
       end do
    end do
 
-
     ! Determine heat diffusion through the layer interface and factor used in computing
     ! tridiagonal matrix and set up vector r and vectors a, b, c1 that define tridiagonal
     ! matrix and solve system
@@ -780,16 +759,6 @@ contains
     end do
     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     ! 7!) Solve for tdsolution
-   !  call Tridiagonal_SoilLittVertTransp( &
-   !       -nlevsno + 1, nlevlak + nlevgrnd, &
-   !       jtop(1:num_lakec), &
-   !       num_lakec, &
-   !       filter_lakec, &
-   !       a(1:num_lakec, :) ,&
-   !       b(1:num_lakec, :) ,&
-   !       c1(1:num_lakec, :),&
-   !       r(1:num_lakec, :) ,&
-   !       tx(1:num_lakec, :))
 
     call cpu_time(startt) 
     !$acc parallel loop independent gang worker  default(present) private(c)
@@ -819,20 +788,10 @@ contains
        end do 
 
     end do
-
-!     !$acc parallel loop independent gang vector default(present)
-!     do j = nlevlak + nlevgrnd-1,-nlevsno + 1,-1
-!       do fc = 1,num_lakec
-!          if (j >= jtop(fc)) then
-!            tx(fc,j) = tx(fc,j) - gam(fc,j+1) * tx(fc,j+1)
-!          end if
-!       end do
-!   end do
- 
   
 
     ! Set t_soisno and t_lake
-    !$acc parallel loop independent gang vector  default(present) collapse(2) private(jprime) 
+    !$acc parallel loop independent gang vector  default(present) collapse(2) private(jprime)
     do j = -nlevsno+1, nlevlak + nlevgrnd
        do fc = 1, num_lakec
           c = filter_lakec(fc)
@@ -910,22 +869,18 @@ contains
     
     if (lakepuddling) then
     ! For sensitivity tests
-       !$acc parallel loop independent gang vector default(present) collapse(2) 
-      do j = 1, nlevlak
-         do fc = 1, num_lakec
-             c = filter_lakec(fc)
-
-             if (j == 1) then
-                icesum = 0._r8
-                puddle(fc) = .false.
-             end if
+       !$acc parallel loop independent gang worker default(present) private(c,icesum) 
+      do fc = 1, num_lakec
+         c = filter_lakec(fc)
+         icesum = 0._r8
+         puddle(fc) = .false.
+         !$acc loop reduction(+:icesum) 
+         do j = 1, nlevlak
 
              icesum = icesum + lake_icefrac(c,j)*dz(c,j)
 
-             if (j == nlevlak) then
-                if (icesum >= pudz) puddle(fc) = .true.
-             end if
-          end do
+            end do
+            if (icesum >= pudz) puddle(fc) = .true.
        end do
     end if
 !   ! call update_vars_LakeTemperature(gpuflag,"DensityCalc")
@@ -1047,8 +1002,8 @@ contains
     do fc = 1, num_lakec
       c = filter_lakec(fc)
 
-       if ( (.not. lakepuddling .or. .not. puddle(fc) ) .and. (rhow(fc,j) > rhow(fc,j+1) .or. &
-            (lake_icefrac(c,j) < 1._r8 .and. lake_icefrac(c,j+1) > 0._r8) ) ) then
+       if ( (.not. lakepuddling .or. .not. puddle(fc) ) .and. (rhow(fc,nlevlak-1) > rhow(fc,nlevlak) .or. &
+            (lake_icefrac(c,nlevlak-1) < 1._r8 .and. lake_icefrac(c,nlevlak) > 0._r8) ) ) then
           ! convection originating in bottom layer. Could be coming from sediments-- be careful not to
           ! unnecessarily mix all the way to the top of the lake
           bottomconvect(fc) = .true.
@@ -1150,14 +1105,10 @@ contains
     end do ! j loop
     call cpu_time(stopt) 
     print*, "TIMING LakeTemperature::MixingFinal ",(stopt-startt)*1.E+3,"ms"
-    #ifdef _CUDA
-    istat = cudaMemGetInfo(free1, total)
-    print *, "Free after MixingFinal:",free1/1.E+9
-    #endif
+
     ! Calculate lakeresist and grnd_ch4_cond for CH4 Module
     ! The CH4 will diffuse directly from the top soil layer to the atmosphere, so
     ! the whole lake resistance is included.
-  ! call update_vars_LakeTemperature(gpuflag,"MixingFinal")
 
     if (use_lch4) then
     !$acc parallel loop independent gang worker default(present) private(temp) 
@@ -1586,6 +1537,7 @@ contains
      real(r8), parameter :: smallnumber = 1.e-12_r8 ! The above actually was enough to cause a 0.1 W/m^2 energy imbalance
      ! when the bottom lake layer started freezing in a 50m Arctic lake
      logical  :: dophasechangeflag
+     real(r8) :: sum1
      !-----------------------------------------------------------------------
 
      ! Enforce expected array sizes
@@ -1614,7 +1566,7 @@ contains
           eflx_snomelt    => col_ef%eflx_snomelt     & ! Output: [real(r8)  (:)   ] snow melt heat flux (W/m**2)
           )
 
-
+      !$acc enter data create(sum1)
        ! Initialization
       !$acc parallel loop independent gang vector default(present)
        do fc = 1,num_lakec
@@ -1756,13 +1708,17 @@ contains
           eflx_snomelt(c) = qflx_snomelt(c)*hfus
        end do
 
-       !$acc parallel loop independent gang vector default(present) collapse(2) private(c)
-       do j = -nlevsno+1,0
-          do fc = 1,num_lakec
-             c = filter_lakec(fc)
-             qflx_snofrz_col(c) = qflx_snofrz_col(c) + qflx_snofrz_lyr(c,j)
-          end do
+       !$acc parallel loop independent gang worker default(present) private(c,sum1)
+       do fc = 1,num_lakec
+         sum1 = 0._r8 
+         c = filter_lakec(fc)
+         !$acc loop reduction(+:sum1) 
+         do j = -nlevsno+1,0
+             sum1 = sum1 + qflx_snofrz_lyr(c,j)
+         end do
+         qflx_snofrz_col(c) = qflx_snofrz_col(c) + sum1 
        end do
+       !$acc exit data delete(sum1)
 
      end associate
 

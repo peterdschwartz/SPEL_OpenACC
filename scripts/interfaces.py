@@ -50,7 +50,8 @@ def resolve_interface(sub,iname,args,varlist,verbose=False):
                 subroutines.append(subname) 
         ct += 1 
     
-    print(_bc.OKGREEN+f"Number of Args :",len(args))
+    print(_bc.WARNING+f"interface subroutines:{subroutines}"+_bc.ENDC)
+    print(_bc.OKGREEN+f"Number of Args :"+_bc.ENDC,len(args))
     
     l_args = [] # list to hold arguments as Variables
     special = "xx" # Special data type used for arguments that are math expressions so either int or real
@@ -126,7 +127,7 @@ def resolve_interface(sub,iname,args,varlist,verbose=False):
         fn1,startline,endline = find_file_for_subroutine(name=s,fn=fn,ignore_interface=True)
         testsub = Subroutine(s,fn1,calltree=sub.calltree,start=startline,end=endline,ignore_interface=True)
         x = getLocalVariables(testsub,verbose=False)
-        
+        child_sub = ''
         # Go through each argument and check if 
         # it can be matched to this subroutine's allowed args
         matched = match_input_arguments(l_args,testsub,special,verbose=verbose)
@@ -201,9 +202,9 @@ def match_input_arguments(l_args, sub,special,verbose=False):
 
         dummy_arg = test_args[argn]
         # check type and dimension:
-        same_type = bool(input_arg.type == dummy_arg.type)
+        same_type = bool(input_arg.type.strip() == dummy_arg.type.strip())
         if(not same_type and input_arg.type == special): 
-            if(dummy_arg.type in ['real','integer']):
+            if(dummy_arg.type.strip() in ['real','integer']):
                 same_type = True 
         
         same_dim  = bool(input_arg.dim == dummy_arg.dim)
@@ -215,7 +216,7 @@ def match_input_arguments(l_args, sub,special,verbose=False):
             argn += 1 # go to next argument
         else:
             if(verbose): print(f"{input_arg.name} {input_arg.type} {input_arg.dim}")
-            if(verbose): print(f" does not match {dummy_arg.name} {dummy_arg.type} {dummy_arg.dim}")
+            if(verbose): print(f" does not match \n{dummy_arg.name} {dummy_arg.type} {dummy_arg.dim}")
             # Check to see if dummy_arg is optional 
             # If it is optional, then cycle through the
             # rest of the variables (which should all be optional right?)

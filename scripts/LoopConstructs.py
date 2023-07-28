@@ -302,7 +302,7 @@ class Loop(object):
         regex_subcall = re.compile(r'^(call)')
         # 
         #regex to match code that should be ignored 
-        regex_skip = re.compile(r'^(write)')
+        regex_skip = re.compile(r'^(write|print)')
         regex_dowhile = re.compile(f'\s*(do while)',re.IGNORECASE)
 
         # regex for scalar variables:
@@ -513,7 +513,7 @@ class Loop(object):
                 variable_dict.setdefault(varname,[]).append('r')
 
             # Now check if variable appears on both sides
-            # Requires additional checking for reduction operation
+            # Requires additional checking for race conditions/reduction operation
             elif(in_lhs and in_rhs):
                 m_indices = regex_indices.search(var).group()
                 indices = m_indices.split(',')
@@ -533,7 +533,6 @@ class Loop(object):
                 if(verbose) : print(f"This line {ln} is inside {loopcount} Loops!")
                 
                 if(loopcount < 1): 
-                    print(l)
                     for n, loopstart in enumerate(self.start):
                         print(loopstart, self.end[n])
                     sys.exit("Error: Not in a Loop!?")
@@ -605,6 +604,10 @@ class Loop(object):
         function that takes the local scalars matched in m_scalars 
         and determines the write/read status and reduction status
         """
+        ltemp = l.split('=') 
+        if(len(ltemp) < 2 ): 
+            print(f"Error no assignment at {l}")
+            sys.exit()
         lhs = l.split('=')[0]
         rhs = l.split('=')[1]
 

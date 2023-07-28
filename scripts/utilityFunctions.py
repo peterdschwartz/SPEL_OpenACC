@@ -27,7 +27,8 @@ class Variable(object):
         self.optional = optional
         self.keyword = keyword
         self.filter_used = ''
-        self.subs = [] 
+        self.subs = []
+        self.declaration = '' 
 
     
     def printVariable(self): 
@@ -133,6 +134,7 @@ def find_file_for_subroutine(name,fn='',ignore_interface=False):
     if(not fn):
         search_file = f"{elm_files}*.F90"
     else:
+        # NOTE: Rework elm_files !!
         search_file = f"{elm_files}{fn}"
     
     interface_list = get_interface_list()
@@ -147,7 +149,11 @@ def find_file_for_subroutine(name,fn='',ignore_interface=False):
     if(not fn):
         file = output.split(':')[0]
         file = file.replace(elm_files,'')
-        startline = int(output.split(':')[1])
+        output = output.split(':')
+        if(len(output) < 2 ):
+            print(f"Error: Couldn't find info for {name}\n {output}")
+            sys.exit()
+        startline = int(output[1])
         if(cmd_end!=''):
             output = sp.getoutput(cmd_end)
             endline = int(output.split(':')[1]) 
@@ -155,6 +161,10 @@ def find_file_for_subroutine(name,fn='',ignore_interface=False):
             endline = 0
     else:
         file = fn
+        print(f"find_file_for_sub::{fn}\n{output}")
+        print(output.split(':'))
+        print(name,file)
+        print(f"cmd: {cmd}")
         if(not output ):
             print(name,file)
             print(f"cmd: {cmd}")
@@ -194,7 +204,6 @@ def getLocalVariables(sub,verbose=False,class_var=False ):
 
     Note: currently only looks at type declaration for class object
     """
-    import subprocess as sp 
     filename = elm_files+sub.filepath
     subname = sub.name 
     file = open(filename,'r');
@@ -209,7 +218,6 @@ def getLocalVariables(sub,verbose=False,class_var=False ):
     ng_regex_array = re.compile(f'\w+?\s*\({cc}+?\)')
     
     find_arg = re.compile(r'(intent)',re.IGNORECASE)
-    find_this = re.compile(r'^(this|type)',re.IGNORECASE)
     find_type = re.compile(r'(?<=\()\w+(?=\))')
     find_variables = re.compile('^(class\(|type\(|integer|real|logical|character)',re.IGNORECASE)
     regex_var = re.compile(r'\w+')
@@ -218,95 +226,125 @@ def getLocalVariables(sub,verbose=False,class_var=False ):
     intrinsic_type = re.compile(r'^(integer|real|logical|character)', re.IGNORECASE)
     user_type = re.compile(r'^(class\(|type\()',re.IGNORECASE)
     #
-    found_this = False
-    
     for ln in range(startline,endline):
         line = lines[ln].split("!")[0]
         line = line.strip()
         line = line.strip("\n")
         if(not(line)): continue
-        if(not class_var): # NOTE: This is a clunky way of doing this 
-            match_variable = find_variables.search(line)
-            if(match_variable):
-                temp_decl = line.split("::")[0]
-                temp_vars = line.split("::")[1]
-                match_arg = find_arg.search(temp_decl)
+        match_variable = find_variables.search(line)
+        if(match_variable):
+            # print("line:",line)
+            temp = line.split("::")
+            if(len(temp)<2):
+                print(f"getLocalVariables:: Error - No Variable declaration here in {sub.name}\n {ln+1} {line}")
+                sys.exit()
+            temp_decl = line.split("::")[0]
+            temp_vars = line.split("::")[1]
+            match_arg = find_arg.search(temp_decl)
 
-                # Get data type first 
-                m_type = intrinsic_type.search(temp_decl)
-                if(m_type):
-                    data_type = m_type.group() 
-                else: #user-defined type 
-                    m_type = user_type.search(temp_decl)
-                    if(not m_type): 
-                        sys.exit(f"Error: Can't Identify Data Type for {line}")
-                    data_type = find_type.search(temp_decl).group()
+            # Get data type first 
+            m_type = intrinsic_type.search(temp_decl)
+            if(m_type):
+                data_type = m_type.group() 
+            else: #user-defined type 
+                m_type = user_type.search(temp_decl)
+                if(not m_type): 
+                    sys.exit(f"Error: Can't Identify Data Type for {line}")
+                data_type = find_type.search(temp_decl).group()
                 
-                #
-                # Go through and replace all arrays first
-                match_arrays = ng_regex_array.findall(temp_vars)
-                if(match_arrays): 
-                    for arr in match_arrays:
-                        varname = regex_var.search(arr).group()
-                        index = regex_subgrid_index.search(arr)
-                        if(index):
-                            subgrid = index.group() 
-                        else:
-                            if(verbose): print(f"{arr} Not allocated by bounds")
-                            subgrid = '?'
-                        # Storing line number of declaration 
-                        dim = arr.count(',')+1
-                        if(verbose): print(f"var = {varname}; subgrid = {subgrid}; {dim}-D array")
-                        if(match_arg):
-                            optional = False 
-                            if('optional' in temp_decl):
-                                optional = True
-                            sub.Arguments[varname] = Variable(data_type,varname,subgrid,ln,dim,optional)
-                        else: 
-                            sub.LocalVariables['arrays'][varname] = Variable(data_type,varname,subgrid,ln,dim)
-                        # This removes the array from the list of variables
-                        temp_vars = temp_vars.replace(arr,'')
-                # Get the scalar arguments  
-                temp_vars = temp_vars.split(',')
-                temp_vars = [x.strip() for x in temp_vars if x.strip()]
-                for var in temp_vars:
+            #
+            # Go through and replace all arrays first
+            match_arrays = ng_regex_array.findall(temp_vars)
+            if(match_arrays): 
+                for arr in match_arrays:
+                    varname = regex_var.search(arr).group()
+                    index = regex_subgrid_index.search(arr)
+                    if(index):
+                        subgrid = index.group() 
+                    else:
+                        if(verbose): print(f"{arr} Not allocated by bounds")
+                        subgrid = '?'
+                    # Storing line number of declaration 
+                    dim = arr.count(',')+1
+                    if(verbose): print(f"var = {varname}; subgrid = {subgrid}; {dim}-D array")
                     if(match_arg):
                         optional = False 
                         if('optional' in temp_decl):
                             optional = True
-                        sub.Arguments[var] = Variable(data_type,var,'',ln,dim=0,optional=optional)
-                    else:
-                        parameter = bool("parameter" in temp_decl.lower())
-                        if(parameter): continue
-                        if("=" in var): var = var.split("=")[0]
-                        sub.LocalVariables['scalars'].append(Variable(data_type,var,'',ln,dim=0))
+                        sub.Arguments[varname] = Variable(data_type,varname,subgrid,ln,dim,optional)
+                    else: 
+                        sub.LocalVariables['arrays'][varname] = Variable(data_type,varname,subgrid,ln,dim)
+                        sub.LocalVariables['arrays'][varname].declaration = line
+                    # This removes the array from the list of variables
+                    temp_vars = temp_vars.replace(arr,'')
+            # Get the scalar arguments  
+            temp_vars = temp_vars.split(',')
+            temp_vars = [x.strip() for x in temp_vars if x.strip()]
+            for var in temp_vars:
+                if(match_arg):
+                    optional = False 
+                    if('optional' in temp_decl):
+                        optional = True
+                    sub.Arguments[var] = Variable(data_type,var,'',ln,dim=0,optional=optional)
+                else:
+                    parameter = bool("parameter" in temp_decl.lower())
+                    if(parameter): continue
+                    if("=" in var): var = var.split("=")[0]
+                    sub.LocalVariables['scalars'].append(Variable(data_type,var,'',ln,dim=0))
                     
-        else: #class var
-            m_this = find_this.search(line.lower())
-            m_type = find_type.findall(line.lower())
-            if(m_this and m_type):
-                # the derived type should always be 1st
-                if(verbose): print(f"found {m_type} for data type for this")
-                var_type = m_type[0]
-                found_this = True 
-                cmd = f'grep -E "^[[:space:]]+(type\({var_type}\))" {elm_files}*.F90 | grep -v "intent"'
-                output = sp.getoutput(cmd) 
-                print(f"cmd: {cmd}")
-                print(f"OUTPUT: {output}")
-                output = output.split('::')
-                varname = output[1].strip()
-                return var_type, varname
+    return
+
+def determine_class_instance(sub,verbose=False):
+    """
+    Find out what the data structure 'this' corresponds to
+    """
+    import subprocess as sp 
+    filename = elm_files+sub.filepath
+    subname = sub.name 
+    file = open(filename,'r');
+    lines = file.readlines()
+    file.close()
+    startline = sub.startline; endline=sub.endline;
+
+    find_this = re.compile(r'^(type)',re.IGNORECASE)
+    find_type = re.compile(r'(?<=\()\w+(?=\))')
+
+    found_this = False
+    for ln in range(startline,endline):
+        line = lines[ln].split("!")[0]
+        line = line.strip()
+        line = line.strip("\n")
+        if(not(line)): continue
+
+        m_this = find_this.search(line.lower())
+        m_type = find_type.search(line.lower())
+    
+        if(m_this and m_type):
+            # the derived type should always be 1st
+            if(verbose): print(f"found {m_type} for data type for this")
+            var_type = m_type.group()
+            found_this = True 
+            print(line, m_this.group(),m_type.group())
+            cmd = f'grep -E "^[[:space:]]+(type\({var_type}\))" {elm_files}*.F90 | grep -v "intent"'
+            output = sp.getoutput(cmd)
+            output = output.split("\n")
+            for el in output:
+                print(el)
+            sys.exit()
+            output = output.split('::')
+            varname = output[1].strip()
             
-    if(class_var and not found_this):
+    if(not found_this):
         print(f"Error: Couldn't find declaration for class variable in {sub.name} {sub.filepath}")
         sys.exit()
-    return
+
 
 def convertAssociateDict(associate_vars, varlist):
     dtypes = []
     
     replace_inst = ['soilstate_inst','waterflux_inst','canopystate_inst','atm2lnd_inst','surfalb_inst',
                 'solarabs_inst','photosyns_inst','soilhydrology_inst','urbanparams_inst']
+
 
     for vars in associate_vars.values():
         for v in vars: 
@@ -320,7 +358,12 @@ def convertAssociateDict(associate_vars, varlist):
     for _type in dtypes:
         for var in varlist: 
             if(_type == var.name and not var.analyzed):
-                var.analyzeDerivedType() 
+                if(var.name == "lun_ef"):
+                    print("convertAssociateDict:")
+                    var.analyzeDerivedType(verbose=True)
+                    var._print_derived_type()
+                else:
+                    var.analyzeDerivedType(verbose=False) 
 
     return
 
@@ -474,10 +517,9 @@ def adjust_array_access_and_allocation(local_arrs,sub,dargs=False,verbose=False)
             continue  
         for v in arg: 
             if(v.name in list_of_var_names):
-                print(f"Need to check {var} for mem adjustment called in {subname}.")
+                print(f"Need to check {v.name} for mem adjustment called in {subname}.")
                 vars_to_check[subname].append(v)
     
-    print(vars_to_check)
     for sname, vars in vars_to_check.items():
         for v in vars:
             print(f"{sname} :: {v.name}")
@@ -497,7 +539,7 @@ def adjust_array_access_and_allocation(local_arrs,sub,dargs=False,verbose=False)
             local_var = local_arrs[loc_]
             filter_used = local_var.filter_used + arg.subgrid
             # bounds string:
-            bounds_string = f"\s*bounds%beg{arg.subgrid}\s*:\s*bounds%end{arg.subgrid}\s*"
+            bounds_string = f"(\s*bounds%beg{arg.subgrid}\s*:\s*bounds%end{arg.subgrid}\s*|\s*beg{arg.subgrid}\s*:\s*end{arg.subgrid}\s*)"
             # string to replace bounds with
             num_filter = "num_"+filter_used.replace("filter_","")
             num_filter = f"1:{num_filter}"
@@ -511,16 +553,16 @@ def adjust_array_access_and_allocation(local_arrs,sub,dargs=False,verbose=False)
                     # create regex to match variables needed
                     l = line[:]
                     m_var = regex_array_arg.search(l)
-                    if(m_var): 
+                    if(m_var):
                         lold = lines[ln].rstrip('\n')
                         lnew = regex_array_arg.sub(f"{arg.name}({num_filter}",lines[ln])
-                        lines[ln] = lnew 
-                        replaced = True 
+                        lines[ln] = lnew
+                        replaced = True
                         track_changes.append(lnew)
 
                     while(l.rstrip('\n').endswith('&') and not replaced):
-                        ln += 1 
-                        l = lines[ln] 
+                        ln += 1
+                        l = lines[ln]
                         m_var = regex_array_arg.search(l)
                         if(m_var): 
                             lold = lines[ln].rstrip('\n')
@@ -535,7 +577,7 @@ def adjust_array_access_and_allocation(local_arrs,sub,dargs=False,verbose=False)
                         print("\n")
                         break
                     else:
-                        print(_bc.FAIL+f"Couldn't replace {arg.name} in subroutine call"+_bc.ENDC)
+                        print(_bc.FAIL+f"Couldn't replace {arg.name} in {subname} subroutine call"+_bc.ENDC)
                         sys.exit()
 
     # Save changes:

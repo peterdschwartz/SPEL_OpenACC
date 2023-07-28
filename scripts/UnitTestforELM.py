@@ -11,27 +11,20 @@ def main():
     import os
     from DerivedType import derived_type
     from analyze_subroutines import Subroutine,replace_key
-    from utilityFunctions import find_file_for_subroutine, getLocalVariables
+    from utilityFunctions import getLocalVariables
     import write_routines as wr
     from mod_config import elm_files, home_dir, default_mods, unittests_dir
     from edit_files import process_for_unit_test
 
-    master_sub_dict = {} 
-
+    main_sub_dict = {}
     # casename = "dyn_hwcontent"
-    casename = "methane"
+    casename = "SoilFluxes"
     casename = unittests_dir+casename
     # Determines if SPEL should run to make optimizations 
-    opt = True
-    add_acc = True
+    opt = False
+    add_acc = False
     adjust_allocation = False  
-
-    sub_name_list = ["CH4"]
-    # sub_name_list = ["ComputeWaterMassNonLake"] #["SurfaceRadiation"]  # ["dyn_cnbal_patch"]
-    # sub_name_list = ['DustEmission','DustDryDep']
-
-    # sub_name_list = ["HydrologyNoDrainage"] # ["SnowWater"] , "AerosolMasses","LakeHydrology"]
-
+    preprocess = False 
     # Create script output directory if not present:
     if(not os.path.isdir("./script-output")):
         print("Making script output directory")
@@ -45,23 +38,39 @@ def main():
         os.system(f"mkdir {casename}")
         preprocess = True
     else:
-        print(f"case {casename} already exists skipping preprocessing")
-        preprocess = False 
-    
-    # EcoDyn_subs_list = ["SoilLittDecompAlloc", "SoilLittDecompAlloc2","Phenology","GrowthResp",
-    #                "vegcf_summary_rr","RootDynamics","CarbonStateUpdate0","CNLitterToColumn","CarbonIsoFlux1"
-    #                ,"CarbonStateUpdate1","NitrogenStateUpdate1","PhosphorusStateUpdate1","SoilLittVertTransp",
-    #                "GapMortality","CarbonIsoFlux2","CarbonStateUpdate2","NitrogenStateUpdate2","PhosphorusStateUpdate2","CarbonIsoFlux2h",
-    #                "NitrogenStateUpdate2h","PhosphorusStateUpdate2h","WoodProducts","CropHarvestPools","FireArea", "FireFluxes"
-    #                ,"CarbonIsoFlux3","CarbonStateUpdate3","C14Decay","C14BombSpike","colcf_Summary_for_CH4","vegcf_summary_for_ch4"]
-    
-    # sub_name_list  = ['BareGroundFluxes','CanopyFluxes','UrbanFluxes','LakeFluxes']
-    
-    # sub_name_list = ['dyn_hwcontent_init','set_prior_weights','set_old_patch_weights',
-    #                  'set_old_column_weights','dynSubgrid_wrapup_weight_changes',
-    #                  'set_new_patch_weights','set_new_column_weights','set_subgrid_diagnostic_fields',
-    #                  'initialize_new_columns','dyn_hwcontent_final','dyn_cnbal_patch','CarbonStateUpdateDynPatch',
-    #                  'NitrogenStateUpdateDynPatch','PhosphorusStateUpdateDynPatch','dyn_cnbal_column']
+        x = input(f"case {casename} already exists - Preprocess?")
+        if(x =='n'):
+            preprocess = False
+        elif(x=='y'):
+            preprocess = True
+        else:
+            sys.exit("Error - input not recognized") 
+        
+    # sub_name_list = ["PhosphorusMinFluxes","PhosphorusBiochemMin", "NitrogenLeaching", "PhosphorusLeaching",
+    #                  "NitrogenStateUpdate3", "PhosphorusStateUpdate3", "PrecisionControl", "veg_cf_summary_for_ch4_acc",
+    #                  "veg_cf_summary_acc", "veg_nf_summary_acc", "veg_pf_summary_acc", "summary_veg_flux_p2c",
+    #                  "veg_cs_summary_acc", "veg_ns_summary_acc", "veg_ps_summary_acc", "summary_veg_state_p2c",
+    #                  "col_cf_summary_for_ch4_acc", "col_cs_summary_acc",
+    #                  "col_nf_summary_acc", "col_ns_summary_acc",
+    #                  "col_pf_summary_acc", "col_ps_summary_acc" ]
+    # sub_name_list = ["UrbanFluxes"]
+
+    # sub_name_list = ["NitrogenDeposition","NitrogenFixation","NitrogenFixation_balance", 
+    #                  "MaintenanceResp","PhosphorusWeathering","PhosphorusBiochemMin",
+    #                  "PhosphorusBiochemMin_balance","PhosphorusDeposition","decomp_rate_constants_bgc",
+    #                  "decomp_rate_constants_cn","decomp_vertprofiles","Allocation1_PlantNPDemand"]
+
+    # sub_name_list = ["SoilLittDecompAlloc", "SoilLittDecompAlloc2","Phenology","GrowthResp"]
+                     #"veg_cf_summary_rr",
+                     #"CarbonStateUpdate0","CNLitterToColumn", "CarbonStateUpdate_Phase1_col", 
+                     #"NitrogenStateUpdate_Phase1_col", "PhosphorusStateUpdate_Phase1_col",
+                     #"CarbonStateUpdate_Phase1_PFT", "NitrogenStateUpdate_Phase1_pft",
+                     #"PhosphorusStateUpdate_Phase1_pft", "SoilLittVertTransp", "GapMortality",
+                     #"CarbonStateUpdate2", "NitrogenStateUpdate2","PhosphorusStateUpdate2",
+                     # "CarbonStateUpdate2h","NitrogenStateUpdate2h",  "PhosphorusStateUpdate2h",
+                     #"WoodProducts", "CropHarvestPools", "FireArea","FireFluxes"]
+    # sub_name_list = ["SurfaceAlbedo", "UrbanAlbedo"]
+    sub_name_list = ["SoilFluxes"]
 
     # modfile is a running list of which modules hold derived-type definitions
     modfile = 'usemod.txt'
@@ -88,7 +97,6 @@ def main():
             if(c13c14): continue
             var_list.append(derived_type(var,mod))
 
-
     # Initialize list of derived types to 
     read_types  = []; write_types = [];
     subroutines = {k:[] for k in sub_name_list}
@@ -103,7 +111,10 @@ def main():
         # with the !$acc routine directive, which may not be useful for
         # highly complex subroutines
         if(preprocess and not opt):
-            process_for_unit_test(fname=file,casename=casename,
+            fn = subroutines[s].filepath
+            fn = fn.replace(elm_files,'')
+            fn = fn.replace("/modified-files/",'')
+            process_for_unit_test(fname=fn,casename=casename,
                      mods=needed_mods,overwrite=True,verbose=False)
 
     # examineLoops performs adjustments that go beyond the "naive" 
@@ -118,7 +129,9 @@ def main():
     if(opt): 
         for s in sub_name_list: 
             local_vars = getLocalVariables(subroutines[s],verbose=False)
-            subroutines[s].examineLoops(global_vars=[],varlist=var_list,verbose=False,
+            if(subroutines[s].name not in main_sub_dict):
+                main_sub_dict[subroutines[s].name] = subroutines[s]
+            subroutines[s].examineLoops(global_vars=[],varlist=var_list,main_sub_dict=main_sub_dict,verbose=False,
                            add_acc=add_acc,adjust_allocation=adjust_allocation)
         sys.exit("Done running in Optimization Mode")
     
@@ -152,7 +165,7 @@ def main():
                 print(f"new write_types key: {key}")
 
             write_types.append(key)
-        subroutines[s].exportReadWriteVariables()
+        #subroutines[s].exportReadWriteVariables()
          
     analyze_var = True
     if(analyze_var):
@@ -194,18 +207,20 @@ def main():
     ffile.close()
 
     ######################################################
-    agg_clm_read = []; agg_clm_write = [];
+    print("agg_elm_read")
+    agg_elm_read = []; agg_elm_write = [];
     for s in sub_name_list:
         for key, fieldlist in subroutines[s].elmtype_r.items():
             for field in fieldlist:
                 fname = key+"_"+field
-                if(fname not in agg_clm_read):
-                    agg_clm_read.append(fname)
+                if(key=="lun_ef"): print(fname) 
+                if(fname not in agg_elm_read):
+                    agg_elm_read.append(fname)
         for key, fieldlist in subroutines[s].elmtype_w.items():
             for field in fieldlist:
                 fname = key+"_"+field
-                if(fname not in agg_clm_write):
-                    agg_clm_write.append(fname)
+                if(fname not in agg_elm_write):
+                    agg_elm_write.append(fname)
 
     print("Additional Mods files needed for this unit test:")
     for m in needed_mods:
@@ -226,7 +241,8 @@ def main():
         c13c14 = bool('c13' in v.name or 'c14' in v.name)
         if(c13c14): continue
         if(v.name in write_types or v.name in read_types):
-            if(not v.analyzed): v.analyzeDerivedType()
+            if(not v.analyzed): 
+                v.analyzeDerivedType()
     
     vdict ={v.name : v for v in var_list}
     ofile = open("SharedPhysicalPropertiesVars.dat",'w')
@@ -236,14 +252,11 @@ def main():
             ofile.write("   "+c[1]+"\n")
     ofile.close()
 
-    
-
     aggregated_elmtypes_list = []
     for s in sub_name_list:
         print(f"========== Derived Types for {s} =================")
         for x in subroutines[s].elmtypes:
             if(x in replace_inst): x = x.replace('_inst','_vars')
-            print(x)
             aggregated_elmtypes_list.append(x)
     
     #clean up:
@@ -253,14 +266,18 @@ def main():
     aggregated_elmtypes_list = list(set(aggregated_elmtypes_list))
     
     # update the status of derived_types:
+    print("elmtype-r")
     for s in sub_name_list:
         for dtype, components in subroutines[s].elmtype_r.items():
             if(dtype in replace_inst): dtype = dtype.replace('_inst','_vars')
             if(dtype == 'col_cf_input'): dtype = 'col_cf'
             c13c14 = bool('c13' in dtype or 'c14' in dtype)
             if(c13c14): continue
+            if(not vdict[dtype].analyzed):
+                vdict[dtype].analyzeDerivedType(verbose=True) 
             for c in vdict[dtype].components:
-                if c[1] in components: c[0] = True
+                if c[1] in components: 
+                    c[0] = True
 
     print(f"Call Tree for {casename}")
     for sub in subroutines.values():
@@ -316,7 +333,6 @@ def main():
     print("setting physical properties type to True")
     for varname, dtype in vdict.items():
         if varname in ['veg_pp','lun_pp','col_pp','grc_pp','top_pp']:
-            print(varname)
             for c in dtype.components:
                 c[0] = True
 
@@ -324,7 +340,24 @@ def main():
                          files=needed_mods,casename=casename)
 
     wr.duplicate_clumps(vdict,aggregated_elmtypes_list)
+
     subname = casename.replace(unittests_dir,'')
+    complete = True 
+    if(complete):
+        for s in sub_name_list:
+            for dtype, components in subroutines[s].elmtype_w.items():
+                if(dtype in replace_inst): dtype = dtype.replace('_inst','_vars')
+                if(dtype == 'col_cf_input'): dtype = 'col_cf'
+                c13c14 = bool('c13' in dtype or 'c14' in dtype)
+                if(c13c14): continue
+                if(not vdict[dtype].analyzed):
+                    vdict[dtype].analyzeDerivedType(verbose=True) 
+                for c in vdict[dtype].components:
+                    if c[1] in components: 
+                        c[0] = True
+        for el in write_types:
+            if(el not in read_types):
+                read_types.append(el)
 
     wr.create_write_vars(vdict,read_types,subname=subname)
     wr.create_read_vars (vdict,read_types)

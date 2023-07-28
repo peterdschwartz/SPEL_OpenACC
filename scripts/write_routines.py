@@ -105,7 +105,7 @@ def generate_makefile(files,casename):
     noopt_list = ["fileio_mod","readConstants","readMod","duplicateMod"]
     for f in noopt_list:
         ofile.write(f"{f}.o : {f}.F90"+"\n")
-        ofile.write("\t"+f"$(FC) -O0 -c $({MODEL_FLAGS}) $<"+"\n")
+        ofile.write("\t"+f"$(FC) -O0 -c $(MODEL_FLAGS) $<"+"\n")
 
     ofile.write("%.o : %.F90"+"\n")
     ofile.write("\t"+"$(FC) $(FC_FLAGS) -c $<"+"\n")
@@ -114,6 +114,7 @@ def generate_makefile(files,casename):
     ofile.write("verificationMod.o : verificationMod.F90\n")
     ofile.write("\t"+"$(FC) -O0 -c $<\n")
     ofile.write("else\n")
+    ofile.write("verificationMod.o : verificationMod.F90\n")
     ofile.write("\t"+"$(FC) -O0 -ta=tesla:deepcopy -acc -c $<\n")
     ofile.write("endif\n")
     
@@ -365,7 +366,7 @@ def create_write_vars(vardict,read_types,subname,use_isotopes=False):
     E3SM prior to execution of the desired subroutine
     """
     print("Creating: writeMod.F90")
-    spaces = "     " #holds tabs indentations without using \t
+    spaces = "     " # holds tabs indentations without using \t
     ofile = open('writeMod.F90','w')
     ofile.write('module writeMod\n')
     ofile.write('contains\n')
@@ -373,7 +374,8 @@ def create_write_vars(vardict,read_types,subname,use_isotopes=False):
     ofile.write(spaces + "use fileio_mod, only : fio_open, fio_close\n")
     ofile.write(spaces+"use elm_varsur, only : wt_lunit, urban_valid\n")
     #use statements
-    print(read_types)
+    print("create_write_vars::",read_types)
+    li = ['veg_pp','col_pp','lun_pp','grc_pp','top_pp']
 
     for key in vardict.keys():
         if(vardict[key].name not in read_types): continue
@@ -385,10 +387,24 @@ def create_write_vars(vardict,read_types,subname,use_isotopes=False):
 
     ofile.write(spaces + 'implicit none \n')
     ofile.write(spaces +' integer :: fid \n')
-    ofile.write(spaces + f'character(len=256) :: ofile = "output_{subname}_vars.txt" \n')
+    ofile.write(spaces + f'character(len=64) :: ofile = "{subname}_vars.txt" \n')
     ofile.write(spaces + 'fid = 23 \n')
+    
+    for key in vardict.keys():
+            if(key in li):
+                vardict[key]._create_write_read_functions('w',ofile,gpu=True)
+    
+    # glc2lnd_vars%icemask: 
+    ofile.write(spaces+"write(fid,'(A)') 'glc2lnd_vars%icemask_grc'\n")
+    ofile.write(spaces+'write(fid,*) glc2lnd_vars%icemask_grc')
+
+    for key in vardict.keys():
+        c13c14 = bool('c13' in key or 'c14' in key)
+        if(key not in li and not(c13c14)):
+            if(vardict[key].name not in read_types): continue
+            vardict[key]._create_write_read_functions('w',ofile,gpu=True)
+
     ofile.write(spaces + "call fio_open(fid,ofile, 2) \n\n")
-    li = ['veg_pp','col_pp','lun_pp','grc_pp','top_pp']
     ofile.write(spaces+'write(fid,"(A)") "wt_lunit"\n')
     ofile.write(spaces+'write(fid,*) wt_lunit\n')
     ofile.write(spaces+'write(fid,"(A)") "urban_valid"\n')
@@ -428,6 +444,7 @@ def create_read_vars(vardict,read_types):
     ofile.write('use elm_varpar \n')
     ofile.write('use elm_varctl \n')
     ofile.write('use landunit_varcon \n')
+    ofile.write('use elm_instMod, only: glc2lnd_vars \n')
     ofile.write('contains \n')
 
     # read_weights
@@ -483,6 +500,8 @@ def create_read_vars(vardict,read_types):
     for key in vardict.keys():
         if(key in li):
             vardict[key]._create_write_read_functions('r',ofile)
+    ofile.write(spaces+'call fio_read(18,"glc2lnd_vars%icemask_grc",glc2lnd_vars%icemask_grc,errcode=errcode)\n')
+    ofile.write(spaces+'if(errcode .ne. 0) stop\n')
     ofile.write(spaces+"else\n")
     for key in vardict.keys():
         c13c14 = bool('c13' in key or 'c14' in key)
