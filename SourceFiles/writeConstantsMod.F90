@@ -28,7 +28,7 @@ contains
     use timeInfoMod
     implicit none
     integer :: fid = 23
-    character(len=256) :: ofile = "test-E3SM_constants.txt"
+    character(len=256) :: ofile = "E3SM_constants.txt"
 
     call fio_open(fid, ofile, 2)
 
