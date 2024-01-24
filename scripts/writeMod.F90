@@ -11,14 +11,19 @@ subroutine write_vars()
      use ColumnDataType, only : col_es 
      use ColumnDataType, only : col_ef 
      use ColumnDataType, only : col_ws 
+     use ColumnDataType, only : col_wf 
      use VegetationType, only : veg_pp 
      use VegetationDataType, only : veg_wf 
      use VegetationDataType, only : veg_ef 
+     use elm_instMod, only : soilstate_vars 
      use elm_instMod, only : solarabs_vars 
+     use UrbanParamsType, only : urbanparams_vars 
      use TopounitType, only : top_pp 
+     use LandunitDataType, only : lun_es 
+     use LandunitDataType, only : lun_ef 
      implicit none 
       integer :: fid 
-     character(len=64) :: ofile = "SoilFluxes_vars.txt" 
+     character(len=64) :: ofile = "SoilTemp_vars.txt" 
      fid = 23 
      
      !====================== grc_pp ======================!
@@ -165,8 +170,9 @@ subroutine write_vars()
      !$acc col_es%t_soisno, &
      !$acc col_es%t_ssbef, &
      !$acc col_es%t_h2osfc, &
-     !$acc col_es%t_h2osfc_bef, &
      !$acc col_es%t_grnd, &
+     !$acc col_es%hc_soi, &
+     !$acc col_es%hc_soisno, &
      !$acc col_es%emg, &
      !$acc col_es%fact, &
      !$acc col_es%c_h2osfc )
@@ -175,35 +181,49 @@ subroutine write_vars()
      
      !$acc update self(& 
      !$acc col_ef%eflx_h2osfc_to_snow, &
+     !$acc col_ef%eflx_snomelt, &
+     !$acc col_ef%eflx_snomelt_r, &
+     !$acc col_ef%eflx_snomelt_u, &
+     !$acc col_ef%eflx_bot, &
+     !$acc col_ef%eflx_fgr12, &
+     !$acc col_ef%eflx_fgr, &
      !$acc col_ef%eflx_building_heat, &
+     !$acc col_ef%eflx_urban_ac, &
+     !$acc col_ef%eflx_urban_heat, &
      !$acc col_ef%htvp, &
      !$acc col_ef%xmf, &
      !$acc col_ef%xmf_h2osfc, &
-     !$acc col_ef%errsoi )
+     !$acc col_ef%imelt )
      
      !====================== col_ws ======================!
      
      !$acc update self(& 
      !$acc col_ws%h2osoi_liq, &
      !$acc col_ws%h2osoi_ice, &
-     !$acc col_ws%do_capsnow, &
+     !$acc col_ws%h2osfc, &
+     !$acc col_ws%bw, &
+     !$acc col_ws%h2osno, &
+     !$acc col_ws%int_snow, &
+     !$acc col_ws%snow_depth, &
      !$acc col_ws%frac_sno_eff, &
      !$acc col_ws%frac_h2osfc )
+     
+     !====================== col_wf ======================!
+     
+     !$acc update self(& 
+     !$acc col_wf%qflx_h2osfc_to_ice, &
+     !$acc col_wf%qflx_snomelt, &
+     !$acc col_wf%qflx_snow_melt, &
+     !$acc col_wf%qflx_snofrz_lyr, &
+     !$acc col_wf%qflx_snofrz, &
+     !$acc col_wf%qflx_glcice, &
+     !$acc col_wf%qflx_glcice_melt )
      
      !====================== veg_wf ======================!
      
      !$acc update self(& 
-     !$acc veg_wf%qflx_sub_snow, &
      !$acc veg_wf%qflx_evap_soi, &
-     !$acc veg_wf%qflx_evap_veg, &
-     !$acc veg_wf%qflx_evap_can, &
-     !$acc veg_wf%qflx_evap_tot, &
-     !$acc veg_wf%qflx_evap_grnd, &
-     !$acc veg_wf%qflx_snwcp_liq, &
-     !$acc veg_wf%qflx_snwcp_ice, &
      !$acc veg_wf%qflx_tran_veg, &
-     !$acc veg_wf%qflx_dew_snow, &
-     !$acc veg_wf%qflx_dew_grnd, &
      !$acc veg_wf%qflx_ev_snow, &
      !$acc veg_wf%qflx_ev_soil, &
      !$acc veg_wf%qflx_ev_h2osfc )
@@ -212,40 +232,62 @@ subroutine write_vars()
      
      !$acc update self(& 
      !$acc veg_ef%eflx_sh_grnd, &
-     !$acc veg_ef%eflx_sh_veg, &
-     !$acc veg_ef%eflx_sh_tot, &
-     !$acc veg_ef%eflx_sh_tot_u, &
-     !$acc veg_ef%eflx_sh_tot_r, &
-     !$acc veg_ef%eflx_lh_tot, &
-     !$acc veg_ef%eflx_lh_tot_u, &
-     !$acc veg_ef%eflx_lh_tot_r, &
-     !$acc veg_ef%eflx_lh_vegt, &
-     !$acc veg_ef%eflx_lh_vege, &
-     !$acc veg_ef%eflx_lh_grnd, &
-     !$acc veg_ef%eflx_soil_grnd, &
-     !$acc veg_ef%eflx_soil_grnd_u, &
-     !$acc veg_ef%eflx_soil_grnd_r, &
+     !$acc veg_ef%eflx_sh_snow, &
+     !$acc veg_ef%eflx_sh_soil, &
+     !$acc veg_ef%eflx_sh_h2osfc, &
      !$acc veg_ef%eflx_lwrad_net, &
-     !$acc veg_ef%eflx_lwrad_net_r, &
-     !$acc veg_ef%eflx_lwrad_net_u, &
-     !$acc veg_ef%eflx_lwrad_out, &
-     !$acc veg_ef%eflx_lwrad_out_r, &
-     !$acc veg_ef%eflx_lwrad_out_u, &
+     !$acc veg_ef%eflx_gnet, &
+     !$acc veg_ef%eflx_anthro, &
      !$acc veg_ef%eflx_traffic, &
      !$acc veg_ef%eflx_wasteheat, &
      !$acc veg_ef%eflx_heat_from_ac, &
      !$acc veg_ef%dlrad, &
-     !$acc veg_ef%ulrad, &
-     !$acc veg_ef%cgrndl, &
-     !$acc veg_ef%cgrnds, &
-     !$acc veg_ef%errsoi )
+     !$acc veg_ef%cgrnd )
+     
+     !====================== soilstate_vars ======================!
+     
+     !$acc update self(& 
+     !$acc soilstate_vars%bsw_col, &
+     !$acc soilstate_vars%watsat_col, &
+     !$acc soilstate_vars%sucsat_col, &
+     !$acc soilstate_vars%thk_col, &
+     !$acc soilstate_vars%tkmg_col, &
+     !$acc soilstate_vars%tkdry_col, &
+     !$acc soilstate_vars%csol_col )
      
      !====================== solarabs_vars ======================!
      
      !$acc update self(& 
      !$acc solarabs_vars%sabg_soil_patch, &
      !$acc solarabs_vars%sabg_snow_patch, &
-     !$acc solarabs_vars%sabg_patch )
+     !$acc solarabs_vars%sabg_patch, &
+     !$acc solarabs_vars%sabg_chk_patch, &
+     !$acc solarabs_vars%sabg_lyr_patch )
+     
+     !====================== urbanparams_vars ======================!
+     
+     !$acc update self(& 
+     !$acc urbanparams_vars%nlev_improad, &
+     !$acc urbanparams_vars%tk_wall, &
+     !$acc urbanparams_vars%tk_roof, &
+     !$acc urbanparams_vars%tk_improad, &
+     !$acc urbanparams_vars%cv_wall, &
+     !$acc urbanparams_vars%cv_roof, &
+     !$acc urbanparams_vars%cv_improad, &
+     !$acc urbanparams_vars%t_building_max, &
+     !$acc urbanparams_vars%t_building_min )
+     
+     !====================== lun_es ======================!
+     
+     !$acc update self(& 
+     !$acc lun_es%t_building )
+     
+     !====================== lun_ef ======================!
+     
+     !$acc update self(& 
+     !$acc lun_ef%eflx_traffic, &
+     !$acc lun_ef%eflx_wasteheat, &
+     !$acc lun_ef%eflx_heat_from_ac )
      call fio_open(fid,ofile, 2) 
 
      write(fid,"(A)") "wt_lunit"
@@ -501,10 +543,12 @@ subroutine write_vars()
      write (fid, *) col_es%t_ssbef
      write (fid, "(A)") "col_es%t_h2osfc" 
      write (fid, *) col_es%t_h2osfc
-     write (fid, "(A)") "col_es%t_h2osfc_bef" 
-     write (fid, *) col_es%t_h2osfc_bef
      write (fid, "(A)") "col_es%t_grnd" 
      write (fid, *) col_es%t_grnd
+     write (fid, "(A)") "col_es%hc_soi" 
+     write (fid, *) col_es%hc_soi
+     write (fid, "(A)") "col_es%hc_soisno" 
+     write (fid, *) col_es%hc_soisno
      write (fid, "(A)") "col_es%emg" 
      write (fid, *) col_es%emg
      write (fid, "(A)") "col_es%fact" 
@@ -516,16 +560,32 @@ subroutine write_vars()
      
      write (fid, "(A)") "col_ef%eflx_h2osfc_to_snow" 
      write (fid, *) col_ef%eflx_h2osfc_to_snow
+     write (fid, "(A)") "col_ef%eflx_snomelt" 
+     write (fid, *) col_ef%eflx_snomelt
+     write (fid, "(A)") "col_ef%eflx_snomelt_r" 
+     write (fid, *) col_ef%eflx_snomelt_r
+     write (fid, "(A)") "col_ef%eflx_snomelt_u" 
+     write (fid, *) col_ef%eflx_snomelt_u
+     write (fid, "(A)") "col_ef%eflx_bot" 
+     write (fid, *) col_ef%eflx_bot
+     write (fid, "(A)") "col_ef%eflx_fgr12" 
+     write (fid, *) col_ef%eflx_fgr12
+     write (fid, "(A)") "col_ef%eflx_fgr" 
+     write (fid, *) col_ef%eflx_fgr
      write (fid, "(A)") "col_ef%eflx_building_heat" 
      write (fid, *) col_ef%eflx_building_heat
+     write (fid, "(A)") "col_ef%eflx_urban_ac" 
+     write (fid, *) col_ef%eflx_urban_ac
+     write (fid, "(A)") "col_ef%eflx_urban_heat" 
+     write (fid, *) col_ef%eflx_urban_heat
      write (fid, "(A)") "col_ef%htvp" 
      write (fid, *) col_ef%htvp
      write (fid, "(A)") "col_ef%xmf" 
      write (fid, *) col_ef%xmf
      write (fid, "(A)") "col_ef%xmf_h2osfc" 
      write (fid, *) col_ef%xmf_h2osfc
-     write (fid, "(A)") "col_ef%errsoi" 
-     write (fid, *) col_ef%errsoi
+     write (fid, "(A)") "col_ef%imelt" 
+     write (fid, *) col_ef%imelt
      
      !====================== col_ws ======================!
      
@@ -533,37 +593,44 @@ subroutine write_vars()
      write (fid, *) col_ws%h2osoi_liq
      write (fid, "(A)") "col_ws%h2osoi_ice" 
      write (fid, *) col_ws%h2osoi_ice
-     write (fid, "(A)") "col_ws%do_capsnow" 
-     write (fid, *) col_ws%do_capsnow
+     write (fid, "(A)") "col_ws%h2osfc" 
+     write (fid, *) col_ws%h2osfc
+     write (fid, "(A)") "col_ws%bw" 
+     write (fid, *) col_ws%bw
+     write (fid, "(A)") "col_ws%h2osno" 
+     write (fid, *) col_ws%h2osno
+     write (fid, "(A)") "col_ws%int_snow" 
+     write (fid, *) col_ws%int_snow
+     write (fid, "(A)") "col_ws%snow_depth" 
+     write (fid, *) col_ws%snow_depth
      write (fid, "(A)") "col_ws%frac_sno_eff" 
      write (fid, *) col_ws%frac_sno_eff
      write (fid, "(A)") "col_ws%frac_h2osfc" 
      write (fid, *) col_ws%frac_h2osfc
      
+     !====================== col_wf ======================!
+     
+     write (fid, "(A)") "col_wf%qflx_h2osfc_to_ice" 
+     write (fid, *) col_wf%qflx_h2osfc_to_ice
+     write (fid, "(A)") "col_wf%qflx_snomelt" 
+     write (fid, *) col_wf%qflx_snomelt
+     write (fid, "(A)") "col_wf%qflx_snow_melt" 
+     write (fid, *) col_wf%qflx_snow_melt
+     write (fid, "(A)") "col_wf%qflx_snofrz_lyr" 
+     write (fid, *) col_wf%qflx_snofrz_lyr
+     write (fid, "(A)") "col_wf%qflx_snofrz" 
+     write (fid, *) col_wf%qflx_snofrz
+     write (fid, "(A)") "col_wf%qflx_glcice" 
+     write (fid, *) col_wf%qflx_glcice
+     write (fid, "(A)") "col_wf%qflx_glcice_melt" 
+     write (fid, *) col_wf%qflx_glcice_melt
+     
      !====================== veg_wf ======================!
      
-     write (fid, "(A)") "veg_wf%qflx_sub_snow" 
-     write (fid, *) veg_wf%qflx_sub_snow
      write (fid, "(A)") "veg_wf%qflx_evap_soi" 
      write (fid, *) veg_wf%qflx_evap_soi
-     write (fid, "(A)") "veg_wf%qflx_evap_veg" 
-     write (fid, *) veg_wf%qflx_evap_veg
-     write (fid, "(A)") "veg_wf%qflx_evap_can" 
-     write (fid, *) veg_wf%qflx_evap_can
-     write (fid, "(A)") "veg_wf%qflx_evap_tot" 
-     write (fid, *) veg_wf%qflx_evap_tot
-     write (fid, "(A)") "veg_wf%qflx_evap_grnd" 
-     write (fid, *) veg_wf%qflx_evap_grnd
-     write (fid, "(A)") "veg_wf%qflx_snwcp_liq" 
-     write (fid, *) veg_wf%qflx_snwcp_liq
-     write (fid, "(A)") "veg_wf%qflx_snwcp_ice" 
-     write (fid, *) veg_wf%qflx_snwcp_ice
      write (fid, "(A)") "veg_wf%qflx_tran_veg" 
      write (fid, *) veg_wf%qflx_tran_veg
-     write (fid, "(A)") "veg_wf%qflx_dew_snow" 
-     write (fid, *) veg_wf%qflx_dew_snow
-     write (fid, "(A)") "veg_wf%qflx_dew_grnd" 
-     write (fid, *) veg_wf%qflx_dew_grnd
      write (fid, "(A)") "veg_wf%qflx_ev_snow" 
      write (fid, *) veg_wf%qflx_ev_snow
      write (fid, "(A)") "veg_wf%qflx_ev_soil" 
@@ -575,44 +642,18 @@ subroutine write_vars()
      
      write (fid, "(A)") "veg_ef%eflx_sh_grnd" 
      write (fid, *) veg_ef%eflx_sh_grnd
-     write (fid, "(A)") "veg_ef%eflx_sh_veg" 
-     write (fid, *) veg_ef%eflx_sh_veg
-     write (fid, "(A)") "veg_ef%eflx_sh_tot" 
-     write (fid, *) veg_ef%eflx_sh_tot
-     write (fid, "(A)") "veg_ef%eflx_sh_tot_u" 
-     write (fid, *) veg_ef%eflx_sh_tot_u
-     write (fid, "(A)") "veg_ef%eflx_sh_tot_r" 
-     write (fid, *) veg_ef%eflx_sh_tot_r
-     write (fid, "(A)") "veg_ef%eflx_lh_tot" 
-     write (fid, *) veg_ef%eflx_lh_tot
-     write (fid, "(A)") "veg_ef%eflx_lh_tot_u" 
-     write (fid, *) veg_ef%eflx_lh_tot_u
-     write (fid, "(A)") "veg_ef%eflx_lh_tot_r" 
-     write (fid, *) veg_ef%eflx_lh_tot_r
-     write (fid, "(A)") "veg_ef%eflx_lh_vegt" 
-     write (fid, *) veg_ef%eflx_lh_vegt
-     write (fid, "(A)") "veg_ef%eflx_lh_vege" 
-     write (fid, *) veg_ef%eflx_lh_vege
-     write (fid, "(A)") "veg_ef%eflx_lh_grnd" 
-     write (fid, *) veg_ef%eflx_lh_grnd
-     write (fid, "(A)") "veg_ef%eflx_soil_grnd" 
-     write (fid, *) veg_ef%eflx_soil_grnd
-     write (fid, "(A)") "veg_ef%eflx_soil_grnd_u" 
-     write (fid, *) veg_ef%eflx_soil_grnd_u
-     write (fid, "(A)") "veg_ef%eflx_soil_grnd_r" 
-     write (fid, *) veg_ef%eflx_soil_grnd_r
+     write (fid, "(A)") "veg_ef%eflx_sh_snow" 
+     write (fid, *) veg_ef%eflx_sh_snow
+     write (fid, "(A)") "veg_ef%eflx_sh_soil" 
+     write (fid, *) veg_ef%eflx_sh_soil
+     write (fid, "(A)") "veg_ef%eflx_sh_h2osfc" 
+     write (fid, *) veg_ef%eflx_sh_h2osfc
      write (fid, "(A)") "veg_ef%eflx_lwrad_net" 
      write (fid, *) veg_ef%eflx_lwrad_net
-     write (fid, "(A)") "veg_ef%eflx_lwrad_net_r" 
-     write (fid, *) veg_ef%eflx_lwrad_net_r
-     write (fid, "(A)") "veg_ef%eflx_lwrad_net_u" 
-     write (fid, *) veg_ef%eflx_lwrad_net_u
-     write (fid, "(A)") "veg_ef%eflx_lwrad_out" 
-     write (fid, *) veg_ef%eflx_lwrad_out
-     write (fid, "(A)") "veg_ef%eflx_lwrad_out_r" 
-     write (fid, *) veg_ef%eflx_lwrad_out_r
-     write (fid, "(A)") "veg_ef%eflx_lwrad_out_u" 
-     write (fid, *) veg_ef%eflx_lwrad_out_u
+     write (fid, "(A)") "veg_ef%eflx_gnet" 
+     write (fid, *) veg_ef%eflx_gnet
+     write (fid, "(A)") "veg_ef%eflx_anthro" 
+     write (fid, *) veg_ef%eflx_anthro
      write (fid, "(A)") "veg_ef%eflx_traffic" 
      write (fid, *) veg_ef%eflx_traffic
      write (fid, "(A)") "veg_ef%eflx_wasteheat" 
@@ -621,14 +662,25 @@ subroutine write_vars()
      write (fid, *) veg_ef%eflx_heat_from_ac
      write (fid, "(A)") "veg_ef%dlrad" 
      write (fid, *) veg_ef%dlrad
-     write (fid, "(A)") "veg_ef%ulrad" 
-     write (fid, *) veg_ef%ulrad
-     write (fid, "(A)") "veg_ef%cgrndl" 
-     write (fid, *) veg_ef%cgrndl
-     write (fid, "(A)") "veg_ef%cgrnds" 
-     write (fid, *) veg_ef%cgrnds
-     write (fid, "(A)") "veg_ef%errsoi" 
-     write (fid, *) veg_ef%errsoi
+     write (fid, "(A)") "veg_ef%cgrnd" 
+     write (fid, *) veg_ef%cgrnd
+     
+     !====================== soilstate_vars ======================!
+     
+     write (fid, "(A)") "soilstate_vars%bsw_col" 
+     write (fid, *) soilstate_vars%bsw_col
+     write (fid, "(A)") "soilstate_vars%watsat_col" 
+     write (fid, *) soilstate_vars%watsat_col
+     write (fid, "(A)") "soilstate_vars%sucsat_col" 
+     write (fid, *) soilstate_vars%sucsat_col
+     write (fid, "(A)") "soilstate_vars%thk_col" 
+     write (fid, *) soilstate_vars%thk_col
+     write (fid, "(A)") "soilstate_vars%tkmg_col" 
+     write (fid, *) soilstate_vars%tkmg_col
+     write (fid, "(A)") "soilstate_vars%tkdry_col" 
+     write (fid, *) soilstate_vars%tkdry_col
+     write (fid, "(A)") "soilstate_vars%csol_col" 
+     write (fid, *) soilstate_vars%csol_col
      
      !====================== solarabs_vars ======================!
      
@@ -638,6 +690,45 @@ subroutine write_vars()
      write (fid, *) solarabs_vars%sabg_snow_patch
      write (fid, "(A)") "solarabs_vars%sabg_patch" 
      write (fid, *) solarabs_vars%sabg_patch
+     write (fid, "(A)") "solarabs_vars%sabg_chk_patch" 
+     write (fid, *) solarabs_vars%sabg_chk_patch
+     write (fid, "(A)") "solarabs_vars%sabg_lyr_patch" 
+     write (fid, *) solarabs_vars%sabg_lyr_patch
+     
+     !====================== urbanparams_vars ======================!
+     
+     write (fid, "(A)") "urbanparams_vars%nlev_improad" 
+     write (fid, *) urbanparams_vars%nlev_improad
+     write (fid, "(A)") "urbanparams_vars%tk_wall" 
+     write (fid, *) urbanparams_vars%tk_wall
+     write (fid, "(A)") "urbanparams_vars%tk_roof" 
+     write (fid, *) urbanparams_vars%tk_roof
+     write (fid, "(A)") "urbanparams_vars%tk_improad" 
+     write (fid, *) urbanparams_vars%tk_improad
+     write (fid, "(A)") "urbanparams_vars%cv_wall" 
+     write (fid, *) urbanparams_vars%cv_wall
+     write (fid, "(A)") "urbanparams_vars%cv_roof" 
+     write (fid, *) urbanparams_vars%cv_roof
+     write (fid, "(A)") "urbanparams_vars%cv_improad" 
+     write (fid, *) urbanparams_vars%cv_improad
+     write (fid, "(A)") "urbanparams_vars%t_building_max" 
+     write (fid, *) urbanparams_vars%t_building_max
+     write (fid, "(A)") "urbanparams_vars%t_building_min" 
+     write (fid, *) urbanparams_vars%t_building_min
+     
+     !====================== lun_es ======================!
+     
+     write (fid, "(A)") "lun_es%t_building" 
+     write (fid, *) lun_es%t_building
+     
+     !====================== lun_ef ======================!
+     
+     write (fid, "(A)") "lun_ef%eflx_traffic" 
+     write (fid, *) lun_ef%eflx_traffic
+     write (fid, "(A)") "lun_ef%eflx_wasteheat" 
+     write (fid, *) lun_ef%eflx_wasteheat
+     write (fid, "(A)") "lun_ef%eflx_heat_from_ac" 
+     write (fid, *) lun_ef%eflx_heat_from_ac
      call fio_close(fid) 
 end subroutine write_vars
 end module writeMod

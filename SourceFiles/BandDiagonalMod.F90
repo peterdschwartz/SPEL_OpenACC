@@ -19,7 +19,6 @@ module BandDiagonalMod
   !
   ! !PUBLIC MEMBER FUNCTIONS:
   public :: BandDiagonal
-  public :: BandDiagonal_noloop
   !-----------------------------------------------------------------------
 
 contains
@@ -162,11 +161,12 @@ contains
      nmax = max(nmax,n)
    end do 
 
+   !#py write(iulog,*)  "BandDiagonal:: nmax =",nmax 
    ! m is the number of rows required for storage space by dgbsv
    m=2*kl+ku+1
    ! n is the number of levels (snow/soil)
    !scs: replace ubj with jbot
-   allocate(ab(m,nmax,numf), temp(m,nmax,numf), ipiv(nmax,numf), result(nmax,numf) ) 
+   allocate(ab(1:m,1:nmax,1:numf), temp(1:m,1:nmax,1:numf), ipiv(1:nmax,1:numf), result(1:nmax,1:numf) ) 
 
    !$acc enter data create(ab(:,:,:) ,temp(:,:,:), ipiv(:,:), result(:,:) )
 
@@ -181,56 +181,60 @@ contains
       end do 
    end do 
 
-   !$acc parallel loop independent gang vector collapse(2) default(present)
-   do fc = 1, numf
-      do j = 1,nmax
-         ci = filter(fc)
-         result(j,fc) = 0._r8
-         if(j>=jtop(ci) .and. j <= jbot(ci)) then 
-            result(j,fc) = r(ci,j)
-         end if
-      end do
-   end do
-
    !$acc parallel loop independent gang vector default(present)
    do fc = 1, numf
-      ci = filter(fc)  
-      ! 2nd superdiagonal
-      ab(kl+ku-1,3:n,fc) = b(ci,1,jtop(ci):jbot(ci)-2)   ! 2nd superdiagonal
-      ab(kl+ku+0,2:n,fc) = b(ci,2,jtop(ci):jbot(ci)-1)   ! 1st superdiagonal
-      ab(kl+ku+1,1:n,fc) = b(ci,3,jtop(ci):jbot(ci)  )   ! diagonal
-      ab(kl+ku+2,1:n-1,fc) = b(ci,4,jtop(ci)+1:jbot(ci)) ! 1st subdiagonal
-      ab(kl+ku+3,1:n-2,fc) = b(ci,5,jtop(ci)+2:jbot(ci)) ! 2nd subdiagonal 
+      ci = filter(fc)
+      n = jbot(ci)-jtop(ci)+1
+      result(1:n,fc) = r(ci, jtop(ci):jbot(ci))
+   end do
+
+   !$acc parallel loop independent gang vector default(present)  
+   do fc = 1, numf
+      ci = filter(fc) 
+      n = jbot(ci)-jtop(ci)+1
+      !band 1 :
+      !$acc loop seq 
+      do j = 0, n-3
+         ! ab(kl+ku-1,3:n)=b(ci,1,jtop(ci):jbot(ci)-2)   ! 2nd superdiagonal
+         ab(kl+ku-1,3+j,fc) = b(ci,1,jtop(ci)+j)   ! 2nd superdiagonal
+      end do 
+      !$acc loop seq 
+      do j = 0, n-2
+         !ab(kl+ku+0,2:n,fc) = b(ci,2,jtop(ci):jbot(ci)-1)   ! 1st superdiagonal
+         ab(kl+ku+0,2+j,fc) = b(ci,2,jtop(ci)+j) 
+      end do 
+      !$acc loop seq 
+      do j = 0, n-1 
+         !ab(kl+ku+1,1:n,fc) = b(ci,3,jtop(ci):jbot(ci)  )   ! diagonal
+         ab(kl+ku+1,1+j,fc) = b(ci,3,jtop(ci)+j)   ! diagonal
+      end do 
+      !$acc loop seq 
+      do j = 0 , n-2
+         !ab(kl+ku+2,1:n-1,fc) = b(ci,4,jtop(ci)+1:jbot(ci)) ! 1st subdiagonal
+         ab(kl+ku+2,1+j,fc) = b(ci,4,jtop(ci)+1+j ) ! 1st subdiagonal
+      end do
+      !$acc loop seq 
+      do j = 0, n-3 
+         !ab(kl+ku+3,1:n-2,fc) = b(ci,5,jtop(ci)+2:jbot(ci)) ! 2nd subdiagonal 
+         ab(kl+ku+3,1+j,fc) = b(ci,5,jtop(ci)+2+j) ! 2nd subdiagonal 
+      end do 
    end do
 
    !$acc parallel loop independent gang vector default(present) collapse(3)
-   do fc = 1, numf
-      do j = 1, nmax
+   do fc = 1, numf  
+      do j = 1, nmax 
          do k = 1, m
             temp(k,j,fc) = ab(k,j,fc) 
          end do 
       end do 
    end do 
     
-   !$acc parallel loop independent gang vector default(present) 
+   !$acc parallel loop independent gang vector default(present) present(ipiv(:,:))  
    do fc = 1,numf
       ci = filter(fc)
-
       m=2*kl+ku+1
       n = jbot(ci)-jtop(ci)+1
-      !NOTE: DGBSV call tree: 
-      !   dgbsv 
-      !    ---> dgbtrf
-      !          ---> dgbtf2
-      !                ---> idamax
-      !                ---> dswap 
-      !                ---> dscal
-      !                ---> dger 
-      !    ---> dgbtrs
-      !          ---> dswap 
-      !          ---> dger 
-      !          ---> dtbsv
-      !    
+        
       call dgbsv_oacc(n, kl, ku, 1, ab(1:m,1:n,fc), m ,ipiv(1:n,fc), result(1:n,fc),n,info)
       ! ! DGBSV( N, KL, KU, NRHS, AB, LDAB, IPIV, B, LDB, INFO )
       !  call dgbsv( n, kl, ku, 1, ab, m, ipiv, result, n, info )
@@ -239,12 +243,12 @@ contains
 
        if(info /= 0) then
           print *, 'index: ', ci
-          !#py write(iulog,*)'n,kl,ku,m ',n,kl,ku,m
-          !#py write(iulog,*)'dgbsv info: ',ci,info
+         !#py write(iulog,*)'n,kl,ku,m ',n,kl,ku,m
+         !#py write(iulog,*)'dgbsv info: ',ci,info
 
-          !#py write(iulog,*) ''
-          !#py write(iulog,*) 'ab matrix'
-          !#py write(iulog,*) ''
+         !#py write(iulog,*) ''
+         !#py write(iulog,*) 'ab matrix'
+         !#py write(iulog,*) ''
           stop
        endif
 

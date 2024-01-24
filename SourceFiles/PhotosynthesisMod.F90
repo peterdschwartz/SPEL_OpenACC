@@ -1,6 +1,6 @@
 module  PhotosynthesisMod
 
-!#py #include "shr_assert.h"
+#include "shr_assert.h"
   !------------------------------------------------------------------------------
   ! !DESCRIPTION:
   ! Leaf photosynthesis and stomatal conductance calculation as described by
@@ -9,8 +9,8 @@ module  PhotosynthesisMod
   !
   ! !USES:
   use shr_kind_mod        , only : r8 => shr_kind_r8
-  !#py !#py use shr_log_mod         , only : errMsg => shr_log_errMsg
-  !#py use abortutils          , only : endrun
+  use shr_log_mod         , only : errMsg => shr_log_errMsg
+  use abortutils          , only : endrun
   use elm_varctl          , only : iulog, use_c13, use_c14, use_cn, use_fates
   use elm_varpar          , only : nlevcan
   use elm_varctl          , only : use_hydrstress
@@ -113,7 +113,7 @@ contains
   subroutine allocParams ( this )
     !
     ! !USES:
-    !#py use shr_infnan_mod , only : nan => shr_infnan_nan, assignment(=)
+    use shr_infnan_mod , only : nan => shr_infnan_nan, assignment(=)
 
     implicit none
 
@@ -133,8 +133,8 @@ contains
     allocate( this%psi_soil_ref(0:mxpft) )          ; this%psi_soil_ref(:) = spval
 
     if ( use_hydrstress .and. nvegwcs /= 4 )then
-       !#py call endrun(msg='Error:: the Plant Hydraulics Stress methodology is for the spacA function is hardcoded for nvegwcs==4' &
-                   !#py !#py //errMsg(__FILE__, __LINE__))
+       call endrun(msg='Error:: the Plant Hydraulics Stress methodology is for the spacA function is hardcoded for nvegwcs==4' &
+                   //errMsg(__FILE__, __LINE__))
     end if
 
   end subroutine allocParams
@@ -143,7 +143,7 @@ contains
   subroutine readParams ( this, ncid )
     !
     ! !USES:
-    !#py use ncdio_pio , only : file_desc_t,ncd_io
+    use ncdio_pio , only : file_desc_t,ncd_io
     implicit none
     ! !ARGUMENTS:
     !class(photosyns_type) :: this
@@ -169,28 +169,28 @@ contains
     true_size = (mxpft_nc+1)*nvegwcs
     true_rows = mxpft_nc+1
     tString = "krmax"
-    !#py !#py call ncd_io(varname=trim(tString),data=temp1d, flag='read', ncid=ncid,readvar=readv)
-    !#py !#py if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
+    call ncd_io(varname=trim(tString),data=temp1d, flag='read', ncid=ncid,readvar=readv)
+    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
     params_inst%krmax=temp1d
     tString = "psi_soil_ref"
-    !#py !#py call ncd_io(varname=trim(tString),data=temp1d, flag='read', ncid=ncid,readvar=readv)
-    !#py !#py if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
+    call ncd_io(varname=trim(tString),data=temp1d, flag='read', ncid=ncid,readvar=readv)
+    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
     params_inst%psi_soil_ref=temp1d
     tString = "kmax"
-    !#py !#py call ncd_io(varname=trim(tString),data=temp2d, flag='read', ncid=ncid,readvar=readv)
-    !#py !#py if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
+    call ncd_io(varname=trim(tString),data=temp2d, flag='read', ncid=ncid,readvar=readv)
+    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
     temp2dto1d(:) = reshape(temp2d(:,:),(/size1d/))
     temp1dto2d(:,:) = reshape(temp2dto1d(1:true_size),(/true_rows,nvegwcs/))
     params_inst%kmax=temp1dto2d
     tString = "psi50"
-    !#py !#py call ncd_io(varname=trim(tString),data=temp2d, flag='read', ncid=ncid, readvar=readv)
-    !#py !#py if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
+    call ncd_io(varname=trim(tString),data=temp2d, flag='read', ncid=ncid, readvar=readv)
+    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
     temp2dto1d(:) = reshape(temp2d(:,:),(/size1d/))
     temp1dto2d(:,:) = reshape(temp2dto1d(1:true_size),(/true_rows,nvegwcs/))
     params_inst%psi50=temp1dto2d
     tString = "ck"
-    !#py !#py call ncd_io(varname=trim(tString),data=temp2d, flag='read', ncid=ncid,readvar=readv)
-    !#py !#py if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
+    call ncd_io(varname=trim(tString),data=temp2d, flag='read', ncid=ncid,readvar=readv)
+    if ( .not. readv ) call endrun(msg=trim(errCode)//trim(tString)//errMsg(__FILE__, __LINE__))
     temp2dto1d(:) = reshape(temp2d(:,:),(/size1d/))
     temp1dto2d(:,:) = reshape(temp2dto1d(1:true_size),(/true_rows,nvegwcs/))
     params_inst%ck=temp1dto2d
@@ -207,7 +207,7 @@ contains
 
 
   !------------------------------------------------------------------------------
-  subroutine Photosynthesis ( bounds, fn, filterp, &
+  subroutine Photosynthesis ( bounds, fn, filterp,converged, &
        esat_tv, eair, oair, cair, rb, btran, &
        dayl_factor, surfalb_vars, solarabs_vars, &
        canopystate_vars, photosyns_vars, phase, &
@@ -231,7 +231,8 @@ contains
     ! !ARGUMENTS:
     type(bounds_type)      , intent(in)    :: bounds
     integer                , intent(in)    :: fn                   ! size of pft filter
-    integer                , intent(in)    :: filterp(fn)          ! patch filter
+    integer                , intent(in)    :: filterp(1:fn)          ! patch filter
+    integer                , intent(in)    :: converged(1:fn) 
     real(r8)               , intent(in)    :: esat_tv( 1:fn )      ! saturation vapor pressure at t_veg (Pa) [pft]
     real(r8)               , intent(in)    :: eair(1:fn)           ! vapor pressure of canopy air (Pa) [pft]
     real(r8)               , intent(in)    :: oair(1:fn)           ! Atmospheric O2 partial pressure (Pa) [pft]
@@ -245,20 +246,20 @@ contains
     type(photosyns_type)   , intent(inout) :: photosyns_vars
     character(len=3)       , intent(in)    :: phase               ! 'sun' or 'sha'
     !!passing these variables as arguments to avoid deep copying the local pointers to GPU
-    real(r8), intent(in) :: par_z    (:,:)  ! Input:  [real(r8) (:,:) ] par absorbed per unit lai for canopy layer (w/m**2)
-    real(r8), intent(in) :: lai_z    (:,:)  ! Input:  [real(r8) (:,:) ] leaf area index for canopy layer, sunlit or shaded
-    real(r8), intent(in) :: vcmaxcint(:)    ! Input:  [real(r8) (:)   ] leaf to canopy scaling coefficient
-    real(r8), intent(inout) :: alphapsn (:) ! Output:  [real(r8) (:)   ] 13C fractionation factor for PSN ()
-    real(r8), intent(inout) :: ci_z  (:,:)  ! Output: [real(r8) (:,:) ] intracellular leaf CO2 (Pa)
-    real(r8), intent(inout) :: rs    (:)    ! Output: [real(r8) (:)   ] leaf stomatal resistance (s/m)
-    real(r8), intent(inout) :: rs_z  (:,:)  ! Output: [real(r8) (:,:) ] canopy layer: leaf stomatal resistance (s/m)
-    real(r8), intent(inout) :: lmr   (:)    ! Output: [real(r8) (:)   ] leaf maintenance respiration rate (umol CO2/m**2/s)
-    real(r8), intent(inout) :: lmr_z (:,:)  ! Output: [real(r8) (:,:) ] canopy layer: leaf maintenance respiration rate (umol CO2/m**2/s)
-    real(r8), intent(inout) :: psn   (:)    ! Output: [real(r8) (:)   ] foliage photosynthesis (umol co2 /m**2/ s) [always +]
-    real(r8), intent(inout) :: psn_z (:,:)  ! Output: [real(r8) (:,:) ] canopy layer: foliage photosynthesis (umol co2 /m**2/ s) [always +]
-    real(r8), intent(inout) :: psn_wc(:)    ! Output: [real(r8) (:)   ] Rubisco-limited foliage photosynthesis (umol co2 /m**2/ s) [always +]
-    real(r8), intent(inout) :: psn_wj(:)    ! Output: [real(r8) (:)   ] RuBP-limited foliage photosynthesis (umol co2 /m**2/ s) [always +]
-    real(r8), intent(inout) :: psn_wp(:)    ! Output: [real(r8) (:)   ] product-limited foliage photosynthesis (umol co2 /m**2/ s) [always +]
+    real(r8), intent(in) :: par_z    (bounds%begp:,:)  ! Input:  [real(r8) (:,:) ] par absorbed per unit lai for canopy layer (w/m**2)
+    real(r8), intent(in) :: lai_z    (bounds%begp:,:)  ! Input:  [real(r8) (:,:) ] leaf area index for canopy layer, sunlit or shaded
+    real(r8), intent(in) :: vcmaxcint(bounds%begp:)    ! Input:  [real(r8) (:)   ] leaf to canopy scaling coefficient
+    real(r8), intent(inout) :: alphapsn (bounds%begp:) ! Output:  [real(r8) (:)   ] 13C fractionation factor for PSN ()
+    real(r8), intent(inout) :: ci_z  (bounds%begp:,:)  ! Output: [real(r8) (:,:) ] intracellular leaf CO2 (Pa)
+    real(r8), intent(inout) :: rs    (bounds%begp:)    ! Output: [real(r8) (:)   ] leaf stomatal resistance (s/m)
+    real(r8), intent(inout) :: rs_z  (bounds%begp:,:)  ! Output: [real(r8) (:,:) ] canopy layer: leaf stomatal resistance (s/m)
+    real(r8), intent(inout) :: lmr   (bounds%begp:)    ! Output: [real(r8) (:)   ] leaf maintenance respiration rate (umol CO2/m**2/s)
+    real(r8), intent(inout) :: lmr_z (bounds%begp:,:)  ! Output: [real(r8) (:,:) ] canopy layer: leaf maintenance respiration rate (umol CO2/m**2/s)
+    real(r8), intent(inout) :: psn   (bounds%begp:)    ! Output: [real(r8) (:)   ] foliage photosynthesis (umol co2 /m**2/ s) [always +]
+    real(r8), intent(inout) :: psn_z (bounds%begp:,:)  ! Output: [real(r8) (:,:) ] canopy layer: foliage photosynthesis (umol co2 /m**2/ s) [always +]
+    real(r8), intent(inout) :: psn_wc(bounds%begp:)    ! Output: [real(r8) (:)   ] Rubisco-limited foliage photosynthesis (umol co2 /m**2/ s) [always +]
+    real(r8), intent(inout) :: psn_wj(bounds%begp:)    ! Output: [real(r8) (:)   ] RuBP-limited foliage photosynthesis (umol co2 /m**2/ s) [always +]
+    real(r8), intent(inout) :: psn_wp(bounds%begp:)    ! Output: [real(r8) (:)   ] product-limited foliage photosynthesis (umol co2 /m**2/ s) [always +]
 
     !
     ! !LOCAL VARIABLES:
@@ -412,15 +413,19 @@ contains
       ! Bonan et al (2011) JGR, 116, doi:10.1029/2010JG001593
       !==============================================================================!
 
+      !$acc enter data create(fnr,act25,vcmaxha,jmaxha,tpuha,lmrha,vcmaxhd,jmaxhd,tpuhd,lmrhd,lmrse,lmrc) 
       ! Miscellaneous parameters, from Bonan et al (2011) JGR, 116, doi:10.1029/2010JG001593
       ! vcmax25 parameters, from CN
+      !$acc serial default(present)  
       p = filterp(1)
       i_type = veg_pp%itype(p)
       fnr   = veg_vp%fnr(i_type)   !7.16_r8
       act25 = veg_vp%act25(i_type) !3.6_r8   !umol/mgRubisco/min
+      
       ! Convert rubisco activity units from umol/mgRubisco/min ->
       ! umol/gRubisco/s
       act25 = act25 * 1000.0_r8 / 60.0_r8
+      
       ! Activation energy, from:
       ! Bernacchi et al (2001) Plant, Cell and Environment 24:253-259
       ! Bernacchi et al (2003) Plant, Cell and Environment 26:1419-1430
@@ -430,6 +435,7 @@ contains
       jmaxha  = veg_vp%jmaxha(i_type) !50000._r8
       tpuha   = veg_vp%tpuha(i_type)  !72000._r8
       lmrha   = veg_vp%lmrha(i_type)  !46390._r8
+      
       ! High temperature deactivation, from:
       ! Leuning (2002) Plant, Cell and Environment 25:1205-1210
       ! The factor "c" scales the deactivation to a value of 1.0 at 25C
@@ -439,12 +445,12 @@ contains
       lmrhd   = veg_vp%lmrhd(i_type)   !150650._r8
       lmrse   = veg_vp%lmrse(i_type)   !490._r8
       lmrc    = fth25 (lmrhd, lmrse)
-
-      !$acc enter data copyin(fnr,act25,vcmaxha,jmaxha,tpuha,lmrha,vcmaxhd,jmaxhd,tpuhd,lmrhd,lmrse,lmrc) &
-      !$acc create(jmax_z(1:fn,nlevcan), lnc(1:fn),kn(1:fn),psn_wc_z(1:fn,:nlevcan),psn_wj_z(1:fn,:nlevcan), psn_wp_z(1:fn,:nlevcan) )
+      !$acc end serial 
+      !$acc enter data create(jmax_z(:,:), lnc(:),kn(:),psn_wc_z(:,:),psn_wj_z(:,:), psn_wp_z(:,:) )
 
       !$acc parallel loop independent gang vector default(present) private(p,c,t,i_type,kc25,ko25,sco,cp25)
       do f = 1, fn
+         if(converged(f)) cycle
          p = filterp(f)
          c = veg_pp%column(p)
          t = veg_pp%topounit(p)
@@ -479,13 +485,14 @@ contains
          cp(p) = cp25 * ft(t_veg(p), veg_vp%cpha(i_type) )!37830._r8
 
       end do
-      !$acc wait
+      
       ! Multi-layer parameters scaled by leaf nitrogen profile.
       ! Loop through each canopy layer to calculate nitrogen profile using
       ! cumulative lai at the midpoint of the layer
-      call cpu_time(startt)
-      !$acc parallel loop independent gang vector private(p) default(present)
+      
+      !$acc parallel loop independent gang vector default(present)
       do f = 1, fn
+         if(converged(f)) cycle
          p = filterp(f)
          i_type = veg_pp%itype(p)
          if ( .not. nu_com_leaf_physiology) then
@@ -508,7 +515,7 @@ contains
             if ( Carbon_only  .or.  carbonphosphorus_only ) then
 
                lnc(f) = 1._r8 / (slatop(i_type) * leafcn(i_type))
-               vcmax25top = lnc(f) * flnr(i_type) * fnr * act25 * dayl_factor(p)
+               vcmax25top = lnc(f) * flnr(i_type) * fnr * act25 * dayl_factor(f)
                vcmax25top = vcmax25top * fnitr(i_type)
                jmax25top = (2.59_r8 - 0.035_r8*min(max((t10(p)-tfrz),11._r8),35._r8)) * vcmax25top
 
@@ -546,7 +553,7 @@ contains
                   lnc(f) = 0.0_r8
                end if
 
-               vcmax25top = (i_vcmax(i_type) + s_vcmax(i_type) * lnc(f)) * dayl_factor(p)
+               vcmax25top = (i_vcmax(i_type) + s_vcmax(i_type) * lnc(f)) * dayl_factor(f)
                jmax25top = (2.59_r8 - 0.035_r8*min(max((t10(p)-tfrz),11._r8),35._r8)) * vcmax25top
                vcmax25top = min(max(vcmax25top, 10.0_r8), 150.0_r8)
                jmax25top = min(max(jmax25top, 10.0_r8), 250.0_r8)
@@ -588,8 +595,8 @@ contains
                      lpc = min(max(lpc,0.014_r8),0.85_r8) ! based on doi: 10.1002/ece3.1173
                      vcmax25top = exp(vcmax_np1(i_type) + vcmax_np2(i_type)*log(lnc(f)) + &
                           vcmax_np3(i_type)*log(lpc) + vcmax_np4(i_type)*log(lnc(f))*log(lpc ))&
-                          * dayl_factor(p)
-                     jmax25top = exp(jmax_np1 + jmax_np2*log(vcmax25top) + jmax_np3*log(lpc )) * dayl_factor(p)
+                          * dayl_factor(f)
+                     jmax25top = exp(jmax_np1 + jmax_np2*log(vcmax25top) + jmax_np3*log(lpc )) * dayl_factor(f)
                      vcmax25top = min(max(vcmax25top, 10.0_r8), 150.0_r8)
                      jmax25top = min(max(jmax25top, 10.0_r8), 250.0_r8)
                   else
@@ -708,7 +715,7 @@ contains
                jmaxc  = fth25 (jmaxhd, jmaxse)
                tpuc   = fth25 (tpuhd, tpuse)
                vcmax_z(p,iv) = vcmax25 * ft(t_veg(p), vcmaxha) * fth(t_veg(p), vcmaxhd, vcmaxse, vcmaxc)
-               jmax_z(p,iv) = jmax25 * ft(t_veg(p), jmaxha) * fth(t_veg(p), jmaxhd, jmaxse, jmaxc)
+               jmax_z(f,iv) = jmax25 * ft(t_veg(p), jmaxha) * fth(t_veg(p), jmaxhd, jmaxse, jmaxc)
                tpu_z(p,iv) = tpu25 * ft(t_veg(p), tpuha) * fth(t_veg(p), tpuhd, tpuse, tpuc)
 
                if (.not. c3flag(p)) then
@@ -725,15 +732,17 @@ contains
             lmr_z(p,iv) = lmr_z(p,iv) * btran(p)
          end do       ! canopy layer loop
       end do     ! patch loop
-      call cpu_time(stopt)
-      print *, "TIMING Photosynthesis::NitrogenProfile ", (stopt-startt)*1.E+3,"ms"
       !==============================================================================!
       ! Leaf-level photosynthesis and stomatal conductance
       !==============================================================================!
-
-      !$acc parallel loop independent gang vector collapse(2) default(present) private(p,c,t)
-      do iv = 1, nrad(p)
-         do f = 1, fn
+      
+      !$acc parallel loop independent gang vector  default(present)
+      do f = 1, fn
+         if(converged(f)) cycle
+         p = filterp(f)
+         
+         !$acc loop seq 
+         do iv = 1, nrad(p)
             p = filterp(f)
             c = veg_pp%column(p)
             t = veg_pp%topounit(p)
@@ -763,24 +772,24 @@ contains
             else                                     ! day time
 
                !now the constraint is no longer needed, Jinyun Tang
-               ceair = min( eair(p),  esat_tv(p) )
-               rh_can = ceair / esat_tv(p)
+               ceair = min( eair(f),  esat_tv(f) )
+               rh_can = ceair / esat_tv(f)
 
                ! Electron transport rate for C3 plants. Convert par from W/m2 to
                ! umol photons/m**2/s using the factor 4.6
 
                qabs  = 0.5_r8 * (1._r8 - fnps) * par_z(p,iv) * 4.6_r8
                aquad = theta_psii
-               bquad = -(qabs + jmax_z(p,iv))
-               cquad = qabs * jmax_z(p,iv)
+               bquad = -(qabs + jmax_z(f,iv))
+               cquad = qabs * jmax_z(f,iv)
                call quadratic (aquad, bquad, cquad, r1, r2)
                je = min(r1,r2)
 
                ! Iterative loop for ci beginning with initial guess
                if (c3flag(p)) then
-                  ci_z(p,iv) = 0.7_r8 * cair(p)
+                  ci_z(p,iv) = 0.7_r8 * cair(f)
                else
-                  ci_z(p,iv) = 0.4_r8 * cair(p)
+                  ci_z(p,iv) = 0.4_r8 * cair(f)
                end if
 
                niter = 0
@@ -792,7 +801,7 @@ contains
                ciold = ci_z(p,iv)
 
                !find ci and stomatal conductance
-               call hybrid(ciold, p, iv, c, t, gb_mol(p), je, cair(p), oair(p), &
+               call hybrid(ciold, p, iv, c, t, gb_mol(p), je, cair(f), oair(f), &
                     lmr_z(p,iv), par_z(p,iv), rh_can, gs_mol(p,iv), niter, &
                     photosyns_vars)
 
@@ -801,9 +810,9 @@ contains
 
                ! Final estimates for cs and ci (needed for early exit of ci iteration when an < 0)
 
-               cs = cair(p) - 1.4_r8/gb_mol(p) * an(p,iv) * forc_pbot(t)
+               cs = cair(f) - 1.4_r8/gb_mol(p) * an(p,iv) * forc_pbot(t)
                cs = max(cs,1.e-06_r8)
-               ci_z(p,iv) = cair(p) - an(p,iv) * forc_pbot(t) * (1.4_r8*gs_mol(p,iv)+1.6_r8*gb_mol(p)) / (gb_mol(p)*gs_mol(p,iv))
+               ci_z(p,iv) = cair(f) - an(p,iv) * forc_pbot(t) * (1.4_r8*gs_mol(p,iv)+1.6_r8*gb_mol(p)) / (gb_mol(p)*gs_mol(p,iv))
 
                ! Convert gs_mol (umol H2O/m**2/s) to gs (m/s) and then to rs (s/m)
 
@@ -830,26 +839,24 @@ contains
 #ifndef _OPENACC
                if (gs_mol(p,iv) < 0._r8) then
                   print *, 'Negative stomatal conductance:'
-                  !#py write (iulog,*)'p,iv,gs_mol= ',p,iv,gs_mol(p,iv)
-                  !#py !#py call endrun(decomp_index=p, elmlevel=namep, msg=errmsg(__FILE__, __LINE__))
+                  write (iulog,*)'p,iv,gs_mol= ',p,iv,gs_mol(p,iv)
+                  call endrun(decomp_index=p, elmlevel=namep, msg=errmsg(__FILE__, __LINE__))
                end if
 #endif
                ! Compare with Ball-Berry model: gs_mol = m * an * hs/cs p + b
 
-               hs = (gb_mol(p)*ceair + gs_mol(p,iv)*esat_tv(p)) / ((gb_mol(p)+gs_mol(p,iv))*esat_tv(p))
+               hs = (gb_mol(p)*ceair + gs_mol(p,iv)*esat_tv(f)) / ((gb_mol(p)+gs_mol(p,iv))*esat_tv(f))
                rh_leaf(p) = hs
                gs_mol_err = mbb(p)*max(an(p,iv), 0._r8)*hs/cs*forc_pbot(t) + bbb(p)
 #ifndef _OPENACC
                if (abs(gs_mol(p,iv)-gs_mol_err) > 1.e-01_r8) then
                   print *, 'Ball-Berry error check - stomatal conductance error:'
-                  !#py write (iulog,*) gs_mol(p,iv), gs_mol_err
+                  write (iulog,*) gs_mol(p,iv), gs_mol_err
                end if
 #endif
             end if    ! night or day if branch
          end do       ! canopy layer loop
       end do          ! patch loop
-      call cpu_time(stopt)
-      print *, "TIMING Photosynthesis::ci iterations ",(stopt-startt)*1.E+3, "ms"
       !==============================================================================!
       ! Canopy photosynthesis and stomatal conductance
       !==============================================================================!
@@ -857,9 +864,9 @@ contains
       ! Sum canopy layer fluxes and then derive effective leaf-level fluxes (per
       ! unit leaf area), which are used in other parts of the model. Here, laican
       ! sums to either laisun or laisha.
-      call cpu_time(startt)
       !$acc parallel loop gang worker independent default(present)
       do f = 1, fn
+         if(converged(f)) cycle
          p = filterp(f)
          psncan = 0._r8
          psncan_wc = 0._r8
@@ -896,9 +903,7 @@ contains
       end do
 
       !$acc exit data delete(fnr,act25,vcmaxha,jmaxha,tpuha,lmrha,vcmaxhd,jmaxhd,tpuhd,lmrhd,lmrse,lmrc &
-      !$acc ,jmax_z(:,:), lnc(:), kn(1:fn),psn_wc_z(1:fn,:nlevcan),psn_wj_z(1:fn,:nlevcan), psn_wp_z(1:fn,:nlevcan) )
-      call cpu_time(stopt)
-      print *, "TIMING Photosynthesis::ReductionLoop",(stopt-startt)*1.E+3,"ms"
+      !$acc ,jmax_z(:,:), lnc(:), kn(:),psn_wc_z(:,:nlevcan),psn_wj_z(:,:nlevcan), psn_wp_z(:,:nlevcan) )
 
     end associate
 
@@ -1254,8 +1259,8 @@ contains
     fb=f2
 #ifndef _OPENACC
     if((fa > 0._r8 .and. fb > 0._r8).or.(fa < 0._r8 .and. fb < 0._r8))then
-       !#py write(iulog,*) 'root must be bracketed for brent'
-       !#py !#py call endrun(msg=errmsg(__FILE__, __LINE__))
+       write(iulog,*) 'root must be bracketed for brent'
+       call endrun(msg=errmsg(__FILE__, __LINE__))
     endif
 #endif
     c=b
@@ -2494,9 +2499,9 @@ contains
                ! Make sure iterative solution is correct
 #ifndef _OPENACC
                if (gs_mol_sun(p,iv) < 0._r8 .or. gs_mol_sha(p,iv) < 0._r8) then
-                  !#py write (iulog,*)'Negative stomatal conductance:'
-                  !#py write (iulog,*)'p,iv,gs_mol_sun,gs_mol_sha= ',p,iv,gs_mol_sun(p,iv),gs_mol_sha(p,iv)
-                  !#py !#py call endrun(decomp_index=p, elmlevel=namep, msg=errmsg(__FILE__, __LINE__))
+                  write (iulog,*)'Negative stomatal conductance:'
+                  write (iulog,*)'p,iv,gs_mol_sun,gs_mol_sha= ',p,iv,gs_mol_sun(p,iv),gs_mol_sha(p,iv)
+                  call endrun(decomp_index=p, elmlevel=namep, msg=errmsg(__FILE__, __LINE__))
                end if
 #endif
 
@@ -2509,8 +2514,8 @@ contains
 
 #ifndef _OPENACC
                if (abs(gs_mol_sun(p,iv)-gs_mol_err) > 1.e-01_r8) then
-                  !#py write (iulog,*) 'Ball-Berry error check - sunlit stomatal conductance error:'
-                  !#py write (iulog,*) gs_mol_sun(p,iv), gs_mol_err
+                  write (iulog,*) 'Ball-Berry error check - sunlit stomatal conductance error:'
+                  write (iulog,*) gs_mol_sun(p,iv), gs_mol_err
                end if
 #endif
                hs = (gb_mol(p)*ceair + gs_mol_sha(p,iv)*esat_tv(p)) / ((gb_mol(p)+gs_mol_sha(p,iv))*esat_tv(p))
@@ -2520,8 +2525,8 @@ contains
 
 #ifndef _OPENACC
                if (abs(gs_mol_sha(p,iv)-gs_mol_err) > 1.e-01_r8) then
-                  !#py write (iulog,*) 'Ball-Berry error check - shaded stomatal conductance error:'
-                  !#py write (iulog,*) gs_mol_sha(p,iv), gs_mol_err
+                  write (iulog,*) 'Ball-Berry error check - shaded stomatal conductance error:'
+                  write (iulog,*) gs_mol_sha(p,iv), gs_mol_err
                end if
 #endif
 
@@ -2921,8 +2926,8 @@ contains
 #ifndef _OPENACC
     do phase=1, nphs
        if ( (fa(phase) > 0._r8 .and. fb(phase) > 0._r8) .or. (fa(phase) < 0._r8 .and. fb(phase) < 0._r8) ) then
-          !#py write(iulog,*) 'root must be bracketed for brent'
-          !#py !#py call endrun(msg=errmsg(__FILE__, __LINE__))
+          write(iulog,*) 'root must be bracketed for brent'
+          call endrun(msg=errmsg(__FILE__, __LINE__))
        endif
     enddo
 #endif
@@ -3002,7 +3007,7 @@ contains
        if( (fb(sun) == 0._r8) .and. (fb(sha) == 0._r8) ) exit
     enddo
 #ifndef _OPENACC
-    !#py if( iter == itmax) write(iulog,*) 'brent exceeding maximum iterations', b, fb
+    if( iter == itmax) write(iulog,*) 'brent exceeding maximum iterations', b, fb
 #endif
     xsun=b(sun)
     xsha=b(sha)
@@ -3462,7 +3467,7 @@ contains
 #ifndef NDEBUG
     ! Only execute this code if DEBUG=TRUE
     if ( nvegwcs /= 4 )then
-       !#py !#py call endrun(msg='Error:: this function is hardcoded for 4x4 matrices with nvegwcs==4'//errMsg(__FILE__, __LINE__))
+       call endrun(msg='Error:: this function is hardcoded for 4x4 matrices with nvegwcs==4'//errMsg(__FILE__, __LINE__))
     end if
 #endif
 

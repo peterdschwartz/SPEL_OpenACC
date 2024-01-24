@@ -406,9 +406,12 @@ def adjust_array_access_and_allocation(local_arrs,sub,dargs=False,verbose=False)
 
             # Check that the corresponding num_filter exists
             num_filter = "num_"+filter_used.replace("filter_","")
-            if(num_filter not in arg_list):
-                print(num_filter,"doesn't exist!")
-                sys.exit()
+            if(num_filter in arg_list):
+                print(num_filter,"is passed as an argument!")
+            elif(num_filter in scalar_list):
+                print(f"{num_filter} is new local filter")
+            else:
+                sys.exit(f"utilityFunctions:: {num_filter} doesn't exit")
             lold = lines[ln]
             print(_bc.FAIL+lold.strip('\n')+_bc.ENDC)
             _str = f"bounds%beg{subgrid}:bounds%end{subgrid}"
@@ -426,7 +429,6 @@ def adjust_array_access_and_allocation(local_arrs,sub,dargs=False,verbose=False)
     print("Going through loops")
     # Make list for quick check if var should be adjusted.
     list_of_var_names = [v.name for v in local_arrs]
-    print(list_of_var_names)
 
     for loop in sub.DoLoops:
         lstart = loop.start[0]; lend = loop.end[0]
@@ -676,7 +678,7 @@ def adjust_child_sub_arguments(sub,file,lstart,lend,args):
         v.keyword = ''
 
     adjust_array_access_and_allocation(local_arrs=args,sub=sub,verbose=True,dargs=True)
-    sys.exit()
+    sys.exit("Why is this here?")
     
 def determine_filter_access(sub,verbose=False):
     """

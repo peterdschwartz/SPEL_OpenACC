@@ -9,13 +9,13 @@
   !
   use ColumnDataType    , only : col_es, col_ws, col_wf
   use VegetationDataType, only : veg_wf
-  !#py !#py use shr_log_mod         , only : errMsg => shr_log_errMsg
+  use shr_log_mod         , only : errMsg => shr_log_errMsg
 
-  !#py use ExternalModelConstants     , only : EM_VSFM_SOIL_HYDRO_STAGE
-  !#py use ExternalModelConstants     , only : EM_ID_VSFM
-  !#py use ExternalModelInterfaceMod  , only : EMI_Driver
+  use ExternalModelConstants     , only : EM_VSFM_SOIL_HYDRO_STAGE
+  use ExternalModelConstants     , only : EM_ID_VSFM
+  use ExternalModelInterfaceMod  , only : EMI_Driver
   use elm_instMod , only : waterflux_vars, waterstate_vars, temperature_vars
-  !#py use abortutils           , only : endrun
+  use abortutils           , only : endrun
 
   !
   implicit none
@@ -52,8 +52,8 @@ contains
    !specify method for doing soil&root water interactions
    !
    use elm_varctl, only : use_vsfm, use_var_soil_thick, use_hydrstress
-   !#py use spmdMod,    only : mpicom, MPI_LOGICAL
-   !#py use shr_sys_mod,only : shr_sys_abort
+   use spmdMod,    only : mpicom, MPI_LOGICAL
+   use shr_sys_mod,only : shr_sys_abort
    ! !ARGUMENTS:
    implicit none
    integer :: ier ! error status
@@ -72,7 +72,7 @@ contains
    end if
 
    if (use_var_soil_thick .and. soilroot_water_method .ne. zengdecker_2009) then
-      !#py call shr_sys_abort('ERROR: use_var_soil_thick not supported with anything but zengdecker_2009 at this time.')
+      call shr_sys_abort('ERROR: use_var_soil_thick not supported with anything but zengdecker_2009 at this time.')
    end if
   end subroutine init_soilwater_movement
 
@@ -135,21 +135,21 @@ contains
 
     case (vsfm)
 #ifdef USE_PETSC_LIB
-       !#py call Prepare_Data_for_EM_VSFM_Driver(bounds, num_hydrologyc, filter_hydrologyc, &
-            !#py soilhydrology_vars, soilstate_vars, &
-            !#py waterflux_vars, waterstate_vars, temperature_vars)
+       call Prepare_Data_for_EM_VSFM_Driver(bounds, num_hydrologyc, filter_hydrologyc, &
+            soilhydrology_vars, soilstate_vars, &
+            waterflux_vars, waterstate_vars, temperature_vars)
 
-       !#py call EMI_Driver(EM_ID_VSFM, EM_VSFM_SOIL_HYDRO_STAGE, dt = get_step_size()*1.0_r8, &
-            !#py number_step = get_nstep(), &
-            !#py clump_rank  = bounds%clump_index, &
-            !#py num_hydrologyc=num_hydrologyc, filter_hydrologyc=filter_hydrologyc, &
-            !#py soilhydrology_vars=soilhydrology_vars, soilstate_vars=soilstate_vars, &
-            !#py waterflux_vars=waterflux_vars, waterstate_vars=waterstate_vars, &
-            !#py !#py temperature_vars=temperature_vars)
+       call EMI_Driver(EM_ID_VSFM, EM_VSFM_SOIL_HYDRO_STAGE, dt = get_step_size()*1.0_r8, &
+            number_step = get_nstep(), &
+            clump_rank  = bounds%clump_index, &
+            num_hydrologyc=num_hydrologyc, filter_hydrologyc=filter_hydrologyc, &
+            soilhydrology_vars=soilhydrology_vars, soilstate_vars=soilstate_vars, &
+            waterflux_vars=waterflux_vars, waterstate_vars=waterstate_vars, &
+            temperature_vars=temperature_vars)
 #endif
     case default
 
-      !#py call endrun('SoilWater' // ':: a SoilWater implementation must be specified!')
+      call endrun('SoilWater' // ':: a SoilWater implementation must be specified!')
     end select
 
     if(use_betr)then
@@ -280,7 +280,7 @@ contains
     use elm_varcon           , only : e_ice,denh2o, denice
     use elm_varpar           , only : nlevsoi, max_patch_per_col, nlevgrnd
     use column_varcon        , only : icol_roof, icol_road_imperv
-    use TridiagonalMod       , only : Tridiagonal_filter
+    use TridiagonalMod       , only : Tridiagonal
     use SoilStateType        , only : soilstate_type
     use SoilHydrologyType    , only : soilhydrology_type
     use VegetationType       , only : veg_pp
@@ -763,20 +763,19 @@ contains
       ! Determination of how many layers (nlev2bed) to do for the tridiagonal
       ! at each column
       if (use_var_soil_thick) then
-        !  !$acc parallel loop independent gang vector default(present)
-        !  do fc = 1,num_hydrologyc
-        !     c = filter_hydrologyc(fc)
-        !     jbot(c) = nlev2bed(c)
-        !  end do
-        !  call Tridiagonal(bounds, 1, nlevgrnd+1, &
-        !       jtop(bounds%begc:bounds%endc),     &
-        !       jbot(bounds%begc:bounds%endc),     &
-        !       num_hydrologyc, filter_hydrologyc, &
-        !       amx(bounds%begc:bounds%endc, :),   &
-        !       bmx(bounds%begc:bounds%endc, :),   &
-        !       cmx(bounds%begc:bounds%endc, :),   &
-        !       rmx(bounds%begc:bounds%endc, :),   &
-        !       dwat2(bounds%begc:bounds%endc, :) )
+         do fc = 1,num_hydrologyc
+            c = filter_hydrologyc(fc)
+            jbot(c) = nlev2bed(c)
+         end do
+         call Tridiagonal(bounds, 1, nlevgrnd+1, &
+              jtop(bounds%begc:bounds%endc),     &
+              jbot(bounds%begc:bounds%endc),     &
+              num_hydrologyc, filter_hydrologyc, &
+              amx(bounds%begc:bounds%endc, :),   &
+              bmx(bounds%begc:bounds%endc, :),   &
+              cmx(bounds%begc:bounds%endc, :),   &
+              rmx(bounds%begc:bounds%endc, :),   &
+              dwat2(bounds%begc:bounds%endc, :) )
       else
          ! call Tridiagonal_filter(1, nlevsoi+1, &
          !      jtop, num_hydrologyc, filter_hydrologyc, &
@@ -968,200 +967,200 @@ contains
   end subroutine soilwater_zengdecker2009
 
   !-----------------------------------------------------------------------
-   !#py subroutine Prepare_Data_for_EM_VSFM_Driver(bounds, num_hydrologyc, filter_hydrologyc, &
-!#py !#py         soilhydrology_vars, soilstate_vars, &
-!#py !#py         waterflux_vars, waterstate_vars, temperature_vars)
-!#py      !
-!#py      ! !DESCRIPTION:
-!#py      ! Prepare dataset that will be transfered from ALM to VSFM
-!#py      !
-!#py      ! !USES:
-!#py      use shr_kind_mod              , only : r8 => shr_kind_r8
-!#py      use decompMod                 , only : bounds_type
-!#py      use elm_varcon                , only : denh2o
-!#py      use elm_varpar                , only : nlevsoi, max_patch_per_col, nlevgrnd
-!#py       use clm_time_manager          , only : get_step_size
-!#py      use SoilStateType             , only : soilstate_type
-!#py      use SoilHydrologyType         , only : soilhydrology_type
-!#py      use TemperatureType           , only : temperature_type
-!#py      use WaterFluxType             , only : waterflux_type
-!#py      use WaterStateType            , only : waterstate_type
-!#py      use VegetationType            , only : veg_pp
-!#py      use ColumnType                , only : col_pp
-!#py      use elm_varcon                , only : watmin
-!#py      use LandunitType              , only : lun_pp
-!#py      use landunit_varcon           , only : istsoil, istcrop
-!#py      use elm_varctl                , only : lateral_connectivity
-!#py      use domainLateralMod          , only : ldomain_lateral
-!#py      use spmdMod
-!#py      !
-!#py      ! !ARGUMENTS:
-!#py      implicit none
-!#py      !
-!#py      type(bounds_type)       , intent(in)    :: bounds               ! bounds
-!#py      integer                 , intent(in)    :: num_hydrologyc       ! number of column soil points in column filter
-!#py      integer                 , intent(in)    :: filter_hydrologyc(:) ! column filter for soil points
-!#py      type(soilhydrology_type), intent(inout) :: soilhydrology_vars
-!#py      type(soilstate_type)    , intent(inout) :: soilstate_vars
-!#py      type(waterflux_type)    , intent(inout) :: waterflux_vars
-!#py      type(waterstate_type)   , intent(inout) :: waterstate_vars
-!#py      type(temperature_type)  , intent(in)    :: temperature_vars
-!#py      !
-!#py      ! !LOCAL VARIABLES:
-!#py      integer              :: p,c,fc,j,g                    ! do loop indices
-!#py      real(r8)             :: dtime                         ! land model time step (sec)
-!#py      real(r8)             :: temp(bounds%begc:bounds%endc) ! accumulator for rootr weighting
-!#py      integer              :: pi                            ! pft index
-!#py      real(r8)             :: dzsum                         ! summation of dzmm of layers below water table (mm)
-!#py      integer              :: jwt                           ! index of first unsaturated soil layer
-!#py      real(r8)             :: flux_unit_conversion          ! [mm/s] ---> [kg/s]
-!#py      real(r8)             :: area                          ! [m^2]
-!#py      real(r8)             :: z_up, z_dn                    ! [m]
-!#py      real(r8)             :: qflx_drain_layer              ! Drainage flux from a soil layer (mm H2O/s)
-!#py      real(r8)             :: qflx_drain_tot                ! Cummulative drainage flux from soil layers within a column (mm H2O/s)
-!#py      !-----------------------------------------------------------------------
-!#py 
-!#py      associate( &
-!#py           zi                        =>    col_pp%zi                                     , & ! Input:  [real(r8) (:,:) ]  interface level below a "z" level (m)
-!#py           dz                        =>    col_pp%dz                                     , & ! Input:  [real(r8) (:,:) ]  layer thickness (m)
-!#py           snl                       =>    col_pp%snl                                    , & ! Input:  [integer  (:)   ]  minus number of snow layers
-!#py 
-!#py           zwt                       =>    soilhydrology_vars%zwt_col                 , & ! Input:  [real(r8) (:)   ]  water table depth (m)
-!#py 
-!#py           watsat                    =>    soilstate_vars%watsat_col                  , & ! Input:  [real(r8) (:,:) ]  volumetric soil water at saturation (porosity)
-!#py           rootr_col                 =>    soilstate_vars%rootr_col                   , & ! Input:  [real(r8) (:,:) ]  effective fraction of roots in each soil layer
-!#py           rootr_pft                 =>    soilstate_vars%rootr_patch                 , & ! Input:  [real(r8) (:,:) ]  effective fraction of roots in each soil layer
-!#py 
-!#py           h2osoi_liq                =>    col_ws%h2osoi_liq             , & ! Input:  [real(r8) (:,:) ]  liquid water (kg/m2)
-!#py           frac_h2osfc               =>    col_ws%frac_h2osfc            , & ! Input:  [real(r8) (:)   ]
-!#py           frac_sno                  =>    col_ws%frac_sno_eff           , & ! Input:  [real(r8) (:)   ]  fraction of ground covered by snow (0 to 1)
-!#py           vsfm_fliq_col_1d          =>    col_ws%vsfm_fliq_col_1d       , & ! Output: [real(r8) (:)   ]  1D fraction of liquid saturation for VSFM [-]
-!#py           vsfm_sat_col_1d           =>    col_ws%vsfm_sat_col_1d        , & ! Output: [real(r8) (:)   ]  1D liquid saturation from VSFM [-]
-!#py           vsfm_mass_col_1d          =>    col_ws%vsfm_mass_col_1d       , & ! Output: [real(r8) (:)   ]  1D liquid mass per unit area from VSFM [kg H2O/m^2]
-!#py           vsfm_smpl_col_1d          =>    col_ws%vsfm_smpl_col_1d       , & ! Output: [real(r8) (:)   ]  1D soil matrix potential liquid from VSFM [m]
-!#py           vsfm_soilp_col_1d         =>    col_ws%vsfm_soilp_col_1d      , & ! Output: [real(r8) (:)   ]  1D soil water pressure from VSFM [Pa]
-!#py           soilp_col                 =>    col_ws%soilp                  , & ! Output: [real(r8) (:,:) ]  soil water pressure (Pa)
-!#py           qflx_rootsoi_col          =>    col_wf%qflx_rootsoi            , & ! Input:  [real(r8) (:,:) ]  vegetation/soil water exchange (mm H2O/s) (+ = to atm)
-!#py           qflx_deficit              =>    col_wf%qflx_deficit            , & ! Input:  [real(r8) (:)   ]  water deficit to keep non-negative liquid water content
-!#py           qflx_infl                 =>    col_wf%qflx_infl               , & ! Input:  [real(r8) (:)   ]  infiltration (mm H2O /s)
-!#py           qflx_dew_snow             =>    col_wf%qflx_dew_snow           , & ! Input:  [real(r8) (:)   ]  surface dew added to snow pack (mm H2O /s) [+]
-!#py           qflx_dew_grnd             =>    col_wf%qflx_dew_grnd           , & ! Input:  [real(r8) (:)   ]  ground surface dew formation (mm H2O /s) [+]
-!#py           qflx_sub_snow             =>    col_wf%qflx_sub_snow           , & ! Input:  [real(r8) (:)   ]  ground surface dew formation (mm H2O /s) [+]
-!#py           qflx_drain                =>    col_wf%qflx_drain              , & ! Input:  [real(r8) (:)   ]  sub-surface runoff (mm H2O /s)
-!#py 
-!#py           mflx_infl_col             =>    col_wf%mflx_infl               , & ! Output: [real(r8) (:)   ]  infiltration source in top soil control volume (kg H2O /s)
-!#py           mflx_dew_col              =>    col_wf%mflx_dew                , & ! Output: [real(r8) (:)   ]  (liquid+snow) dew source in top soil control volume (kg H2O /s)
-!#py           mflx_snowlyr_disp_col     =>    col_wf%mflx_snowlyr_disp       , & ! Output: [real(r8) (:)   ]  mass flux to top soil layer due to disappearance of snow (kg H2O /s)
-!#py           mflx_sub_snow_col         =>    col_wf%mflx_sub_snow           , & ! Output: [real(r8) (:)   ]  mass flux from top soil layer due to sublimation of snow (kg H2O /s)
-!#py           mflx_et_col               =>    col_wf%mflx_et                 , & ! Output: [real(r8) (:)   ]  evapotranspiration sink from all soil coontrol volumes (kg H2O /s) (+ = to atm)
-!#py           mflx_drain_col            =>    col_wf%mflx_drain              , & ! Output: [real(r8) (:)   ]  drainage from groundwater and perched water table (kg H2O /s)
-!#py           mflx_snowlyr_col          =>    col_wf%mflx_snowlyr            , & ! Output: [real(r8) (:)   ]  mass flux to top soil layer due to disappearance of snow (kg H2O /s)
-!#py           mflx_neg_snow_col_1d      =>    col_wf%mflx_neg_snow_1d        , & ! Input:  [real(r8) (:)   ]  mass flux from top soil layer due to negative water content in snow layers (kg H2O /s)
-!#py 
-!#py           t_soisno                  =>    col_es%t_soisno                & ! Input:  [real(r8) (:,:) ]  soil temperature (Kelvin)
-!#py           )
-!#py 
-!#py        ! Get time step
-!#py 
-!#py         dtime = get_step_size()
-!#py 
-!#py        mflx_infl_col(:)              = 0.d0
-!#py        mflx_dew_col(:)               = 0.d0
-!#py        mflx_snowlyr_disp_col(:)      = 0.d0
-!#py        mflx_sub_snow_col(:)          = 0.d0
-!#py        mflx_et_col(:,:)              = 0.d0
-!#py        mflx_drain_col(:,:)           = 0.d0
-!#py 
-!#py        area = 1.d0 ! [m^2]
-!#py 
-!#py        do fc = 1, num_hydrologyc
-!#py           c = filter_hydrologyc(fc)
-!#py 
-!#py #ifdef USE_PETSC_LIB
-!#py           if (lateral_connectivity) then
-!#py              g    = col_pp%gridCell(c)
-!#py              area = ldomain_lateral%ugrid%areaGrid_ghosted(g)
-!#py           endif
-!#py #endif
-!#py 
-!#py           ! [mm/s] --> [kg/s]   [m^2] [kg/m^3]  [m/mm]
-!#py           flux_unit_conversion     = area * denh2o * 1.0d-3
-!#py 
-!#py           do j = 1, nlevsoi
-!#py              ! ET sink
-!#py              mflx_et_col(c,j) = -qflx_rootsoi_col(c,j)*flux_unit_conversion
-!#py           end do
-!#py 
-!#py           ! Infiltration source term
-!#py           mflx_infl_col(c) = qflx_infl(c)*flux_unit_conversion
-!#py 
-!#py           ! Dew and snow sublimation source/sink term
-!#py           if (snl(c) >= 0) then
-!#py              mflx_dew_col(c)       = (qflx_dew_snow(c) + qflx_dew_grnd(c))* &
-!#py                                      (1._r8 - frac_h2osfc(c))*              &
-!#py                                       flux_unit_conversion
-!#py 
-!#py              mflx_sub_snow_col(c)  = -qflx_sub_snow(c)*          &
-!#py                                       (1._r8 - frac_h2osfc(c))*  &
-!#py                                        flux_unit_conversion
-!#py           end if
-!#py 
-!#py           if (qflx_drain(c) > 0.d0) then
-!#py 
-!#py              ! Find soil layer just above water table
-!#py              jwt = nlevgrnd
-!#py 
-!#py              ! allow jwt to equal zero when zwt is in top layer
-!#py              do j = 1,nlevgrnd
-!#py                 if (zwt(c) <= zi(c,j)) then
-!#py                    jwt = j-1
-!#py                    exit
-!#py                 end if
-!#py              enddo
-!#py 
-!#py              ! Now ensure the soil layer index corresponding to the water table
-!#py              ! is greater than or equal to the first soil layer.
-!#py              jwt = max(jwt,1)
-!#py 
-!#py              dzsum = 0.d0
-!#py              do j = jwt, nlevgrnd
-!#py                 dzsum = dzsum + dz(c,j)
-!#py              end do
-!#py 
-!#py              qflx_drain_tot = 0.d0
-!#py              do j = jwt, nlevgrnd
-!#py                 qflx_drain_layer = qflx_drain(c) * dz(c,j)/dzsum
-!#py 
-!#py                 ! if the amount of water being drained from a given layer
-!#py                 ! exceeds the allowable water, limit the drainage
-!#py                 if (qflx_drain_layer*dtime > (h2osoi_liq(c,j)-watmin)) then
-!#py                    qflx_drain_layer = (h2osoi_liq(c,j)-watmin)/dtime
-!#py                 endif
-!#py                 qflx_drain_tot = qflx_drain_tot + qflx_drain_layer
-!#py 
-!#py                 mflx_drain_col(c,j) = -qflx_drain_layer*flux_unit_conversion
-!#py 
-!#py             end do
-!#py             qflx_drain(c) = qflx_drain_tot
-!#py 
-!#py           endif
-!#py 
-!#py           ! The mass flux associated with disapperance of snow layer over the
-!#py           ! last time step.
-!#py           mflx_snowlyr_disp_col(c) = mflx_snowlyr_col(c)*area + &
-!#py                                      mflx_neg_snow_col_1d(c-bounds%begc+1)*area
-!#py           mflx_snowlyr_col(c) = 0._r8
-!#py 
-!#py        end do
-!#py 
-!#py        ! compute the water deficit and reset negative liquid water content
-!#py        !  Jinyun Tang
-!#py        do fc = 1, num_hydrologyc
-!#py           c = filter_hydrologyc(fc)
-!#py           qflx_deficit(c) = 0._r8
-!#py        enddo
-!#py      end associate
-!#py    end subroutine Prepare_Data_for_EM_VSFM_Driver
+   subroutine Prepare_Data_for_EM_VSFM_Driver(bounds, num_hydrologyc, filter_hydrologyc, &
+        soilhydrology_vars, soilstate_vars, &
+        waterflux_vars, waterstate_vars, temperature_vars)
+     !
+     ! !DESCRIPTION:
+     ! Prepare dataset that will be transfered from ALM to VSFM
+     !
+     ! !USES:
+     use shr_kind_mod              , only : r8 => shr_kind_r8
+     use decompMod                 , only : bounds_type
+     use elm_varcon                , only : denh2o
+     use elm_varpar                , only : nlevsoi, max_patch_per_col, nlevgrnd
+      use clm_time_manager          , only : get_step_size
+     use SoilStateType             , only : soilstate_type
+     use SoilHydrologyType         , only : soilhydrology_type
+     use TemperatureType           , only : temperature_type
+     use WaterFluxType             , only : waterflux_type
+     use WaterStateType            , only : waterstate_type
+     use VegetationType            , only : veg_pp
+     use ColumnType                , only : col_pp
+     use elm_varcon                , only : watmin
+     use LandunitType              , only : lun_pp
+     use landunit_varcon           , only : istsoil, istcrop
+     use elm_varctl                , only : lateral_connectivity
+     use domainLateralMod          , only : ldomain_lateral
+     use spmdMod
+     !
+     ! !ARGUMENTS:
+     implicit none
+     !
+     type(bounds_type)       , intent(in)    :: bounds               ! bounds
+     integer                 , intent(in)    :: num_hydrologyc       ! number of column soil points in column filter
+     integer                 , intent(in)    :: filter_hydrologyc(:) ! column filter for soil points
+     type(soilhydrology_type), intent(inout) :: soilhydrology_vars
+     type(soilstate_type)    , intent(inout) :: soilstate_vars
+     type(waterflux_type)    , intent(inout) :: waterflux_vars
+     type(waterstate_type)   , intent(inout) :: waterstate_vars
+     type(temperature_type)  , intent(in)    :: temperature_vars
+     !
+     ! !LOCAL VARIABLES:
+     integer              :: p,c,fc,j,g                    ! do loop indices
+     real(r8)             :: dtime                         ! land model time step (sec)
+     real(r8)             :: temp(bounds%begc:bounds%endc) ! accumulator for rootr weighting
+     integer              :: pi                            ! pft index
+     real(r8)             :: dzsum                         ! summation of dzmm of layers below water table (mm)
+     integer              :: jwt                           ! index of first unsaturated soil layer
+     real(r8)             :: flux_unit_conversion          ! [mm/s] ---> [kg/s]
+     real(r8)             :: area                          ! [m^2]
+     real(r8)             :: z_up, z_dn                    ! [m]
+     real(r8)             :: qflx_drain_layer              ! Drainage flux from a soil layer (mm H2O/s)
+     real(r8)             :: qflx_drain_tot                ! Cummulative drainage flux from soil layers within a column (mm H2O/s)
+     !-----------------------------------------------------------------------
+
+     associate( &
+          zi                        =>    col_pp%zi                                     , & ! Input:  [real(r8) (:,:) ]  interface level below a "z" level (m)
+          dz                        =>    col_pp%dz                                     , & ! Input:  [real(r8) (:,:) ]  layer thickness (m)
+          snl                       =>    col_pp%snl                                    , & ! Input:  [integer  (:)   ]  minus number of snow layers
+
+          zwt                       =>    soilhydrology_vars%zwt_col                 , & ! Input:  [real(r8) (:)   ]  water table depth (m)
+
+          watsat                    =>    soilstate_vars%watsat_col                  , & ! Input:  [real(r8) (:,:) ]  volumetric soil water at saturation (porosity)
+          rootr_col                 =>    soilstate_vars%rootr_col                   , & ! Input:  [real(r8) (:,:) ]  effective fraction of roots in each soil layer
+          rootr_pft                 =>    soilstate_vars%rootr_patch                 , & ! Input:  [real(r8) (:,:) ]  effective fraction of roots in each soil layer
+
+          h2osoi_liq                =>    col_ws%h2osoi_liq             , & ! Input:  [real(r8) (:,:) ]  liquid water (kg/m2)
+          frac_h2osfc               =>    col_ws%frac_h2osfc            , & ! Input:  [real(r8) (:)   ]
+          frac_sno                  =>    col_ws%frac_sno_eff           , & ! Input:  [real(r8) (:)   ]  fraction of ground covered by snow (0 to 1)
+          vsfm_fliq_col_1d          =>    col_ws%vsfm_fliq_col_1d       , & ! Output: [real(r8) (:)   ]  1D fraction of liquid saturation for VSFM [-]
+          vsfm_sat_col_1d           =>    col_ws%vsfm_sat_col_1d        , & ! Output: [real(r8) (:)   ]  1D liquid saturation from VSFM [-]
+          vsfm_mass_col_1d          =>    col_ws%vsfm_mass_col_1d       , & ! Output: [real(r8) (:)   ]  1D liquid mass per unit area from VSFM [kg H2O/m^2]
+          vsfm_smpl_col_1d          =>    col_ws%vsfm_smpl_col_1d       , & ! Output: [real(r8) (:)   ]  1D soil matrix potential liquid from VSFM [m]
+          vsfm_soilp_col_1d         =>    col_ws%vsfm_soilp_col_1d      , & ! Output: [real(r8) (:)   ]  1D soil water pressure from VSFM [Pa]
+          soilp_col                 =>    col_ws%soilp                  , & ! Output: [real(r8) (:,:) ]  soil water pressure (Pa)
+          qflx_rootsoi_col          =>    col_wf%qflx_rootsoi            , & ! Input:  [real(r8) (:,:) ]  vegetation/soil water exchange (mm H2O/s) (+ = to atm)
+          qflx_deficit              =>    col_wf%qflx_deficit            , & ! Input:  [real(r8) (:)   ]  water deficit to keep non-negative liquid water content
+          qflx_infl                 =>    col_wf%qflx_infl               , & ! Input:  [real(r8) (:)   ]  infiltration (mm H2O /s)
+          qflx_dew_snow             =>    col_wf%qflx_dew_snow           , & ! Input:  [real(r8) (:)   ]  surface dew added to snow pack (mm H2O /s) [+]
+          qflx_dew_grnd             =>    col_wf%qflx_dew_grnd           , & ! Input:  [real(r8) (:)   ]  ground surface dew formation (mm H2O /s) [+]
+          qflx_sub_snow             =>    col_wf%qflx_sub_snow           , & ! Input:  [real(r8) (:)   ]  ground surface dew formation (mm H2O /s) [+]
+          qflx_drain                =>    col_wf%qflx_drain              , & ! Input:  [real(r8) (:)   ]  sub-surface runoff (mm H2O /s)
+
+          mflx_infl_col             =>    col_wf%mflx_infl               , & ! Output: [real(r8) (:)   ]  infiltration source in top soil control volume (kg H2O /s)
+          mflx_dew_col              =>    col_wf%mflx_dew                , & ! Output: [real(r8) (:)   ]  (liquid+snow) dew source in top soil control volume (kg H2O /s)
+          mflx_snowlyr_disp_col     =>    col_wf%mflx_snowlyr_disp       , & ! Output: [real(r8) (:)   ]  mass flux to top soil layer due to disappearance of snow (kg H2O /s)
+          mflx_sub_snow_col         =>    col_wf%mflx_sub_snow           , & ! Output: [real(r8) (:)   ]  mass flux from top soil layer due to sublimation of snow (kg H2O /s)
+          mflx_et_col               =>    col_wf%mflx_et                 , & ! Output: [real(r8) (:)   ]  evapotranspiration sink from all soil coontrol volumes (kg H2O /s) (+ = to atm)
+          mflx_drain_col            =>    col_wf%mflx_drain              , & ! Output: [real(r8) (:)   ]  drainage from groundwater and perched water table (kg H2O /s)
+          mflx_snowlyr_col          =>    col_wf%mflx_snowlyr            , & ! Output: [real(r8) (:)   ]  mass flux to top soil layer due to disappearance of snow (kg H2O /s)
+          mflx_neg_snow_col_1d      =>    col_wf%mflx_neg_snow_1d        , & ! Input:  [real(r8) (:)   ]  mass flux from top soil layer due to negative water content in snow layers (kg H2O /s)
+
+          t_soisno                  =>    col_es%t_soisno                & ! Input:  [real(r8) (:,:) ]  soil temperature (Kelvin)
+          )
+
+       ! Get time step
+
+        dtime = get_step_size()
+
+       mflx_infl_col(:)              = 0.d0
+       mflx_dew_col(:)               = 0.d0
+       mflx_snowlyr_disp_col(:)      = 0.d0
+       mflx_sub_snow_col(:)          = 0.d0
+       mflx_et_col(:,:)              = 0.d0
+       mflx_drain_col(:,:)           = 0.d0
+
+       area = 1.d0 ! [m^2]
+
+       do fc = 1, num_hydrologyc
+          c = filter_hydrologyc(fc)
+
+#ifdef USE_PETSC_LIB
+          if (lateral_connectivity) then
+             g    = col_pp%gridCell(c)
+             area = ldomain_lateral%ugrid%areaGrid_ghosted(g)
+          endif
+#endif
+
+          ! [mm/s] --> [kg/s]   [m^2] [kg/m^3]  [m/mm]
+          flux_unit_conversion     = area * denh2o * 1.0d-3
+
+          do j = 1, nlevsoi
+             ! ET sink
+             mflx_et_col(c,j) = -qflx_rootsoi_col(c,j)*flux_unit_conversion
+          end do
+
+          ! Infiltration source term
+          mflx_infl_col(c) = qflx_infl(c)*flux_unit_conversion
+
+          ! Dew and snow sublimation source/sink term
+          if (snl(c) >= 0) then
+             mflx_dew_col(c)       = (qflx_dew_snow(c) + qflx_dew_grnd(c))* &
+                                     (1._r8 - frac_h2osfc(c))*              &
+                                      flux_unit_conversion
+
+             mflx_sub_snow_col(c)  = -qflx_sub_snow(c)*          &
+                                      (1._r8 - frac_h2osfc(c))*  &
+                                       flux_unit_conversion
+          end if
+
+          if (qflx_drain(c) > 0.d0) then
+
+             ! Find soil layer just above water table
+             jwt = nlevgrnd
+
+             ! allow jwt to equal zero when zwt is in top layer
+             do j = 1,nlevgrnd
+                if (zwt(c) <= zi(c,j)) then
+                   jwt = j-1
+                   exit
+                end if
+             enddo
+
+             ! Now ensure the soil layer index corresponding to the water table
+             ! is greater than or equal to the first soil layer.
+             jwt = max(jwt,1)
+
+             dzsum = 0.d0
+             do j = jwt, nlevgrnd
+                dzsum = dzsum + dz(c,j)
+             end do
+
+             qflx_drain_tot = 0.d0
+             do j = jwt, nlevgrnd
+                qflx_drain_layer = qflx_drain(c) * dz(c,j)/dzsum
+
+                ! if the amount of water being drained from a given layer
+                ! exceeds the allowable water, limit the drainage
+                if (qflx_drain_layer*dtime > (h2osoi_liq(c,j)-watmin)) then
+                   qflx_drain_layer = (h2osoi_liq(c,j)-watmin)/dtime
+                endif
+                qflx_drain_tot = qflx_drain_tot + qflx_drain_layer
+
+                mflx_drain_col(c,j) = -qflx_drain_layer*flux_unit_conversion
+
+            end do
+            qflx_drain(c) = qflx_drain_tot
+
+          endif
+
+          ! The mass flux associated with disapperance of snow layer over the
+          ! last time step.
+          mflx_snowlyr_disp_col(c) = mflx_snowlyr_col(c)*area + &
+                                     mflx_neg_snow_col_1d(c-bounds%begc+1)*area
+          mflx_snowlyr_col(c) = 0._r8
+
+       end do
+
+       ! compute the water deficit and reset negative liquid water content
+       !  Jinyun Tang
+       do fc = 1, num_hydrologyc
+          c = filter_hydrologyc(fc)
+          qflx_deficit(c) = 0._r8
+       enddo
+     end associate
+   end subroutine Prepare_Data_for_EM_VSFM_Driver
 
    ! ====================================================================================
 
@@ -1247,23 +1246,21 @@ contains
          end if
       end do
       num_filterc_tot = num_filterc_tot+num_filterc
-      print *, "num_hydrologyc / num_tot / num_filterc "
 
-      print *, num_hydrologyc, num_filterc_tot, num_filterc
-      !if(use_hydrstress) then
-      !   call Compute_EffecRootFrac_And_VertTranSink_HydStress(bounds, &
-      !         num_filterc, filterc,  soilstate_inst, &
-      !         canopystate_inst)
-      !else
-      call Compute_EffecRootFrac_And_VertTranSink_Default(bounds, &
+      if(use_hydrstress) then
+         call Compute_EffecRootFrac_And_VertTranSink_HydStress(bounds, &
+               num_filterc, filterc,  soilstate_inst, &
+               canopystate_inst)
+      else
+         call Compute_EffecRootFrac_And_VertTranSink_Default(bounds, &
             num_filterc,filterc, soilstate_inst)
-      !end if
+      end if
 
       if (num_hydrologyc /= num_filterc_tot) then
-          !#py write(*,*) 'The total number of columns flagged to root water uptake'
-          !#py write(*,*) 'did not match the total number calculated'
-          !#py write(*,*) 'This is likely a problem with the interpretation of column/lu filters.'
-          !#py !#py call endrun(msg=errMsg(__FILE__, __LINE__))
+          write(*,*) 'The total number of columns flagged to root water uptake'
+          write(*,*) 'did not match the total number calculated'
+          write(*,*) 'This is likely a problem with the interpretation of column/lu filters.'
+          call endrun(msg=errMsg(__FILE__, __LINE__))
           stop 
       end if
 
@@ -1338,6 +1335,9 @@ contains
             !$acc loop vector reduction(+:sum1)
             do p = col_pp%pfti(c), col_pp%pftf(c) 
                if (veg_pp%active(p)) then
+                  if(c == 1 .and. j ==1 ) then 
+                     print *, p,qflx_tran_veg_patch(p),veg_pp%wtcol(p)
+                  end if 
                   sum1 = sum1 + rootr_patch(p,j) * qflx_tran_veg_patch(p) * veg_pp%wtcol(p)
                   qflx_rootsoi_frac_patch(p,j) = rootr_patch(p,j) * qflx_tran_veg_patch(p) * veg_pp%wtcol(p)
                end if
@@ -1410,7 +1410,6 @@ contains
            canopystate_vars)
         !
         !USES:
-      !$acc routine seq
         use decompMod        , only : bounds_type
         use elm_varpar       , only : nlevsoi
         use elm_varpar       , only : max_patch_per_col

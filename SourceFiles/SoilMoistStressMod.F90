@@ -1,6 +1,6 @@
 module SoilMoistStressMod
 
-!#py #include "shr_assert.h"
+#include "shr_assert.h"
 
   !------------------------------------------------------------------------------
   ! !DESCRIPTION:
@@ -62,7 +62,6 @@ subroutine normalize_test( lbj2, ubj2, numf, filter, arr2d_inout)
    integer  :: f, p         !indices
    real(r8) :: arr_sum(numf), sum1
 
-   print *, "Inside Normalize Test!"
    !$acc enter data create(arr_sum(1:numf))
    !$acc parallel loop independent gang worker default(present) private(sum1)
    do f = 1, numf

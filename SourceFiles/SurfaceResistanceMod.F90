@@ -1,6 +1,6 @@
 module SurfaceResistanceMod
 
-#include "shr_assert.h"
+!#py #include "shr_assert.h"
 
   !-----------------------------------------------------------------------
   ! !DESCRIPTION:
@@ -12,9 +12,9 @@ module SurfaceResistanceMod
   use shr_const_mod , only : SHR_CONST_TKFRZ
   use elm_varctl    , only : iulog
   use SoilStateType , only : soilstate_type
-  use WaterStateType, only : waterstate_type
+  !#py use WaterStateType, only : waterstate_type
   use ColumnDataType, only : col_ws
-  use abortutils        , only : endrun
+  !#py use abortutils        , only : endrun
 
 
   implicit none
@@ -80,7 +80,7 @@ contains
                soilstate_vars, soilbeta(bounds%begc:bounds%endc))
 
        case default
-          call endrun('calc_soilevap_stress' //':: a soilevap stress function must be specified!')
+          !#py call endrun('calc_soilevap_stress' //':: a soilevap stress function must be specified!')
        end select
 
      end associate

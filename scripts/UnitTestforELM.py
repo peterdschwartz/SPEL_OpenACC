@@ -18,7 +18,7 @@ def main():
 
     main_sub_dict = {}
     # casename = "dyn_hwcontent"
-    casename = "SoilFluxes"
+    casename = "SoilTemp"
     casename = unittests_dir+casename
     # Determines if SPEL should run to make optimizations 
     opt = False
@@ -53,7 +53,7 @@ def main():
     #                  "col_cf_summary_for_ch4_acc", "col_cs_summary_acc",
     #                  "col_nf_summary_acc", "col_ns_summary_acc",
     #                  "col_pf_summary_acc", "col_ps_summary_acc" ]
-    # sub_name_list = ["UrbanFluxes"]
+    
 
     # sub_name_list = ["NitrogenDeposition","NitrogenFixation","NitrogenFixation_balance", 
     #                  "MaintenanceResp","PhosphorusWeathering","PhosphorusBiochemMin",
@@ -70,7 +70,7 @@ def main():
                      # "CarbonStateUpdate2h","NitrogenStateUpdate2h",  "PhosphorusStateUpdate2h",
                      #"WoodProducts", "CropHarvestPools", "FireArea","FireFluxes"]
     # sub_name_list = ["SurfaceAlbedo", "UrbanAlbedo"]
-    sub_name_list = ["SoilFluxes"]
+    sub_name_list = ["SoilTemperature"]
 
     # modfile is a running list of which modules hold derived-type definitions
     modfile = 'usemod.txt'
