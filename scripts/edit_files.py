@@ -2,14 +2,19 @@ import sys
 import re
 import subprocess as sp
 from analyze_subroutines import Subroutine
-from mod_config import elm_files
+from mod_config import ELM_SRC, SHR_SRC
 
 #compile list of lower-case module names to remove
-bad_modules =  ['abortutils','shr_log_mod','clm_time_manager','shr_infnan_mod',
-               'shr_sys_mod','perf_mod','shr_assert_mod','spmdmod', 'restutilmod',
-               'histfilemod','accumulmod','ncdio_pio','shr_strdata_mod','fileutils',
+bad_modules =  ['abortutils','shr_log_mod',
+               'elm_time_manager','shr_infnan_mod',
+               'clm_time_manager','pio',
+               'shr_sys_mod','perf_mod','shr_assert_mod',
+               'spmdmod', 'restutilmod',
+               'histfilemod','accumulmod',
+               'ncdio_pio','shr_strdata_mod','fileutils',
                'elm_nlutilsmod',
-               'shr_mpi_mod', 'shr_nl_mod','shr_str_mod','controlmod','getglobalvaluesmod',
+               'shr_mpi_mod', 'shr_nl_mod','shr_str_mod',
+               'controlmod','getglobalvaluesmod',
                'organicfilemod','elmfatesinterfacemod','externalmodelconstants',
                'externalmodelinterfacemod']
 
@@ -144,16 +149,11 @@ def process_fates_or_betr(lines,mode):
 
     return lines
 
-def get_used_mods(ifile,mods,verbose,singlefile):
+def get_used_mods(ifile,mods,singlefile,verbose=False):
     """
-    checks to see what mods are needed to compile the file
-    and then analyze them
+    Checks to see what mods are needed to compile the file
     """
-    if(singlefile): 
-        fn = ifile
-    else:
-        fn = elm_files+ifile 
-
+    fn = ifile 
     file = open(fn,'r')
     lines = file.readlines()
     file.close()
@@ -177,28 +177,32 @@ def get_used_mods(ifile,mods,verbose,singlefile):
                and mod.lower() not in ['elm_instmod','cudafor','verificationmod']):
                 needed_mods.append(mod)
         ct+=1
-    #check against already used Mods
+    
+    # Check against already used Mods
+    # NOTE: Could refactor this loop into a function
+    #       that takes a module name and returns the filepath.
     files_to_parse = []
     for m in needed_mods:
         if(m.lower() in bad_modules): continue 
-        cmd = f'grep -i "module {m}" {elm_files}*.F90'
+        cmd = f'grep -rin --exclude-dir=external_models/ "module {m}" {ELM_SRC}*'
         output = sp.getoutput(cmd)
         if(not output):
-            #if(verbose): print(f"{m} is already in bad_modules")
-            print(f"Could not find module {m}")
-            required = input("Is this module required?")
-            if(required.lower() in ['y','yes']):
-                sys.exit(f"ERROR Add module {m} to {elm_files} ")
-            elif(required.lower() in ['n','no']):
-                print(f"Adding module {m} to mods to be removed")
+            if(verbose): print(f"Checking shared modules...")
+            #
+            # If file is not an ELM file, may be a shared module in E3SM/share/util/
+            #
+            cmd = f'grep -rin --exclude-dir=external_models/ "module {m}" {SHR_SRC}*'
+            shr_output = sp.getoutput(cmd) 
+            if(not shr_output):
+                if(verbose): print(f"Couldn't find {m} in ELM or shared source -- adding to removal list")
                 bad_modules.append(m.lower())
         else:
-            needed_modfile = output.split('\n')[0].replace(elm_files,'').split(':')[0]
+            needed_modfile = output.split('\n')[0].split(':')[0]
             if(needed_modfile not in mods):
                 files_to_parse.append(needed_modfile)
                 mods.append(needed_modfile)
     
-    #Recursive call to the mods that need to be processed
+    # Recursive call to the mods that need to be processed
     if(files_to_parse): 
         for f in files_to_parse:
             mods = get_used_mods(ifile=f,mods=mods,verbose=verbose,singlefile=singlefile)
@@ -245,7 +249,7 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
                         bad_subroutines.append(el.strip())
 
             #comment out use statement
-            lines, ct = comment_line(lines=lines,ct=ct,verbose=True)
+            lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
 
         #Test if subroutine has started
         match_sub = re.search(r'^(\s*subroutine\s+)',l.lower())
@@ -316,7 +320,14 @@ def process_for_unit_test(fname,casename,mods=None,overwrite=False,verbose=False
     Comments out functions that are cumbersome
     for unit testing purposes.
     Gets module dependencies of the module and
-    process them recursively 
+    process them recursively.
+
+    Arguments:
+        fname -> File path for .F90 file that with needed subroutine
+        casename -> label of Unit Test
+        mods -> list of already known (if any) files that were previously processed
+        verbose -> Print more info
+        singlefile -> flag that disables recursive processing.
     """
     sub_list = []
     initial_mods = mods[:]
@@ -337,13 +348,13 @@ def process_for_unit_test(fname,casename,mods=None,overwrite=False,verbose=False
     
     for mod_file in mods:
         if (mod_file in initial_mods): continue # Avoid preprocessing files over and over
-        file = open(elm_files+mod_file,'r')
+        file = open(mod_file,'r')
         lines = file.readlines()
         file.close()
         if(verbose): print(f"Processing {mod_file}")
         modify_file(lines,casename,mod_file,sub_list,verbose=verbose,overwrite=overwrite)
         if(overwrite):
-            out_fn = elm_files+mod_file
+            out_fn = mod_file
             if(verbose): print("Writing to file:",out_fn)
             with open(out_fn,'w') as ofile:
                 ofile.writelines(lines)

@@ -7,22 +7,24 @@ def resolve_interface(sub,iname,args,varlist,verbose=False):
     import sys 
     from utilityFunctions import Variable,getLocalVariables
     from analyze_subroutines import find_file_for_subroutine, Subroutine
-    from mod_config import _bc, elm_files
+    from mod_config import _bc,ELM_SRC
 
     if(verbose): print(_bc.FAIL+f"Resolving interface for {iname}\n with args: {args}")
-    cmd = f'grep -in -E "^[[:space:]]+(interface {iname})" {elm_files}*.F90'
+    cmd = f'grep -rin --exclude-dir={ELM_SRC}external_models/ -E "^[[:space:]]+(interface {iname})" {ELM_SRC}*'
     output = sp.getoutput(cmd)
 
     # Get file and line number for interface
-    _str = output.replace(elm_files,'') 
-
     # list that goes:  [filename, linenumber, interface {iname}]
-    fn, ln, pattern = _str.split(':')
+    output = output.split(':') 
+    if(len(output) != 3): 
+        sys.exit(f"resolve_interface:: Couldn't find file with interface {iname}\n"
+                 f"cmd: {cmd}\noutput: {output}")
+    fn, ln, pattern = output 
     if(verbose): print(fn,ln,pattern+_bc.ENDC)
     ln = int(ln) 
 
     # Read file:
-    ifile = open(elm_files+fn,'r')
+    ifile = open(fn,'r')
     lines = ifile.readlines() 
     ifile.close()
     # If one of the arguments is a derived type, then that will have to be analyzed:
@@ -49,9 +51,6 @@ def resolve_interface(sub,iname,args,varlist,verbose=False):
                 subname = lines[ct].replace(m_proc.group(),'').strip()
                 subroutines.append(subname) 
         ct += 1 
-    
-    print(_bc.WARNING+f"interface subroutines:{subroutines}"+_bc.ENDC)
-    print(_bc.OKGREEN+f"Number of Args :"+_bc.ENDC,len(args))
     
     l_args = [] # list to hold arguments as Variables
     special = "xx" # Special data type used for arguments that are math expressions so either int or real
@@ -114,7 +113,6 @@ def resolve_interface(sub,iname,args,varlist,verbose=False):
         if(not found):
             # Couldn't match so arg is assumed to be a math expression
             # Assuming it's equivalent to an integer or real then
-            print(f"Couldn't match {arg} -- Setting to int/real")
             l_args.append(Variable(type=special,name=arg,subgrid='',ln=0,dim=0))
     
     num_input_args = len(l_args)
@@ -123,7 +121,6 @@ def resolve_interface(sub,iname,args,varlist,verbose=False):
 
     # Instantiate subroutines for interface procedures
     for s in subroutines:
-        print("resolve_interface :: ")
         fn1,startline,endline = find_file_for_subroutine(name=s,fn=fn,ignore_interface=True)
         testsub = Subroutine(s,fn1,calltree=sub.calltree,start=startline,end=endline,ignore_interface=True)
         x = getLocalVariables(testsub,verbose=False)

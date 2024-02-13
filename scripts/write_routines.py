@@ -1,6 +1,8 @@
+from mod_config import home_dir, spel_mods_dir
+from edit_files import comment_line
+from analyze_subroutines import find_file_for_subroutine
+import re
 import sys
-import os
-from mod_config import home_dir, elm_files
 
 def get_delta_from_dim(dim,delta):
     """
@@ -61,9 +63,8 @@ def generate_makefile(files,casename):
     and makes a makefile and stores it in the case dir
     """
     noF90 = [f.replace('.F90','') for f in files]
-    #preproc_dict = {k : False for k in preproc_list}
     FC = "nvfortran"
-    FC_FLAGS_ACC = " -ta=tesla:deepcopy -Minfo=accel -acc -Mcuda\n"
+    FC_FLAGS_ACC = " -gpu=deepcopy -Minfo=accel -acc -cuda\n"
     FC_FLAGS_DEBUG = " -g -O0 -Mbounds -Mchkptr -Mchkstk\n"
     MODEL_FLAGS = " -DMODAL_AER -DCPL_BYPASS"
 
@@ -115,7 +116,7 @@ def generate_makefile(files,casename):
     ofile.write("\t"+"$(FC) -O0 -c $<\n")
     ofile.write("else\n")
     ofile.write("verificationMod.o : verificationMod.F90\n")
-    ofile.write("\t"+"$(FC) -O0 -ta=tesla:deepcopy -acc -c $<\n")
+    ofile.write("\t"+"$(FC) -O0 -gpu=deepcopy -acc -c $<\n")
     ofile.write("endif\n")
     
     ofile.write("\n\n"+".PHONY: clean"+"\n")
@@ -159,7 +160,7 @@ def clean_use_statements(mod_list, file,casename):
      function that will clean both initializeParameters
      and readConstants
     """
-    ifile = open(f"{elm_files}{file}.F90",'r')
+    ifile = open(f"{spel_mods_dir}{file}.F90",'r')
     lines = ifile.readlines()
     ifile.close()
     noF90 = [f.replace('.F90','') for f in mod_list]
@@ -187,9 +188,6 @@ def clean_use_statements(mod_list, file,casename):
 
 
 def clean_main_elminstMod(vardict,type_list,files,casename):
-    from edit_files import comment_line
-    from analyze_subroutines import find_file_for_subroutine
-    import re
     """
     This function will clean the use lists of main, initializeParameters,
     and readConstants.  It will also clean the variable initializations and
@@ -205,17 +203,17 @@ def clean_main_elminstMod(vardict,type_list,files,casename):
     lines = ifile.readlines()
     ifile.close()
     noF90 = [f.replace('.F90','') for f in files]
-    file2,startline,endline = find_file_for_subroutine('elm_init')
-    ct = startline
+
+    ct = 1
     start = "!#VAR_INIT_START"
     stop = "!#VAR_INIT_STOP"
     analyze = False
-    while ct < endline:
+    while ct < len(lines)-1:
         line = lines[ct]
         ##Adjusting variable init
         if(line.strip() == start):
             analyze = True
-            ct += 1; continue;
+            ct += 1; continue
         if(line.strip() == stop):
             analyze = False
             break

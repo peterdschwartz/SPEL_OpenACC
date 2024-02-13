@@ -1,24 +1,11 @@
-from array import array
 import re
 import sys
 import os.path
 from process_associate import getAssociateClauseVars
 from mod_config import home_dir,_bc
 import mod_config 
-from LoopConstructs import Loop, exportVariableDependency
-from utilityFunctions import adjust_array_access_and_allocation, find_file_for_subroutine,getLocalVariables
-
-def debug_print(str_debug, verbose):
-    if (verbose <= DEBUG_PRINT_VERBOSE):
-        print(str_debug)
-
-def error_print(str_error, verbose):
-    if (verbose <= DEBUG_PRINT_VERBOSE):
-        print(str_error)
-
-def test_bit(int_type, offset):
-    mask = 1 << offset
-    return(int_type & mask)
+from LoopConstructs import Loop
+from utilityFunctions import  find_file_for_subroutine,getLocalVariables
 
 def replace_key(key):
 
@@ -49,10 +36,9 @@ def replace_key(key):
     else:
         return key    
     
-
 def determine_level_in_tree(branch,tree_to_write):
     """
-    will be called recursively
+    Will be called recursively
     branch is a list containing names of subroutines
     ordered by level in call_tree
     """
@@ -66,7 +52,6 @@ def determine_level_in_tree(branch,tree_to_write):
                 tree_to_write.append([sub_el,j-1])
         if(islist):
             tree_to_write = determine_level_in_tree(sub_el,tree_to_write)
-
     return tree_to_write
 
 def add_acc_routine_info(sub):
@@ -75,7 +60,7 @@ def add_acc_routine_info(sub):
     """
     filename = sub.filepath
 
-    file = open(mod_config.elm_files+filename,'r')
+    file = open(filename,'r')
     lines = file.readlines() # read entire file
     file.close()
 
@@ -99,11 +84,45 @@ def add_acc_routine_info(sub):
     print(f'first_use = {first_use}')
     lines.insert(first_use,'      !$acc routine seq \n')
     print(f"Added !$acc to {sub.name} in {filename}")
-    with open(mod_config.elm_files+filename,'w') as ofile:
+    with open(filename,'w') as ofile:
         ofile.writelines(lines)
 
 class Subroutine(object):
-    def __init__(self, name,file='',calltree=[],start=0,end=0,ignore_interface=False):
+    """
+    Class object that holds relevant metadata on a subroutine
+        * First, Given the name of the subroutine, the file is found
+        * Call tree information is stored into self.calltree (must be analyzed at the end)
+        * The Global variabes used in Associate clause are stored.
+        * Dummy arguments are processed.
+        * Rest of class elements are initialized.
+    
+    Note: Variables are stored using the Variable Class defined in utilityFunctions.py 
+    Class Methods: 
+        * printSubroutineInfo -> method to print to terminal subroutine metadata.
+        * _get_dummy_args -> used to find keywords for subroutine arguments 
+        * parse_subroutine -> Main function called and calls some class methods 
+                              in order to collect all relevant metadata.
+        * _check_acc_status -> checks if subroutine already as !$acc routine seq 
+        * _get_global_constants -> Find global variables that are parameters (should it be a Class method?)
+        * _preprocess_file -> (rename file?) Gets local variables, child subs
+        * _analyze_variables -> loops through global vars, determines r/w status.
+        * child_subroutines_analysis -> recursively analyzes child subs. Called after parse_subroutine
+        * analyze_calltree -> unravel calltree list to generate proper/readable calltree to terminal or txt file.
+        * generate_update_directives -> writes verificationMod subroutines
+        * examineLoops -> Not part of primary Unit Test generation; enabled with opt flag.
+                This collects all the metadata concerning the Loops of a subroutine (and child subroutines)
+                Stores Loops in a Class defined in LoopConstructs.py 
+                Once loop metadata is collected, OpenACC loop pragmas may be added.
+                Data regions are inserted at the beginning and end of subroutines
+                If adjust_allocation is enabled, then local variables are compressed as able.
+        * exportReadWriteVariables -> writes formatted output for variable status
+        * update_arg_tree -> maps dummy args to real args 
+        * generate_unstructured_data_regions -> inserts OpenACC data regions for local variables 
+    """
+    from utilityFunctions import  find_file_for_subroutine, getLocalVariables
+    
+    def __init__(self, name,file='',calltree=[],start=0,end=0,
+                 ignore_interface=False,verbose=False):
         self.name = name
         
         # find subroutine
@@ -119,13 +138,7 @@ class Subroutine(object):
         if(self.endline == 0 or self.startline == 0 or not self.filepath):
             print(f"Error in finding subroutine {self.name} {self.filepath} {self.startline} {self.endline}")
             sys.exit()
-        
-        if(os.path.exists(home_dir+f"modified-files/{file}")):
-            # print(file,"has already been modified -- setting new filepath")
-            self.filepath = f"../modified-files/{file}"
-            # Have to get subroutine start and endline just in case it's different:
-            f, self.startline, self.endline = find_file_for_subroutine(name,fn=self.filepath)
-        
+                
         self.calltree = list(calltree)
         self.calltree.append(name)
         self.associate_vars = {}
@@ -136,7 +149,6 @@ class Subroutine(object):
         
         self.dummy_args_list = self._get_dummy_args()
 
-        self.subroutine_init = None
         self.elmtype_r = {}
         self.elmtype_w = {}
         self.elmtype_rw = {}
@@ -187,7 +199,7 @@ class Subroutine(object):
         """
         from utilityFunctions import getArguments
 
-        ifile = open(mod_config.elm_files+self.filepath,'r')
+        ifile = open(self.filepath,'r')
         lines = ifile.readlines()
         ifile.close() 
         ln = self.startline-1 
@@ -214,7 +226,7 @@ class Subroutine(object):
         const_mods = ['elm_varcon','elm_varpar',
                       'landunit_varcon','column_varcon','pftvarcon',
                       'elm_varctl']
-        file = open(mod_config.elm_files+self.filepath,'r')
+        file = open(self.filepath,'r')
         lines = file.readlines()
         print(f"opened file {self.filepath}")
         ct = 0
@@ -253,7 +265,7 @@ class Subroutine(object):
         #    print(f"Must Add Acc Routine Directive to {self.name}")
         #    add_acc_routine_info(self)
              
-        file = open(mod_config.elm_files+self.filepath,'r')
+        file = open(self.filepath,'r')
         lines = file.readlines()
         file.close()
 
@@ -304,7 +316,7 @@ class Subroutine(object):
             ct+=1
 
         if(rewrite):
-            with open(mod_config.elm_files+self.filepath,'w') as ofile:
+            with open(self.filepath,'w') as ofile:
                 ofile.writelines(lines)
 
         # cover case where no derived types but still has child
@@ -319,7 +331,7 @@ class Subroutine(object):
         checks if subroutine already has !$acc directives
         """
         filename = self.filepath
-        file = open(mod_config.elm_files+filename,'r')
+        file = open(filename,'r')
         lines = file.readlines() # read entire file
         for ct in range(self.startline, self.endline):
             line = lines[ct]
@@ -331,15 +343,16 @@ class Subroutine(object):
 
     def _analyze_variables(self,associate_end,vars, class_routine_info):
         """
-        function used to determine read and write variables
+        Function used to determine read and write variables
         If var is written to first, then rest of use is ignored.
         Vars determined to be read are read-in from a file generated by
-        full E3SM run.
-        Vars that are determined to be written to must be checked to verify
+            full E3SM run called {unit-test}_vars.txt by default.
+
+        Vars that written to must be checked to verify
         results of unit-testing.
         """
         #dictionary to be returned
-        file = open(mod_config.elm_files+self.filepath,'r')
+        file = open(self.filepath,'r')
         lines = file.readlines()
         file.close()
 
@@ -421,7 +434,7 @@ class Subroutine(object):
 
     def parse_subroutine(self,elmvar,verbose=False):
         """
-        This function parses temp.F90 to find which variables are ro,wo,rw
+        This function parses subroutine to find which variables are ro,wo,rw
         elmvars is a list of derived_type variables.
         This function is called in main() after process_for_unit_test
         currently varlist holds all derived types known to be used in ELM.
@@ -457,8 +470,8 @@ class Subroutine(object):
         else:
             ct = associate_end
 
-        fname = mod_config.elm_files+self.filepath
-        file = open(mod_config.elm_files+self.filepath,'r')
+        fname = self.filepath
+        file = open(self.filepath,'r')
         lines = file.readlines()
         file.close()
         class_routine = False
@@ -613,7 +626,7 @@ class Subroutine(object):
             ofile.write(level*"|---->"+sub+'\n')
         ofile.close()
 
-    def generate_update_directives(self, clmvars_dict):
+    def generate_update_directives(self, elmvars_dict):
         """
         This function will create .F90 routine to execute the
         update directives to check the results of the subroutine
@@ -629,7 +642,7 @@ class Subroutine(object):
         for v in self.elmtype_w.keys():
             if(v in replace_inst): v = v.replace('_inst','_vars')
 
-            mod = clmvars_dict[v].declaration
+            mod = elmvars_dict[v].declaration
             ofile.write(spaces + f"use {mod}, only : {v} \n")
 
         ofile.write(spaces+"implicit none \n")
@@ -719,8 +732,8 @@ class Subroutine(object):
             local_array_list = [v for v in self.LocalVariables['arrays']]
             print(f"local_array for {self.name} \n",local_array_list)
 
-        if(verbose): print(f"Opening file {mod_config.elm_files+self.filepath} ")
-        ifile = open(mod_config.elm_files+self.filepath,'r')
+        if(verbose): print(f"Opening file {self.filepath} ")
+        ifile = open(self.filepath,'r')
         lines = ifile.readlines() # read entire file
         ifile.close()
         
@@ -1033,8 +1046,8 @@ class Subroutine(object):
             print(_bc.BOLD+_bc.WARNING+f"Opening file "+home_dir+"modified-files/"+self.filepath+_bc.ENDC)
             ifile = open(home_dir+"modified-files/"+self.filepath,'r')
         else:
-            print(_bc.BOLD+_bc.WARNING+f"Opening file {mod_config.elm_files}{self.filepath}"+_bc.ENDC)
-            ifile = open(mod_config.elm_files+self.filepath,'r')
+            print(_bc.BOLD+_bc.WARNING+f"Opening file{self.filepath}"+_bc.ENDC)
+            ifile = open(self.filepath,'r')
         
         lines = ifile.readlines() 
 
@@ -1188,8 +1201,8 @@ class Subroutine(object):
 
             # Overwrite File:
             if("modified-files" in self.filepath):
-                print(_bc.BOLD+_bc.WARNING+f"Writing to file {mod_config.elm_files}{self.filepath}"+_bc.ENDC)
-                ofile = open(mod_config.elm_files+self.filepath,'w')
+                print(_bc.BOLD+_bc.WARNING+f"Writing to file {self.filepath}"+_bc.ENDC)
+                ofile = open(self.filepath,'w')
             else:
                 print(_bc.BOLD+_bc.WARNING+f"Writing to file "+home_dir+"modified-files/"+self.filepath+_bc.ENDC)
                 ofile = open(home_dir+"modified-files/"+self.filepath,'w')

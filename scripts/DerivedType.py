@@ -1,27 +1,44 @@
 import re
-from mod_config import elm_files
-import write_routines as wr 
+import sys
+import write_routines as wr
+import subprocess as sp 
+from mod_config import ELM_SRC
 ## arrow and tab are strings for writing files or printing readable output
 arrow = '|--->'
 tab   = '    '
 class derived_type(object):
-    def __init__(self, vname, vmod   ##name of variable and mod file
-                , dtype  = None      ## name of derived type
-                , components = None  ##list of type and component name
+    def __init__(self, vname, vmod   # name of variable and mod file
+                , dtype  = None      # name of derived type
+                , components = None  # list of type and component name
                 ):
         self.name = vname
-        self.mod  = vmod
+        self.mod = '' 
+        cmd = f'find {ELM_SRC}  \( -path "*external_models*" \) -prune -o  -name "{vmod}.F90" '
+        output = sp.getoutput(cmd)
+        if(not output): 
+            sys.exit(f"Couldn't locate file {vmod}")
+        else:
+            output = output.split('\n')
+            for el in output: 
+                if("external_models" not in el):
+                    self.mod = el
+        
+        if(not self.mod): 
+            sys.exit(f"Couldn't find file for {vname}\ncmd:{cmd}\n"
+                     f"output: {output}\n")
+        
         self.declaration = vmod
         if dtype == None:
             self.dtype = ''
         else:
             self.dtype = dtype
-
         if components == None:
             self.components = []
         else :
             self.components = components
+        #
         # Flag to see if Derived Type has been analyzed
+        #
         self.analyzed = False
 
     def _add_components(self,li, lines,array,ln,datatype,verbose=False):
@@ -35,8 +52,6 @@ class derived_type(object):
         # to get the bounds.  Necessary for duplicateMod.F90 creation
         
         if(array):
-            # cmd = f'grep -in -E "^[[:space:]]*(allocate\({name})\\b" {search_file} | head -1'
-
             for line in lines:
                 ct+=1
                 #get rid of comments
@@ -84,10 +99,10 @@ class derived_type(object):
         import sys 
 
         found_declaration = False
-        #first need to check if declaration is in elm_instMod
+        # First need to check if declaration is in elm_instMod
         name = self.name
-        cmd = f'grep -in -E "::[[:space:]]*({name})" {elm_files}elm_instMod.F90'
-        cmd2 = f'grep -in -E "::[[:space:]]*({name})" {elm_files}dynSubgridDriverMod.F90'
+        cmd = f'grep -in -E "::[[:space:]]*({name})" {ELM_SRC}/main/elm_instMod.F90'
+        cmd2 = f'grep -in -E "::[[:space:]]*({name})" {ELM_SRC}/dyn_subgrid/dynSubgridDriverMod.F90'
         output1 = sp.getoutput(cmd)
         output2 = sp.getoutput(cmd2)
         output = ''
@@ -108,13 +123,13 @@ class derived_type(object):
             print(f"declaration in {self.declaration}")
         try:
             if(verbose): 
-                print(f"{self.name} Opening file: {elm_files+self.mod}")
-            ifile = open(elm_files+self.mod+'.F90')
+                print(f"{self.name} Opening file: {self.mod}")
+            ifile = open(self.mod)
         except:
-            print("ERROR: file ",self.mod+'.F90', "not found")
+            print("ERROR: file ",self.mod, "not found")
             exit(1)
 
-        ## must find declaration of var
+        # Find declaration of variable
         lines = ifile.readlines()
         var = self.name
         if(not found_declaration):
@@ -140,7 +155,7 @@ class derived_type(object):
 
         if(not found_declaration):
             print("ERROR:  Couldn't find declaration of", var)
-            print("in file",self.mod+'.F90')
+            print("in file",self.mod)
             exit(1)
 
         # Now find definition of type to find components!

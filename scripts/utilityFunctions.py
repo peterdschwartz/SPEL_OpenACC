@@ -2,12 +2,10 @@
 Python Module that collects functions that 
 have broad utility for several modules in SPEL 
 """
-from array import array
 import sys 
 import re 
 import subprocess as sp
-from typing import Optional
-from mod_config import elm_files, _bc
+from mod_config import ELM_SRC, _bc
 
 class Variable(object):
     """
@@ -83,7 +81,6 @@ def getArguments(l,verbose=False):
     par = re.compile("(?<=\().+(?=\))")
     m = par.search(l)
     if(not m): 
-        print("Subroutine has no arguments",l)
         args = []
         return args;
     
@@ -124,31 +121,32 @@ def lineContinuationAdjustment(lines,ln,verbose=False):
       print(l)
       print(f"Skipped {lines_to_skip} lines")
 
-   return l, lines_to_skip;
+   return l, lines_to_skip
 
 def find_file_for_subroutine(name,fn='',ignore_interface=False):
     """
     finds file, start and end line numbers for subroutines
-    find file and start of interface for interfaces
+    find file and start of interface block for interfaces
     """
     if(not fn):
-        search_file = f"{elm_files}*.F90"
+        search_file = f"{ELM_SRC}*"
     else:
-        # NOTE: Rework elm_files !!
-        search_file = f"{elm_files}{fn}"
+        search_file = f"{fn}"
     
-    interface_list = get_interface_list()
+    interface_list = get_interface_list() 
     if(name not in interface_list or ignore_interface):
-        cmd = f'grep -in -E "^[[:space:]]*(subroutine {name})\\b" {search_file} | head -1'
-        cmd_end = f'grep -in -E "^[[:space:]]*(end subroutine {name})\\b" {search_file} | head -1'
+        cmd = f'grep -rin -E "^[[:space:]]*(subroutine[[:space:]]* {name})\\b" {search_file} | head -1'
+        cmd_end = f'grep -rin -E "^[[:space:]]*(end subroutine[[:space:]]* {name})\\b" {search_file} | head -1'
     else:
-        cmd = f'grep -in -E "^[[:space:]]+(interface {name})" {search_file} | head -1'
+        cmd = f'grep -rin -E "^[[:space:]]+(interface[[:space:]]* {name})" {search_file} | head -1'
         cmd_end = ''
 
     output = sp.getoutput(cmd)
     if(not fn):
         file = output.split(':')[0]
-        file = file.replace(elm_files,'')
+        # Need to separate the file name and path
+        # fpath = dir_regex.search(file).group()
+        # file = dir_regex.sub('',file)
         output = output.split(':')
         if(len(output) < 2 ):
             print(f"Error: Couldn't find info for {name}\n {output}")
@@ -161,20 +159,19 @@ def find_file_for_subroutine(name,fn='',ignore_interface=False):
             endline = 0
     else:
         file = fn
-        print(f"find_file_for_sub::{fn}\n{output}")
-        print(output.split(':'))
-        print(name,file)
-        print(f"cmd: {cmd}")
-        if(not output ):
-            print(name,file)
-            print(f"cmd: {cmd}")
-        startline = int(output.split(':')[0])
+        output = output.split(':') 
+        if(len(output) < 2):
+            sys.exit(f"find_file_for_subroutine::Didn't match subroutine\n cmd: {cmd}\n output: {output}")
+        startline = int(output[0])
         if(cmd_end!=''):
             output = sp.getoutput(cmd_end)
-            endline = int(output.split(':')[0]) 
+            output = output.split(':')
+            if(len(output) < 2):
+                sys.exit(f"find_file_for_subroutine::Didn't match end of subroutine\n cmd: {cmd_end}\n output: {output}") 
+            endline = int(output[0])
         else:
             endline = 0
-
+    
     if(file == 'grep'):
         print(f"ERROR FILE FOR {name} NOT PRESENT")
         sys.exit(1)
@@ -184,11 +181,14 @@ def find_file_for_subroutine(name,fn='',ignore_interface=False):
 def get_interface_list():
     """
     returns a list of all interfaces
+
+    NOTE:  Should store it in mod_config so it's only run once per 
+           Unit Test creation
     """
-    cmd = f'grep -in -E "^[[:space:]]+(interface)" {elm_files}*.F90'
+    import os 
+    cmd = f'grep -rin --exclude-dir={ELM_SRC}external_models/ -E "^[[:space:]]+(interface)" {ELM_SRC}*'
     output = sp.getoutput(cmd)
     output = output.split('\n')
-
     interface_list = []
     for el in output:
         el = el.split()
@@ -204,15 +204,15 @@ def getLocalVariables(sub,verbose=False,class_var=False ):
 
     Note: currently only looks at type declaration for class object
     """
-    filename = elm_files+sub.filepath
+    filename = sub.filepath
     subname = sub.name 
     file = open(filename,'r');
     lines = file.readlines()
     file.close()
     startline = sub.startline; endline=sub.endline;
     
-    if(verbose): print(f"getLocalVariables::{filename},{subname} at L{startline}-{endline}")
-    # Doesn't actaully get rid of associate (can though) should rename .
+    if(verbose): 
+        print(f"getLocalVariables::{filename},{subname} at L{startline}-{endline}")
     cc = "." 
     # non-greedy capture
     ng_regex_array = re.compile(f'\w+?\s*\({cc}+?\)')
@@ -299,7 +299,7 @@ def determine_class_instance(sub,verbose=False):
     Find out what the data structure 'this' corresponds to
     """
     import subprocess as sp 
-    filename = elm_files+sub.filepath
+    filename = sub.filepath
     subname = sub.name 
     file = open(filename,'r');
     lines = file.readlines()
@@ -325,7 +325,7 @@ def determine_class_instance(sub,verbose=False):
             var_type = m_type.group()
             found_this = True 
             print(line, m_this.group(),m_type.group())
-            cmd = f'grep -E "^[[:space:]]+(type\({var_type}\))" {elm_files}*.F90 | grep -v "intent"'
+            cmd = f'grep -E "^[[:space:]]+(type\({var_type}\))" {ELM_SRC}*.F90 | grep -v "intent"'
             output = sp.getoutput(cmd)
             output = output.split("\n")
             for el in output:
@@ -623,8 +623,8 @@ def adjust_child_sub_arguments(sub,file,lstart,lend,args):
             print(file,"has already been modified")
             file = f"../modified-files/{file}"
     
-    print(f"Opening {elm_files}{file}")
-    ifile = open(elm_files+file,'r') 
+    print(f"Opening {sub.filepath}")
+    ifile = open(sub.filepath,'r') 
     lines = ifile.readlines() 
     ifile.close() 
 
@@ -665,7 +665,7 @@ def adjust_child_sub_arguments(sub,file,lstart,lend,args):
                     sys.exit()
     
     # Write to file 
-    with open(elm_files+file,'w') as ofile:
+    with open(sub.filepath,'w') as ofile:
         ofile.writelines(lines)
     
     # re-run access adjustment for the dummy args only!

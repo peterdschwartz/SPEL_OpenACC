@@ -13,11 +13,12 @@ def main():
     from analyze_subroutines import Subroutine,replace_key
     from utilityFunctions import getLocalVariables
     import write_routines as wr
-    from mod_config import elm_files, home_dir, default_mods, unittests_dir
+    from mod_config import default_mods, unittests_dir, scripts_dir,spel_mods_dir
     from edit_files import process_for_unit_test
 
+    print(f"CWD is {os.getcwd()}")
+
     main_sub_dict = {}
-    # casename = "dyn_hwcontent"
     casename = "SoilTemp"
     casename = unittests_dir+casename
     # Determines if SPEL should run to make optimizations 
@@ -26,9 +27,9 @@ def main():
     adjust_allocation = False  
     preprocess = False 
     # Create script output directory if not present:
-    if(not os.path.isdir("./script-output")):
+    if(not os.path.isdir(f"{scripts_dir}/script-output")):
         print("Making script output directory")
-        os.system("mkdir script-output")
+        os.system(f"mkdir {scripts_dir}/script-output")
     
     #Create case directory 
     if(not os.path.isdir(f"{casename}") ):
@@ -39,9 +40,9 @@ def main():
         preprocess = True
     else:
         x = input(f"case {casename} already exists - Preprocess?")
-        if(x =='n'):
+        if(x == 'n'):
             preprocess = False
-        elif(x=='y'):
+        elif(x == 'y'):
             preprocess = True
         else:
             sys.exit("Error - input not recognized") 
@@ -53,7 +54,6 @@ def main():
     #                  "col_cf_summary_for_ch4_acc", "col_cs_summary_acc",
     #                  "col_nf_summary_acc", "col_ns_summary_acc",
     #                  "col_pf_summary_acc", "col_ps_summary_acc" ]
-    
 
     # sub_name_list = ["NitrogenDeposition","NitrogenFixation","NitrogenFixation_balance", 
     #                  "MaintenanceResp","PhosphorusWeathering","PhosphorusBiochemMin",
@@ -101,7 +101,7 @@ def main():
     read_types  = []; write_types = [];
     subroutines = {k:[] for k in sub_name_list}
 
-    needed_mods = default_mods[:]
+    needed_mods = [] #default_mods[:]  
     for s in sub_name_list:
         # Get general info of the subroutine
         subroutines[s] = Subroutine(s,calltree=['elm_drv'])
@@ -112,20 +112,19 @@ def main():
         # highly complex subroutines
         if(preprocess and not opt):
             fn = subroutines[s].filepath
-            fn = fn.replace(elm_files,'')
-            fn = fn.replace("/modified-files/",'')
             process_for_unit_test(fname=fn,casename=casename,
                      mods=needed_mods,overwrite=True,verbose=False)
-
+    #    
     # examineLoops performs adjustments that go beyond the "naive" 
     # reliance on the "!$acc routine" directive. 
     #  * adjust_allocation : rewrites local variable allocation and indexing 
     #  * add_acc : accelerated via "!$acc parallel loop" directives
     #              which relies on using processor level filters in main.F90.
-
+    #
     # NOTE: avoid having both adjust_allocation and add_acc both True for now
     #       as they don't currently communicate and they both modify the same files
     #       which may cause subroutine line numbers to change, etc...
+    #
     if(opt): 
         for s in sub_name_list: 
             local_vars = getLocalVariables(subroutines[s],verbose=False)
@@ -136,9 +135,10 @@ def main():
         sys.exit("Done running in Optimization Mode")
     
     for s in sub_name_list:
+        #
         # Parsing means getting info on the variables read and written
         # to by the subroutine and any of its callees
-        
+        #
         local_vars = getLocalVariables(subroutines[s],verbose=False)
 
         subroutines[s].parse_subroutine(var_list,verbose=True)
@@ -165,7 +165,6 @@ def main():
                 print(f"new write_types key: {key}")
 
             write_types.append(key)
-        #subroutines[s].exportReadWriteVariables()
          
     analyze_var = True
     if(analyze_var):
@@ -266,7 +265,6 @@ def main():
     aggregated_elmtypes_list = list(set(aggregated_elmtypes_list))
     
     # update the status of derived_types:
-    print("elmtype-r")
     for s in sub_name_list:
         for dtype, components in subroutines[s].elmtype_r.items():
             if(dtype in replace_inst): dtype = dtype.replace('_inst','_vars')
@@ -283,29 +281,32 @@ def main():
     for sub in subroutines.values():
         tree = sub.calltree[2:]
         sub.analyze_calltree(tree)
-
-    ## This generates verificationMod to test the results of
-    ## the subroutines.  Call the relevant update_vars_{sub}
-    ## after the parallel region.
+    #
+    # This generates verificationMod to test the results of
+    # the subroutines.  Call the relevant update_vars_{sub}
+    # after the parallel region.
+    #
     for sub in subroutines.values():
         sub.generate_update_directives(vdict)
 
-    with open(f'{home_dir}scripts/script-output/concat.F90','w') as outfile:
+    with open(f'{scripts_dir}/script-output/concat.F90','w') as outfile:
         outfile.write("module verificationMod \n")
         outfile.write("contains \n")
 
         for s in sub_name_list:
-            with open(f"{home_dir}scripts/script-output/update_vars_{s}.F90") as infile:
+            with open(f"{scripts_dir}/script-output/update_vars_{s}.F90") as infile:
                 outfile.write(infile.read())
             outfile.write("\n")
         outfile.write("end module verificationMod\n")
+    
+    cmd = f"cp {scripts_dir}/script-output/concat.F90 {casename}/verificationMod.F90"
+    os.system(f"cp {scripts_dir}/script-output/concat.F90 {casename}/verificationMod.F90")
+    
     #
-    cmd = f"cp {home_dir}scripts/script-output/concat.F90 {casename}/verificationMod.F90"
-    print(cmd)
-    os.system(f"cp {home_dir}scripts/script-output/concat.F90 {casename}/verificationMod.F90")
-
     # print and write stencil for acc directives to screen to be c/p'ed in main.F90
     # may be worth editing main.F90 directly.
+    #
+
     aggregated_elmtypes_list.sort(key=lambda v: v.upper())
     from mod_config import _bc
     acc = _bc.BOLD+_bc.HEADER+"!$acc "
@@ -328,8 +329,8 @@ def main():
     #for s in subroutines:
     #    s._get_global_constants(constants)
 
-    ## Will need to read in physical properties type
-    ## so set all components to True
+    # Will need to read in physical properties type
+    # so set all components to True
     print("setting physical properties type to True")
     for varname, dtype in vdict.items():
         if varname in ['veg_pp','lun_pp','col_pp','grc_pp','top_pp']:
@@ -361,14 +362,14 @@ def main():
 
     wr.create_write_vars(vdict,read_types,subname=subname)
     wr.create_read_vars (vdict,read_types)
-    ##Move the needed files to the case directory
-    import os
-    for file in needed_mods:
-        cmd = f"cp {elm_files}{file} {casename}"
-        os.system(cmd)
-
+    
+    # Move the needed files to the case directory
+    # for file in needed_mods:
+    #     cmd = f"cp {file} {casename}"
+    #     os.system(cmd)
+    files_for_unittest = ' '.join(needed_mods) 
     os.system(f"cp duplicateMod.F90 readMod.F90 writeMod.F90 {casename}")
-    os.system(f"cp {elm_files}fileio_mod.F90 {casename}")
+    os.system(f"cp {spel_mods_dir}fileio_mod.F90 {casename}")
 
 if __name__ == '__main__':
     main()

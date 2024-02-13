@@ -1,9 +1,19 @@
 import re 
+import os
 
-home_dir = "../"
-elm_files = home_dir+"SourceFiles/"
+# Configure path information 
+scripts_dir = os.path.dirname(__file__)
+home_dir = f"{scripts_dir}/../"
 unittests_dir = home_dir+"unit-tests/"
-E3SM_dir = "~/master_E3SM/E3SM/components/elm/src"
+spel_mods_dir = home_dir+"SourceFiles/" 
+HOME = "/home/qed/"
+E3SM_SRCROOT = HOME+"E3SM" # E3SM root directory 
+SHR_SRC = E3SM_SRCROOT+"/share/util/" # path for modules shared by components (eg, shr_kind_mod)
+ELM_SRC = E3SM_SRCROOT + "/components/elm/src/" # elm source directory
+E3SM_dir = ELM_SRC 
+
+# Need regex to subsitutue elm folder structure (include sanity check here?)
+dir_regex = re.compile(f'{ELM_SRC}(main|biogeophys|biogeochem|utils|cpl|data_types|dyn_subgrid)/')
 
 dont_adjust = ['c2g','p2c','p2g','p2c','c2l','l2g','tridiagonal']
 
