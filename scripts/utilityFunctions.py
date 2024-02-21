@@ -741,4 +741,54 @@ def determine_filter_access(sub,verbose=False):
         adjust_array_access_and_allocation(local_vars, sub=sub,verbose=True)
     else:
         print(_bc.BOLD+_bc.HEADER+f"No variables need to be adjusted for {sub.name}"+_bc.ENDC)
+
+def line_unwrapper(lines,ct,verbose=False):
+    """
+    Function that takes code segment that has line continuations
+    and returns it all on one line.
+    """
+    l = lines[ct].split('!')[0] # remove comments
+    full_line = l 
+    continuation = bool(l.endswith('&'))
+    newct = ct
+    while(continuation):
+        newct += 1
+        l = lines[newct].split('!')[0] # in case of inline comments
+        full_line = full_line[:-1] + l.strip().rstrip('\n')
+        continuation = bool(full_line.endswith('&'))
+    return full_line, newct
+
+def sort_file_dependency(modtree):
+    """
+    Function that unravels a list of all module files
+    that were parsed in process_for_unit_test. 
+
+    Each element of the list is a dictionary that contains
+    the following keys:
+        * 'file' : file name
+        * 'depth': nested depth w.r.t. unit-test subroutine
+    """
+    file_list = []
+    max_depth = -9999
+
+    # Get the maximum depth level first, then 
+    # add all files at that level to the file_list
+    # and so on 
+    for el in modtree:
+        lvl, m = el['depth'], el['file']
+        if(lvl > max_depth): max_depth = lvl
     
+    current_depth = max_depth
+    while(current_depth >= 0):
+        for el in modtree:
+            lvl, m = el['depth'], el['file']
+            if(el['depth'] == current_depth and m not in file_list):
+                file_list.append(m)
+                print(_bc.OKGREEN+m+_bc.ENDC)
+        current_depth -= 1
+    
+    return file_list
+    
+    
+
+        

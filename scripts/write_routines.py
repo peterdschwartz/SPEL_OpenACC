@@ -1,6 +1,6 @@
-from mod_config import home_dir, spel_mods_dir
+from mod_config import spel_mods_dir, elm_dir_regex, shr_dir_regex
+from mod_config import unit_test_files, preproc_list
 from edit_files import comment_line
-from analyze_subroutines import find_file_for_subroutine
 import re
 import sys
 
@@ -57,35 +57,26 @@ def get_delta_from_dim(dim,delta):
     return newdim
 
 def generate_makefile(files,casename):
-    from mod_config import preproc_list,unit_test_files
     """
     This function takes the list of needed files
-    and makes a makefile and stores it in the case dir
+    and generates a makefile and finally saves it in the case dir
     """
-    noF90 = [f.replace('.F90','') for f in files]
+    noF90 = [ elm_dir_regex.sub('',f) for f in files]
+    noF90 = [ shr_dir_regex.sub('',f) for f in noF90]
+    object_list = [f.replace('.F90','.o') for f in noF90]
+
     FC = "nvfortran"
     FC_FLAGS_ACC = " -gpu=deepcopy -Minfo=accel -acc -cuda\n"
     FC_FLAGS_DEBUG = " -g -O0 -Mbounds -Mchkptr -Mchkstk\n"
     MODEL_FLAGS = " -DMODAL_AER -DCPL_BYPASS"
 
-    #Get complete preproccesor flags:
-    print(noF90)
+    # Get complete preproccesor flags:
     for f in noF90:
         if f in preproc_list:
             temp = f.upper()
             MODEL_FLAGS = MODEL_FLAGS + ' -D'+temp
     
     MODEL_FLAGS = MODEL_FLAGS+'\n'
-    object_file = open(f'{home_dir}list_of_object_files.txt','r')
-    obj_list = object_file.readlines()
-    object_file.close()
-    ordered_list = []
-    for f in obj_list:
-        if f.strip('\n') in noF90:
-            ordered_list.append(f.strip('\n')+'.o')
-
-    for f in unit_test_files:
-        ordered_list.append(f)
 
     ofile = open(f"{casename}/Makefile",'w')
     ofile.write("FC= "+FC+"\n")
@@ -94,12 +85,15 @@ def generate_makefile(files,casename):
     ofile.write("MODEL_FLAGS= "+MODEL_FLAGS)
     ofile.write("FC_FLAGS = $(FC_FLAGS_DEBUG) $(MODEL_FLAGS)"+"\n")
     ofile.write("TEST = $(findstring acc,$(FC_FLAGS))\n")
-    objs = ' '.join(ordered_list)
-    ofile.write("objects = "+objs+'\n')
+
+    # Create string of ordered objct files.
+    unit_test_objs = ' '.join(unit_test_files)
+    objs = ' '.join(object_list)
+    ofile.write("objects = "+objs+unit_test_objs+'\n')
 
     ofile.write("elmtest.exe : $(objects)"+"\n")
     ofile.write("\t"+"$(FC) $(FC_FLAGS) -o elmtest.exe $(objects)"+"\n")
-    ofile.write("\n \n")
+    ofile.write("\n\n")
     ofile.write("#.SUFFIXES: .o .F90"+"\n")
     # These files do not need to be compiled with ACC flags or optimizations
     # Can cause errors or very long compile times

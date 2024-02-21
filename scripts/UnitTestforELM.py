@@ -11,7 +11,7 @@ def main():
     import os
     from DerivedType import derived_type
     from analyze_subroutines import Subroutine,replace_key
-    from utilityFunctions import getLocalVariables
+    from utilityFunctions import getLocalVariables, sort_file_dependency
     import write_routines as wr
     from mod_config import default_mods, unittests_dir, scripts_dir,spel_mods_dir
     from edit_files import process_for_unit_test
@@ -61,17 +61,17 @@ def main():
     #                  "decomp_rate_constants_cn","decomp_vertprofiles","Allocation1_PlantNPDemand"]
 
     # sub_name_list = ["SoilLittDecompAlloc", "SoilLittDecompAlloc2","Phenology","GrowthResp"]
-                     #"veg_cf_summary_rr",
-                     #"CarbonStateUpdate0","CNLitterToColumn", "CarbonStateUpdate_Phase1_col", 
-                     #"NitrogenStateUpdate_Phase1_col", "PhosphorusStateUpdate_Phase1_col",
-                     #"CarbonStateUpdate_Phase1_PFT", "NitrogenStateUpdate_Phase1_pft",
-                     #"PhosphorusStateUpdate_Phase1_pft", "SoilLittVertTransp", "GapMortality",
-                     #"CarbonStateUpdate2", "NitrogenStateUpdate2","PhosphorusStateUpdate2",
-                     # "CarbonStateUpdate2h","NitrogenStateUpdate2h",  "PhosphorusStateUpdate2h",
-                     #"WoodProducts", "CropHarvestPools", "FireArea","FireFluxes"]
-    # sub_name_list = ["SurfaceAlbedo", "UrbanAlbedo"]
+                    # "veg_cf_summary_rr",
+                    # "CarbonStateUpdate0","CNLitterToColumn", "CarbonStateUpdate_Phase1_col", 
+                    # "NitrogenStateUpdate_Phase1_col", "PhosphorusStateUpdate_Phase1_col",
+                    # "CarbonStateUpdate_Phase1_PFT", "NitrogenStateUpdate_Phase1_pft",
+                    # "PhosphorusStateUpdate_Phase1_pft", "SoilLittVertTransp", "GapMortality",
+                    # "CarbonStateUpdate2", "NitrogenStateUpdate2","PhosphorusStateUpdate2",
+                    #  "CarbonStateUpdate2h","NitrogenStateUpdate2h",  "PhosphorusStateUpdate2h",
+                    # "WoodProducts", "CropHarvestPools", "FireArea","FireFluxes"]
+    
     sub_name_list = ["SoilTemperature"]
-
+    # sub_name_list = ["GrowthResp"]
     # modfile is a running list of which modules hold derived-type definitions
     modfile = 'usemod.txt'
     file = open(modfile, 'r')
@@ -101,20 +101,20 @@ def main():
     read_types  = []; write_types = [];
     subroutines = {k:[] for k in sub_name_list}
 
-    needed_mods = [] #default_mods[:]  
+    needed_mods = [] # default_mods[:]  
     for s in sub_name_list:
         # Get general info of the subroutine
         subroutines[s] = Subroutine(s,calltree=['elm_drv'])
 
         # Process by removing certain modules and syntax
-        # This is aimed for making subroutines compatible
-        # with the !$acc routine directive, which may not be useful for
-        # highly complex subroutines
+        # so that a standalone unit test can be compiled.
         if(preprocess and not opt):
             fn = subroutines[s].filepath
-            process_for_unit_test(fname=fn,casename=casename,
+            modtree = process_for_unit_test(fname=fn,casename=casename,
                      mods=needed_mods,overwrite=True,verbose=False)
-    #    
+       
+    
+    #
     # examineLoops performs adjustments that go beyond the "naive" 
     # reliance on the "!$acc routine" directive. 
     #  * adjust_allocation : rewrites local variable allocation and indexing 
@@ -134,6 +134,9 @@ def main():
                            add_acc=add_acc,adjust_allocation=adjust_allocation)
         sys.exit("Done running in Optimization Mode")
     
+    file_list = sort_file_dependency(modtree)
+    sys.exit(0)
+
     for s in sub_name_list:
         #
         # Parsing means getting info on the variables read and written
@@ -154,7 +157,6 @@ def main():
                 print(f"new read_types key: {key}")
             read_types.append(key)
         
-        #################################################
         for key in subroutines[s].elmtype_w.copy():
             c13c14 = bool('c13' in key or 'c14' in key)
             if(c13c14):
@@ -206,7 +208,6 @@ def main():
     ffile.close()
 
     ######################################################
-    print("agg_elm_read")
     agg_elm_read = []; agg_elm_write = [];
     for s in sub_name_list:
         for key, fieldlist in subroutines[s].elmtype_r.items():
@@ -221,10 +222,9 @@ def main():
                 if(fname not in agg_elm_write):
                     agg_elm_write.append(fname)
 
-    print("Additional Mods files needed for this unit test:")
-    for m in needed_mods:
-        if(m not in default_mods): print(m)
-    wr.generate_makefile(needed_mods,casename)
+    
+    # Create a makefile for the unit test
+    wr.generate_makefile(files=file_list,casename=casename)
 
     # make sure physical properties types are read/written:
     list_pp = ['veg_pp','lun_pp','col_pp','grc_pp','top_pp']
@@ -368,6 +368,7 @@ def main():
     #     cmd = f"cp {file} {casename}"
     #     os.system(cmd)
     files_for_unittest = ' '.join(needed_mods) 
+    os.system(f"cp {files_for_unittest} {casename}")
     os.system(f"cp duplicateMod.F90 readMod.F90 writeMod.F90 {casename}")
     os.system(f"cp {spel_mods_dir}fileio_mod.F90 {casename}")
 

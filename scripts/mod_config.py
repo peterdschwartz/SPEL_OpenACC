@@ -13,7 +13,8 @@ ELM_SRC = E3SM_SRCROOT + "/components/elm/src/" # elm source directory
 E3SM_dir = ELM_SRC 
 
 # Need regex to subsitutue elm folder structure (include sanity check here?)
-dir_regex = re.compile(f'{ELM_SRC}(main|biogeophys|biogeochem|utils|cpl|data_types|dyn_subgrid)/')
+elm_dir_regex = re.compile(f'{ELM_SRC}(main|biogeophys|biogeochem|utils|cpl|data_types|dyn_subgrid)/')
+shr_dir_regex = re.compile(f'{SHR_SRC}')
 
 dont_adjust = ['c2g','p2c','p2g','p2c','c2l','l2g','tridiagonal']
 

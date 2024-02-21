@@ -1,0 +1,12 @@
+{
+    "cmake.configureOnOpen": false,
+    "python.testing.unittestArgs": [
+        "-v",
+        "-s",
+        "./scripts",
+        "-p",
+        "test_*.py"
+    ],
+    "python.testing.pytestEnabled": false,
+    "python.testing.unittestEnabled": true
+}

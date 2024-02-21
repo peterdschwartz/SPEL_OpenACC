@@ -13,7 +13,6 @@ subroutine write_vars()
      use ColumnDataType, only : col_ws 
      use ColumnDataType, only : col_wf 
      use VegetationType, only : veg_pp 
-     use VegetationDataType, only : veg_wf 
      use VegetationDataType, only : veg_ef 
      use elm_instMod, only : soilstate_vars 
      use elm_instMod, only : solarabs_vars 
@@ -194,7 +193,6 @@ subroutine write_vars()
      !$acc col_ef%eflx_building_heat, &
      !$acc col_ef%eflx_urban_ac, &
      !$acc col_ef%eflx_urban_heat, &
-     !$acc col_ef%htvp, &
      !$acc col_ef%xmf, &
      !$acc col_ef%xmf_h2osfc, &
      !$acc col_ef%imelt )
@@ -223,23 +221,9 @@ subroutine write_vars()
      !$acc col_wf%qflx_glcice, &
      !$acc col_wf%qflx_glcice_melt )
      
-     !====================== veg_wf ======================!
-     
-     !$acc update self(& 
-     !$acc veg_wf%qflx_evap_soi, &
-     !$acc veg_wf%qflx_tran_veg, &
-     !$acc veg_wf%qflx_ev_snow, &
-     !$acc veg_wf%qflx_ev_soil, &
-     !$acc veg_wf%qflx_ev_h2osfc )
-     
      !====================== veg_ef ======================!
      
      !$acc update self(& 
-     !$acc veg_ef%eflx_sh_grnd, &
-     !$acc veg_ef%eflx_sh_snow, &
-     !$acc veg_ef%eflx_sh_soil, &
-     !$acc veg_ef%eflx_sh_h2osfc, &
-     !$acc veg_ef%eflx_lwrad_net, &
      !$acc veg_ef%eflx_gnet, &
      !$acc veg_ef%eflx_anthro, &
      !$acc veg_ef%eflx_traffic, &
@@ -590,8 +574,6 @@ subroutine write_vars()
      write (fid, *) col_ef%eflx_urban_ac
      write (fid, "(A)") "col_ef%eflx_urban_heat" 
      write (fid, *) col_ef%eflx_urban_heat
-     write (fid, "(A)") "col_ef%htvp" 
-     write (fid, *) col_ef%htvp
      write (fid, "(A)") "col_ef%xmf" 
      write (fid, *) col_ef%xmf
      write (fid, "(A)") "col_ef%xmf_h2osfc" 
@@ -637,31 +619,8 @@ subroutine write_vars()
      write (fid, "(A)") "col_wf%qflx_glcice_melt" 
      write (fid, *) col_wf%qflx_glcice_melt
      
-     !====================== veg_wf ======================!
-     
-     write (fid, "(A)") "veg_wf%qflx_evap_soi" 
-     write (fid, *) veg_wf%qflx_evap_soi
-     write (fid, "(A)") "veg_wf%qflx_tran_veg" 
-     write (fid, *) veg_wf%qflx_tran_veg
-     write (fid, "(A)") "veg_wf%qflx_ev_snow" 
-     write (fid, *) veg_wf%qflx_ev_snow
-     write (fid, "(A)") "veg_wf%qflx_ev_soil" 
-     write (fid, *) veg_wf%qflx_ev_soil
-     write (fid, "(A)") "veg_wf%qflx_ev_h2osfc" 
-     write (fid, *) veg_wf%qflx_ev_h2osfc
-     
      !====================== veg_ef ======================!
      
-     write (fid, "(A)") "veg_ef%eflx_sh_grnd" 
-     write (fid, *) veg_ef%eflx_sh_grnd
-     write (fid, "(A)") "veg_ef%eflx_sh_snow" 
-     write (fid, *) veg_ef%eflx_sh_snow
-     write (fid, "(A)") "veg_ef%eflx_sh_soil" 
-     write (fid, *) veg_ef%eflx_sh_soil
-     write (fid, "(A)") "veg_ef%eflx_sh_h2osfc" 
-     write (fid, *) veg_ef%eflx_sh_h2osfc
-     write (fid, "(A)") "veg_ef%eflx_lwrad_net" 
-     write (fid, *) veg_ef%eflx_lwrad_net
      write (fid, "(A)") "veg_ef%eflx_gnet" 
      write (fid, *) veg_ef%eflx_gnet
      write (fid, "(A)") "veg_ef%eflx_anthro" 

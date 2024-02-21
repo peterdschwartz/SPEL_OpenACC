@@ -2,9 +2,11 @@ import sys
 import re
 import subprocess as sp
 from analyze_subroutines import Subroutine
-from mod_config import ELM_SRC, SHR_SRC
+from mod_config import ELM_SRC, SHR_SRC, _bc
+from utilityFunctions import getLocalVariables, find_file_for_subroutine, get_interface_list, line_unwrapper
+from fortran_modules import FortranModule
 
-#compile list of lower-case module names to remove
+# Compile list of lower-case module names to remove
 bad_modules =  ['abortutils','shr_log_mod',
                'elm_time_manager','shr_infnan_mod',
                'clm_time_manager','pio',
@@ -16,9 +18,10 @@ bad_modules =  ['abortutils','shr_log_mod',
                'shr_mpi_mod', 'shr_nl_mod','shr_str_mod',
                'controlmod','getglobalvaluesmod',
                'organicfilemod','elmfatesinterfacemod','externalmodelconstants',
-               'externalmodelinterfacemod']
+               'externalmodelinterfacemod', 'waterstatetype',
+               'temperaturetype','waterfluxtype','shr_file_mod','mct_mod']
 
-fates_mod = ['elmfatesinterfacemod','elmfatesinterfacemod']
+fates_mod = ['elmfatesinterfacemod']
 betr_mods = ['betrsimulationalm']
 
 bad_subroutines = ['endrun','restartvar','hist_addfld1d','hist_addfld2d',
@@ -40,7 +43,7 @@ def comment_line(lines,ct,mode='normal',verbose=False):
     if(mode == 'normal'): comment_ = '!#py '
     if(mode == 'fates' ): comment_ = '!#fates_py '
     if(mode == 'betr'  ): comment_ = '!#betr_py '
-
+    
     newline = lines[ct]
     str_ = newline.split()[0]
     newline = newline.replace(str_,comment_+str_,1)
@@ -139,17 +142,11 @@ def process_fates_or_betr(lines,mode):
             #could be a function or argument to fucntions?
             lines, ct = comment_line(lines=lines,ct=ct,mode=mode)
             ct+=1; continue
-
-        # #mutst be argument?
-        # if(match_var and not match_call and not match_type):
-        #     l = l.replace(var,'')+ comment_ +lines[ct].strip()
-        #     lines[ct] = l
-
         ct+=1
 
     return lines
 
-def get_used_mods(ifile,mods,singlefile,verbose=False):
+def get_used_mods(ifile,mods,singlefile,modtree,verbose=False):
     """
     Checks to see what mods are needed to compile the file
     """
@@ -157,9 +154,12 @@ def get_used_mods(ifile,mods,singlefile,verbose=False):
     file = open(fn,'r')
     lines = file.readlines()
     file.close()
+    # Keep track of nested level
+    depth= 0
 
     needed_mods = []
     ct = 0
+    
     while(ct < len(lines)):
         line = lines[ct]
         l = line.split('!')[0].strip()
@@ -168,10 +168,12 @@ def get_used_mods(ifile,mods,singlefile,verbose=False):
             continue
         match_use = re.search(r'^(use)[\s]+',l)
         if(match_use):
-            l = l.replace(',',' ') # get rid of comma if no space
+            # Get rid of comma if no space
+            l = l.replace(',',' ') 
             mod = l.split()[1]
             mod = mod.strip()
-            #needed since FORTRAN is not case-sensitive!
+            
+            # Needed since FORTRAN is not case-sensitive!
             lower_mods = [m.lower().replace('.F90','') for m in mods] 
             if(mod not in needed_mods and mod.lower() not in lower_mods 
                and mod.lower() not in ['elm_instmod','cudafor','verificationmod']):
@@ -193,11 +195,19 @@ def get_used_mods(ifile,mods,singlefile,verbose=False):
             #
             cmd = f'grep -rin --exclude-dir=external_models/ "module {m}" {SHR_SRC}*'
             shr_output = sp.getoutput(cmd) 
+            
             if(not shr_output):
                 if(verbose): print(f"Couldn't find {m} in ELM or shared source -- adding to removal list")
                 bad_modules.append(m.lower())
+            else:
+                needed_modfile = shr_output.split('\n')[0].split(':')[0]
+                modtree.append({'depth': -9999,'file': needed_modfile})
+                if(needed_modfile not in mods):
+                    files_to_parse.append(needed_modfile)
+                    mods.append(needed_modfile)
         else:
             needed_modfile = output.split('\n')[0].split(':')[0]
+            modtree.append({'depth': depth,'file': needed_modfile})
             if(needed_modfile not in mods):
                 files_to_parse.append(needed_modfile)
                 mods.append(needed_modfile)
@@ -205,15 +215,15 @@ def get_used_mods(ifile,mods,singlefile,verbose=False):
     # Recursive call to the mods that need to be processed
     if(files_to_parse): 
         for f in files_to_parse:
-            mods = get_used_mods(ifile=f,mods=mods,verbose=verbose,singlefile=singlefile)
+            mods,modtree = get_used_mods(ifile=f,mods=mods,verbose=verbose,
+                                         singlefile=singlefile,modtree=modtree)
     
-    return mods
+    return mods, modtree 
 
 def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False): 
     """
     Function that modifies the source code of the file
     """
-    from utilityFunctions import getLocalVariables, find_file_for_subroutine, get_interface_list
 
     subs_removed = []
     ct = 0
@@ -222,7 +232,8 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
     remove_fates = False
     remove_betr = False
     in_subroutine = False
-
+    if('module pftvarcon' == lines[0].strip()):
+        verbose = True 
     while( ct < len(lines)):
         line = lines[ct]
         l = line.split('!')[0]  # don't search comments
@@ -235,11 +246,17 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
         #match use statements
         bad_mod_string = '|'.join(bad_modules)
         bad_mod_string = f'({bad_mod_string})'
+        
         match_use = re.search(f'[\s]+(use)[\s]+{bad_mod_string}',l.lower())
         if(match_use):
+            if(verbose): print(f"Matched modules to remove: {l}")
             #get bad subs; Need to refine this for variables, etc...
             if(':' in l and 'nan' not in l): 
                 subs = l.split(':')[1]
+                subs = subs.rstrip('\n')
+                # account for multiple lines
+                subs, newct = line_unwrapper(lines=lines,ct=ct)
+
                 subs.replace('=>',' ')
                 subs = subs.split(',')
                 for el in subs:
@@ -255,6 +272,7 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
         match_sub = re.search(r'^(\s*subroutine\s+)',l.lower())
         if(match_sub):
             endline = 0
+            if(verbose): print(f"Matched subroutines to remove: {l}")
             
             subname = l.split()[1].split('(')[0]
             interface_list = get_interface_list()
@@ -263,8 +281,7 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
                 continue 
             if(verbose): print(f"found subroutine {subname} at {ct+1}")
             sub_start = ct+1
-            #if(subname not in ["Init","InitAllocate","InitHistory"]):
-             
+
             fn1,startline,endline = find_file_for_subroutine(name=subname,fn=fn)
             # Consistency checks: 
             if(startline != sub_start): 
@@ -276,13 +293,21 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
             x = getLocalVariables(sub,verbose=False)
             sub_list.append(sub)
 
-            # rm_sub_string = '|'.join(remove_subs); rm_sub_string = f'({rm_sub_string})'
-            # match_remove = re.search(f'[\s]+(call)[\s]+{rm_sub_string}',l.lower())
             match_remove = bool(subname.lower() in remove_subs)
             if(match_remove and 'init' not in subname.lower().replace('initcold','cold')):
-                print(f'Removing subroutine {subname}')
+                if(verbose): print(f'Removing subroutine {subname}')
                 lines, endline = remove_subroutine(lines=lines,start=sub_start)
-                if(endline == 0): sys.exit('Error: subroutine has no end!')
+                if(endline == 0): 
+                    print('Error: subroutine has no end!'); sys.exit(1)
+                ct = endline
+                subs_removed.append(subname)
+            
+            # Remove if it's an IO routine
+            elif('readnl' in subname.lower()):
+                if(verbose): print(f'Removing subroutine {subname}')
+                lines, endline = remove_subroutine(lines=lines,start=sub_start)
+                if(endline == 0): 
+                    print('Error: subroutine has no end!'); sys.exit(1)
                 ct = endline
                 subs_removed.append(subname)
         
@@ -290,21 +315,21 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
         bad_sub_string = f'({bad_sub_string})'
         match_call = re.search(f'[\s]+(call)[\s]+{bad_sub_string}',l)
         if(match_call):
-            lines, ct = comment_line(lines=lines,ct=ct)
+            if(verbose): print(f"Matched sub call to remove: {l}")
+            lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
 
         match_func = re.search(f'{bad_sub_string}',l)
         if(match_func and '=' in l):
+            if(verbose): 
+                print(f"Matched functions to remove: {l}\n match: {match_func.group()}")
             _str = l.split()[0]
-            lines, ct = comment_line(lines=lines,ct=ct)
+            lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
 
-        #match write
-        match_write = re.search(f'[\s]+(write[\s]*\()',l)
-        if(match_write):
+        # match SHR_ASSERT_ALL
+        match_assert = re.search(r'[\s]+(SHR_ASSERT_ALL|SHR_ASSERT)\b',line)
+        if(match_assert): 
             lines, ct = comment_line(lines=lines,ct=ct)
-
-        #match SHR_ASSERT_ALL
-        match_assert = re.search(r'[\s]+(SHR_ASSERT_ALL)',line)
-        if(match_assert): newline = line.replace(line,''); lines[ct]=newline;
+            # newline = line.replace(line,''); lines[ct]=newline;
         match_end = re.search(r'^(\s*end subroutine)',lines[ct])
         if(match_end): in_subroutine = False
         ct+=1
@@ -324,26 +349,29 @@ def process_for_unit_test(fname,casename,mods=None,overwrite=False,verbose=False
 
     Arguments:
         fname -> File path for .F90 file that with needed subroutine
+        sub   -> Subroutine object
         casename -> label of Unit Test
-        mods -> list of already known (if any) files that were previously processed
-        verbose -> Print more info
+        mods     -> list of already known (if any) files that were previously processed
+        verbose  -> Print more info
         singlefile -> flag that disables recursive processing.
     """
     sub_list = []
     initial_mods = mods[:]
+    modtree = [] 
+    depth = 0
     # First, get complete list of modules to be processed 
     # and removed.
     # add just processed file to list of mods:
     lower_mods =  [m.lower() for m in mods]
-    print(f"fname = {fname}")
-    if (fname.lower() not in lower_mods): mods.append(fname)
-    # find if this file has any not-processed mods
+    if (fname.lower() not in lower_mods): 
+        mods.append(fname)
+
+    # Find if this file has any not-processed mods
     if(not singlefile):
-        mods = get_used_mods(ifile=fname,mods=mods,verbose=verbose,singlefile=singlefile)
+        mods, modtree = get_used_mods(ifile=fname,mods=mods,verbose=verbose,singlefile=singlefile,modtree=modtree)
 
     if(verbose):
         print("Total modules to edit are\n",mods)
-        print("========================================")
         print("Modules to be removed list\n", bad_modules)
     
     for mod_file in mods:
@@ -358,9 +386,9 @@ def process_for_unit_test(fname,casename,mods=None,overwrite=False,verbose=False
             if(verbose): print("Writing to file:",out_fn)
             with open(out_fn,'w') as ofile:
                 ofile.writelines(lines)
-    return sub_list
-    
 
+    return modtree
+    
 def remove_reference_to_subroutine(lines, subnames):
     """
     Given list of subroutine names, this function goes back and

@@ -3,9 +3,8 @@ import sys
 import os.path
 from process_associate import getAssociateClauseVars
 from mod_config import home_dir,_bc
-import mod_config 
 from LoopConstructs import Loop
-from utilityFunctions import  find_file_for_subroutine,getLocalVariables
+from utilityFunctions import  find_file_for_subroutine,getLocalVariables,line_unwrapper
 
 def replace_key(key):
 
@@ -125,16 +124,16 @@ class Subroutine(object):
                  ignore_interface=False,verbose=False):
         self.name = name
         
-        # find subroutine
+        # Find subroutine
         if(not ignore_interface):
             if(file):
                 file, start, end = find_file_for_subroutine(name=name,fn=file)
             else:
                 file, start, end = find_file_for_subroutine(name=name) 
 
-        self.filepath = file
+        self.filepath  = file
         self.startline = start
-        self.endline = end
+        self.endline   = end
         if(self.endline == 0 or self.startline == 0 or not self.filepath):
             print(f"Error in finding subroutine {self.name} {self.filepath} {self.startline} {self.endline}")
             sys.exit()
@@ -156,8 +155,8 @@ class Subroutine(object):
         self.child_Subroutine = {}
         self.acc_status = False
 
-        self.elmtypes = []
-        self.DoLoops = []
+        self.elmtypes  = []
+        self.DoLoops   = []
         self.Arguments = {} # Order is important here 
         self.LocalVariables = {}
         self.LocalVariables['arrays'] = {}; self.LocalVariables['scalars'] = []
@@ -166,7 +165,10 @@ class Subroutine(object):
         self.class_var = ''
 
     def printSubroutineInfo(self,long=False):
-        from mod_config import _bc
+        """
+        Prints the current subroutine metadata that has been collected.
+        If `long` is True, then local scalar variables are printed as well.
+        """
 
         print(_bc.OKCYAN+f"Subroutine {self.name} in {self.filepath} L{self.startline}-{self.endline}")
         print(f"Has Arguments: ")
@@ -176,6 +178,11 @@ class Subroutine(object):
             else:
                 _str = ""
             print(_str+f"{arg.type} {arg.name} {arg.dim}-D {arg.subgrid} {arg.ln}")
+        
+        # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+        # Print Other Modules needed to compile this subroutine # 
+        # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+               
         print(f"+++++ Local Variables ++++++")
         print(f"+++++++++ Arrays  ++++++++++")
         array_dict = self.LocalVariables['arrays']
@@ -205,8 +212,6 @@ class Subroutine(object):
         ln = self.startline-1 
         l = lines[ln].strip('\n')
         l = l.strip()
-        # print(_bc.BOLD+_bc.HEADER,lines[ln],_bc.ENDC)
-        # print(_bc.BOLD+_bc.HEADER,lines[ln+1],_bc.ENDC)
 
         while(l.endswith('&')):
             ln += 1 
@@ -371,11 +376,8 @@ class Subroutine(object):
                 #get rid of comments
                 line = line.split('!')[0]
 
-                #take into account line continuations
-                line = line.rstrip('\n')
-                while line.endswith('&'):
-                    ct+=1
-                    line = line[:-1] + lines[ct].strip().rstrip('\n')
+                # Take into account Fortran line continuations
+                line, ct = line_unwrapper(lines,ct)
 
                 if(class_routine_info["bool"]):
                     vname = class_routine_info["var"]
@@ -394,15 +396,18 @@ class Subroutine(object):
                         print(line);
                         split_line[1] = split_line[1]+"=="+split_line[3]
                         print(split_line)
-                        if(len(split_line) > 4): sys.exit("too many equals")
-                    # if on left-hand side of '=' it's an output variable
+                        if(len(split_line) > 4): 
+                            sys.exit("too many equals")
+                    #
+                    # If on left-hand side of '=' it's an output variable
                     # ignore rest for now -- USING elmtype_rw for NOW
+                    #
                     lhs = split_line[0]
                     rhs = split_line[1]
                     match_lhs = re.search(f'(?<={c}){v}(?=\W)', lhs)
                     if(match_lhs):
                         vardict.setdefault(v,[]).append('w')
-                        #if the first_match is write then it doesn't
+                        # if the first_match is write then it doesn't
                         # need to be read in from file
                         if(first_match): first_match = False; ct = self.endline
 
@@ -416,7 +421,7 @@ class Subroutine(object):
                         print(lhs, rhs)
                         sys.exit('Must be rhs or lhs')
 
-                #count if and do statements as being read variables
+                # Count if and do statements as being read variables
                 if(match_doif and matchv):
                     variable_used = True
                     if(first_match): first_match = False;
@@ -570,12 +575,11 @@ class Subroutine(object):
         variable dictionaries...
         """
         from utilityFunctions import get_interface_list
-        #print(self.elmtype_ro)
         interface_list = get_interface_list()
+        
         # child_subroutine_list is a list of Subroutine instances 
         for child_sub in self.child_subroutine_list:
-            print(f"child_sub = {child_sub.name}")
-
+            
             local_vars = getLocalVariables(child_sub,verbose=False)
 
             # Switch to a dictionary here. Maybe it's better to only use dictionaries?
@@ -614,7 +618,6 @@ class Subroutine(object):
         returns unraveled calltree
         """
         tree_to_write = [[self.name,0]]
-        #added = ['clm_drv',self.name]
         for i in range(0,len(tree)):
             el = tree[i]
             tree_to_write = determine_level_in_tree(branch=el,tree_to_write=tree_to_write)

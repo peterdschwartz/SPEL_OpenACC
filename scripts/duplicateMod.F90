@@ -323,8 +323,6 @@ subroutine duplicate_clumps(mode,unique_sites,num_sites)
             = col_es%c_h2osfc(begc_copy:endc_copy)
          col_ef%eflx_bot(begc:endc) &
             = col_ef%eflx_bot(begc_copy:endc_copy)
-         col_ef%htvp(begc:endc) &
-            = col_ef%htvp(begc_copy:endc_copy)
          col_ws%h2osoi_liq(begc:endc,:) &
             = col_ws%h2osoi_liq(begc_copy:endc_copy,:)
          col_ws%h2osoi_ice(begc:endc,:) &
@@ -343,26 +341,6 @@ subroutine duplicate_clumps(mode,unique_sites,num_sites)
             = col_ws%frac_h2osfc(begc_copy:endc_copy)
          col_wf%qflx_glcice(begc:endc) &
             = col_wf%qflx_glcice(begc_copy:endc_copy)
-         veg_wf%qflx_evap_soi(begp:endp) &
-            = veg_wf%qflx_evap_soi(begp_copy:endp_copy)
-         veg_wf%qflx_tran_veg(begp:endp) &
-            = veg_wf%qflx_tran_veg(begp_copy:endp_copy)
-         veg_wf%qflx_ev_snow(begp:endp) &
-            = veg_wf%qflx_ev_snow(begp_copy:endp_copy)
-         veg_wf%qflx_ev_soil(begp:endp) &
-            = veg_wf%qflx_ev_soil(begp_copy:endp_copy)
-         veg_wf%qflx_ev_h2osfc(begp:endp) &
-            = veg_wf%qflx_ev_h2osfc(begp_copy:endp_copy)
-         veg_ef%eflx_sh_grnd(begp:endp) &
-            = veg_ef%eflx_sh_grnd(begp_copy:endp_copy)
-         veg_ef%eflx_sh_snow(begp:endp) &
-            = veg_ef%eflx_sh_snow(begp_copy:endp_copy)
-         veg_ef%eflx_sh_soil(begp:endp) &
-            = veg_ef%eflx_sh_soil(begp_copy:endp_copy)
-         veg_ef%eflx_sh_h2osfc(begp:endp) &
-            = veg_ef%eflx_sh_h2osfc(begp_copy:endp_copy)
-         veg_ef%eflx_lwrad_net(begp:endp) &
-            = veg_ef%eflx_lwrad_net(begp_copy:endp_copy)
          veg_ef%dlrad(begp:endp) &
             = veg_ef%dlrad(begp_copy:endp_copy)
          veg_ef%cgrnd(begp:endp) &
