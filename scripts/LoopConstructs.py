@@ -58,9 +58,11 @@ def exportVariableDependency(subname, var_list,global_vars,local_vars,DoLoops,mo
     header_string = "".join(header)
     print(f'{" ":<20} {header_string}')
 
-    ofile = open(f"./script-output/{subname}AllLoopVariables.dat",'w')
+    ofile = open(f"./script-output/{subname}AllLoopVariables.txt",'w')
     ofile.write(f'{" ":<20} {header_string}'+'\n')
-    #Update formatted status for each var
+    #
+    # Update formatted status for each var
+    #
     current_name = subname
     old_name = subname
     for n, loop in enumerate(DoLoops):
@@ -85,9 +87,10 @@ def exportVariableDependency(subname, var_list,global_vars,local_vars,DoLoops,mo
             skey = _bc.OKBLUE+key+_bc.ENDC
         
         print(f"{skey: <28} {string}")
-        ofile.write(f"{skey: <28} {string}"+'\n')
+        ofile.write(f"{key: <28} {string}"+'\n')
     ofile.close()
-    create_latex_table(header_tex,varsForAllLoops, DoLoops,subname)
+
+    if(mode=='LaTex'): create_latex_table(header_tex,varsForAllLoops, DoLoops,subname)
     return 
 
 def create_latex_table(header,varsForAllLoops,doloops,subname):

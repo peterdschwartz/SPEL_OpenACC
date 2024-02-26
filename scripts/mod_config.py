@@ -6,8 +6,10 @@ scripts_dir = os.path.dirname(__file__)
 home_dir = f"{scripts_dir}/../"
 unittests_dir = home_dir+"unit-tests/"
 spel_mods_dir = home_dir+"SourceFiles/" 
-HOME = "/home/qed/"
-E3SM_SRCROOT = HOME+"E3SM" # E3SM root directory 
+HOME = "/home/peter/projects/"
+
+# E3SM root directory
+E3SM_SRCROOT = HOME+"E3SM"  
 SHR_SRC = E3SM_SRCROOT+"/share/util/" # path for modules shared by components (eg, shr_kind_mod)
 ELM_SRC = E3SM_SRCROOT + "/components/elm/src/" # elm source directory
 E3SM_dir = ELM_SRC 

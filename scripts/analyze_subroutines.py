@@ -3,11 +3,10 @@ import sys
 import os.path
 from process_associate import getAssociateClauseVars
 from mod_config import home_dir,_bc
-from LoopConstructs import Loop
+from LoopConstructs import Loop, exportVariableDependency
 from utilityFunctions import  find_file_for_subroutine,getLocalVariables,line_unwrapper
 
 def replace_key(key):
-
     if(key == 'vegcf'):
         return 'veg_cf'
     elif(key == 'colcf'):
@@ -613,7 +612,7 @@ class Subroutine(object):
 
         self.status = True
 
-    def analyze_calltree(self,tree):
+    def analyze_calltree(self,tree,casename):
         """
         returns unraveled calltree
         """
@@ -622,7 +621,7 @@ class Subroutine(object):
             el = tree[i]
             tree_to_write = determine_level_in_tree(branch=el,tree_to_write=tree_to_write)
 
-        ofile = open(f"script-output/{self.name}CallTree.dat",'w')
+        ofile = open(f"{casename}/{self.name}CallTree.txt",'w')
         for branch in tree_to_write:
             level=branch[1];sub = branch[0]
             print(level*"|---->"+sub)
@@ -954,7 +953,7 @@ class Subroutine(object):
             if(v in global_vars or "filter" in v):
                 global_loop_vars.append(v)
         
-        # exportVariableDependency(self.name,var_list,global_loop_vars,local_vars_only,self.DoLoops)
+        exportVariableDependency(self.name,var_list,global_loop_vars,local_vars_only,self.DoLoops,mode='')
 
         return
 

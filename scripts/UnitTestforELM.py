@@ -1,6 +1,7 @@
 ## arrow and tab are strings for writing files or printing readable output
 arrow = '|--->'
 tab   = '    '
+from mod_config import _bc
 
 def main():
     """
@@ -10,19 +11,21 @@ def main():
     import sys
     import os
     from DerivedType import derived_type
-    from analyze_subroutines import Subroutine,replace_key
+    from analyze_subroutines import Subroutine, replace_key
     from utilityFunctions import getLocalVariables, sort_file_dependency
     import write_routines as wr
     from mod_config import default_mods, unittests_dir, scripts_dir,spel_mods_dir
     from edit_files import process_for_unit_test
+    import csv 
+
 
     print(f"CWD is {os.getcwd()}")
 
     main_sub_dict = {}
-    casename = "SoilTemp"
-    casename = unittests_dir+casename
+    case = "LakeTemp"
+    casename = unittests_dir+case
     # Determines if SPEL should run to make optimizations 
-    opt = False
+    opt = True
     add_acc = False
     adjust_allocation = False  
     preprocess = False 
@@ -70,7 +73,7 @@ def main():
                     #  "CarbonStateUpdate2h","NitrogenStateUpdate2h",  "PhosphorusStateUpdate2h",
                     # "WoodProducts", "CropHarvestPools", "FireArea","FireFluxes"]
     
-    sub_name_list = ["SoilTemperature"]
+    sub_name_list = ["LakeTemperature"]
     # sub_name_list = ["GrowthResp"]
     # modfile is a running list of which modules hold derived-type definitions
     modfile = 'usemod.txt'
@@ -135,8 +138,11 @@ def main():
         sys.exit("Done running in Optimization Mode")
     
     file_list = sort_file_dependency(modtree)
-    sys.exit(0)
 
+    with open(f'{casename}/source_files_needed.txt','w') as ofile:
+        for f in file_list:
+            ofile.write(f)
+    
     for s in sub_name_list:
         #
         # Parsing means getting info on the variables read and written
@@ -252,6 +258,8 @@ def main():
     ofile.close()
 
     aggregated_elmtypes_list = []
+    
+
     for s in sub_name_list:
         print(f"========== Derived Types for {s} =================")
         for x in subroutines[s].elmtypes:
@@ -263,7 +271,6 @@ def main():
         aggregated_elmtypes_list.append(l)
 
     aggregated_elmtypes_list = list(set(aggregated_elmtypes_list))
-    
     # update the status of derived_types:
     for s in sub_name_list:
         for dtype, components in subroutines[s].elmtype_r.items():
@@ -276,15 +283,50 @@ def main():
             for c in vdict[dtype].components:
                 if c[1] in components: 
                     c[0] = True
+    
+    for s in sub_name_list:
+        for dtype, components in subroutines[s].elmtype_w.items():
+            if(dtype in replace_inst): dtype = dtype.replace('_inst','_vars')
+            if(dtype == 'col_cf_input'): dtype = 'col_cf'
+            c13c14 = bool('c13' in dtype or 'c14' in dtype)
+            if(c13c14): continue
+            if(not vdict[dtype].analyzed):
+                vdict[dtype].analyzeDerivedType(verbose=True) 
+            for c in vdict[dtype].components:
+                if c[1] in components: 
+                    c[0] = True
+    for el in write_types:
+        if(el not in read_types):
+            read_types.append(el)
+    
+    # Write derived type info to csv file
+    active_dervived_types ={}
+
+    ofile = open(f"{casename}/derive_type_info.csv",'w')
+    csv_file = csv.writer(ofile)
+
+    for var in vdict.keys():
+        if(vdict[var].analyzed):
+            active_dervived_types[var] = [] 
+            row = [var]
+            for c in vdict[var].components:
+                if(c[0]):
+                    active_dervived_types[var].append(c)
+                    row.append(c[1])
+            
+            if(len(row) > 1): csv_file.writerow(row)
+
+    ofile.close()
+
 
     print(f"Call Tree for {casename}")
     for sub in subroutines.values():
         tree = sub.calltree[2:]
-        sub.analyze_calltree(tree)
+        sub.analyze_calltree(tree,casename)
     #
     # This generates verificationMod to test the results of
-    # the subroutines.  Call the relevant update_vars_{sub}
-    # after the parallel region.
+    # the subroutines.  
+    # Call the relevant update_vars_{sub} after the parallel region.
     #
     for sub in subroutines.values():
         sub.generate_update_directives(vdict)
@@ -300,7 +342,7 @@ def main():
         outfile.write("end module verificationMod\n")
     
     cmd = f"cp {scripts_dir}/script-output/concat.F90 {casename}/verificationMod.F90"
-    os.system(f"cp {scripts_dir}/script-output/concat.F90 {casename}/verificationMod.F90")
+    os.system(cmd)
     
     #
     # print and write stencil for acc directives to screen to be c/p'ed in main.F90
@@ -308,10 +350,12 @@ def main():
     #
 
     aggregated_elmtypes_list.sort(key=lambda v: v.upper())
-    from mod_config import _bc
     acc = _bc.BOLD+_bc.HEADER+"!$acc "
     endc = _bc.ENDC
     print(acc+"enter data copyin( &"+endc)
+    with open(f"{casename}/global_data_types.txt",'w') as ofile:
+        for el in aggregated_elmtypes_list:
+            ofile.write(el)
     i = 0
     for el in aggregated_elmtypes_list:
         i+=1
@@ -342,31 +386,8 @@ def main():
 
     wr.duplicate_clumps(vdict,aggregated_elmtypes_list)
 
-    subname = casename.replace(unittests_dir,'')
-    complete = True 
-    if(complete):
-        for s in sub_name_list:
-            for dtype, components in subroutines[s].elmtype_w.items():
-                if(dtype in replace_inst): dtype = dtype.replace('_inst','_vars')
-                if(dtype == 'col_cf_input'): dtype = 'col_cf'
-                c13c14 = bool('c13' in dtype or 'c14' in dtype)
-                if(c13c14): continue
-                if(not vdict[dtype].analyzed):
-                    vdict[dtype].analyzeDerivedType(verbose=True) 
-                for c in vdict[dtype].components:
-                    if c[1] in components: 
-                        c[0] = True
-        for el in write_types:
-            if(el not in read_types):
-                read_types.append(el)
+ 
 
-    wr.create_write_vars(vdict,read_types,subname=subname)
-    wr.create_read_vars (vdict,read_types)
-    
-    # Move the needed files to the case directory
-    # for file in needed_mods:
-    #     cmd = f"cp {file} {casename}"
-    #     os.system(cmd)
     files_for_unittest = ' '.join(needed_mods) 
     os.system(f"cp {files_for_unittest} {casename}")
     os.system(f"cp duplicateMod.F90 readMod.F90 writeMod.F90 {casename}")
