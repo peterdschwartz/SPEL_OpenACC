@@ -2,7 +2,7 @@ from mod_config import spel_mods_dir, elm_dir_regex, shr_dir_regex
 from mod_config import unit_test_files, preproc_list
 from edit_files import comment_line
 import re
-import sys
+from fortran_modules import get_module_name_from_file 
 
 def get_delta_from_dim(dim,delta):
     """
@@ -83,13 +83,14 @@ def generate_makefile(files,casename):
     ofile.write("FC_FLAGS_ACC= "+ FC_FLAGS_ACC)
     ofile.write("FC_FLAGS_DEBUG = "+FC_FLAGS_DEBUG)
     ofile.write("MODEL_FLAGS= "+MODEL_FLAGS)
+    ofile.write('INCLUDE_DIR = "${CURDIR}"\n')
     ofile.write("FC_FLAGS = $(FC_FLAGS_DEBUG) $(MODEL_FLAGS)"+"\n")
     ofile.write("TEST = $(findstring acc,$(FC_FLAGS))\n")
 
     # Create string of ordered objct files.
     unit_test_objs = ' '.join(unit_test_files)
     objs = ' '.join(object_list)
-    ofile.write("objects = "+objs+unit_test_objs+'\n')
+    ofile.write("objects = "+objs+' '+unit_test_objs+'\n')
 
     ofile.write("elmtest.exe : $(objects)"+"\n")
     ofile.write("\t"+"$(FC) $(FC_FLAGS) -o elmtest.exe $(objects)"+"\n")
@@ -103,7 +104,7 @@ def generate_makefile(files,casename):
         ofile.write("\t"+f"$(FC) -O0 -c $(MODEL_FLAGS) $<"+"\n")
 
     ofile.write("%.o : %.F90"+"\n")
-    ofile.write("\t"+"$(FC) $(FC_FLAGS) -c $<"+"\n")
+    ofile.write("\t"+"$(FC) $(FC_FLAGS) -c -I $(INCLUDE_DIR) $<"+"\n")
 
     ofile.write("ifeq (,$(TEST))\n")
     ofile.write("verificationMod.o : verificationMod.F90\n")
@@ -125,9 +126,9 @@ def write_elminstMod(vardict, type_list,casename):
     file = open(f"{casename}/elm_instMod.F90",'w')
     spaces = "     "
     file.write("module elm_instMod\n")
-    #use statements
+    # use statements
     for name, v in vardict.items():
-        mod = v.mod
+        ln, mod = get_module_name_from_file(v.mod) 
         vname = v.name
         if(v.name not in type_list): continue
         if("_vars" in vname):
@@ -149,7 +150,6 @@ def write_elminstMod(vardict, type_list,casename):
 
 def clean_use_statements(mod_list, file,casename):
     from edit_files import comment_line
-
     """
      function that will clean both initializeParameters
      and readConstants
@@ -157,7 +157,13 @@ def clean_use_statements(mod_list, file,casename):
     ifile = open(f"{spel_mods_dir}{file}.F90",'r')
     lines = ifile.readlines()
     ifile.close()
-    noF90 = [f.replace('.F90','') for f in mod_list]
+
+    noF90 = [ elm_dir_regex.sub('',f) for f in mod_list]
+    noF90 = [ shr_dir_regex.sub('',f) for f in noF90]
+    
+    # Doesn't account for module names not being the same as file names
+    noF90 = [f.replace('.F90','') for f in noF90]
+
     start = "!#USE_START"; end = "!#USE_END"
     analyze = False
     ct = 0
@@ -178,9 +184,6 @@ def clean_use_statements(mod_list, file,casename):
     with open(f"{casename}/{file}.F90",'w') as ofile:
         ofile.writelines(lines)
 
-######################################################3
-
-
 def clean_main_elminstMod(vardict,type_list,files,casename):
     """
     This function will clean the use lists of main, initializeParameters,
@@ -196,7 +199,6 @@ def clean_main_elminstMod(vardict,type_list,files,casename):
     ifile = open(f"{casename}/elm_initializeMod.F90",'r')
     lines = ifile.readlines()
     ifile.close()
-    noF90 = [f.replace('.F90','') for f in files]
 
     ct = 1
     start = "!#VAR_INIT_START"
@@ -204,7 +206,7 @@ def clean_main_elminstMod(vardict,type_list,files,casename):
     analyze = False
     while ct < len(lines)-1:
         line = lines[ct]
-        ##Adjusting variable init
+        # Adjusting variable init
         if(line.strip() == start):
             analyze = True
             ct += 1; continue
@@ -215,8 +217,9 @@ def clean_main_elminstMod(vardict,type_list,files,casename):
             l = line.split('!')[0]
             match_call = re.search(f'^(call)[\s]+',l.strip())
             if(match_call):
-                #should be derived type init:
-                if('%' not in l.strip()): print("ERROR")
+                # Should be derived type init:
+                if('%' not in l.strip()): 
+                    print("ERROR")
                 l = l.strip()
                 temp = l.split()[1].split('%')
                 varname = temp[0].lower()
@@ -228,7 +231,7 @@ def clean_main_elminstMod(vardict,type_list,files,casename):
         of.writelines(lines)
 
     write_elminstMod(vardict,type_list,casename)
-#####################################################
+    return
 
 def duplicate_clumps(vardict,types_list):
 

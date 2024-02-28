@@ -66,14 +66,14 @@ class derived_type(object):
                     line = line[len(string):].strip()
                     l = line[0:len(line)-1]
                     if(verbose): print("matched alloc")
-                    self.components.append([False,name,l,datatype])
+                    self.components.append([False,name,l,datatype.strip()])
                     break
                 match_alloc_name = alloc_name.search(line.lower())
                 if match_alloc_name :
                     line = line.split(';')[0]
                     line = line[len(string_name):].strip()
                     l = line[0:len(line)-1]
-                    self.components.append([False,name,l,datatype])
+                    self.components.append([False,name,l,datatype.strip()])
                     break
 
         else:
@@ -201,7 +201,6 @@ class derived_type(object):
         ifile.close()
         if(type_start_line == 0) :
             print(f"Error couldn't analyze type {self.name} {self.dtype}")
-            
             sys.exit()
         self.analyzed = True
 

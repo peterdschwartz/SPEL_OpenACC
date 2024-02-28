@@ -12,20 +12,20 @@ def main():
     import os
     from DerivedType import derived_type
     from analyze_subroutines import Subroutine, replace_key
-    from utilityFunctions import getLocalVariables, sort_file_dependency
+    from utilityFunctions import getLocalVariables, insert_header_for_unittest
     import write_routines as wr
     from mod_config import default_mods, unittests_dir, scripts_dir,spel_mods_dir
     from edit_files import process_for_unit_test
+    from fortran_modules import print_spel_module_dependencies
     import csv 
-
-
+    
     print(f"CWD is {os.getcwd()}")
 
     main_sub_dict = {}
-    case = "LakeTemp"
+    case = "SoilTemp22"
     casename = unittests_dir+case
     # Determines if SPEL should run to make optimizations 
-    opt = True
+    opt = False
     add_acc = False
     adjust_allocation = False  
     preprocess = False 
@@ -70,11 +70,11 @@ def main():
                     # "CarbonStateUpdate_Phase1_PFT", "NitrogenStateUpdate_Phase1_pft",
                     # "PhosphorusStateUpdate_Phase1_pft", "SoilLittVertTransp", "GapMortality",
                     # "CarbonStateUpdate2", "NitrogenStateUpdate2","PhosphorusStateUpdate2",
-                    #  "CarbonStateUpdate2h","NitrogenStateUpdate2h",  "PhosphorusStateUpdate2h",
+                    # "CarbonStateUpdate2h","NitrogenStateUpdate2h",  "PhosphorusStateUpdate2h",
                     # "WoodProducts", "CropHarvestPools", "FireArea","FireFluxes"]
     
-    sub_name_list = ["LakeTemperature"]
-    # sub_name_list = ["GrowthResp"]
+    sub_name_list = ["SoilTemperature"]
+    
     # modfile is a running list of which modules hold derived-type definitions
     modfile = 'usemod.txt'
     file = open(modfile, 'r')
@@ -113,21 +113,20 @@ def main():
         # so that a standalone unit test can be compiled.
         if(preprocess and not opt):
             fn = subroutines[s].filepath
-            modtree = process_for_unit_test(fname=fn,casename=casename,
+            mod_dict, file_list = process_for_unit_test(fname=fn,casename=casename,
                      mods=needed_mods,overwrite=True,verbose=False)
-       
     
-    #
-    # examineLoops performs adjustments that go beyond the "naive" 
-    # reliance on the "!$acc routine" directive. 
-    #  * adjust_allocation : rewrites local variable allocation and indexing 
-    #  * add_acc : accelerated via "!$acc parallel loop" directives
-    #              which relies on using processor level filters in main.F90.
-    #
-    # NOTE: avoid having both adjust_allocation and add_acc both True for now
-    #       as they don't currently communicate and they both modify the same files
-    #       which may cause subroutine line numbers to change, etc...
-    #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+    # examineLoops performs adjustments that go beyond the "naive"                  #
+    # reliance on the "!$acc routine" directive.                                    #
+    #    * adjust_allocation : rewrites local variable allocation and indexing      #
+    #    * add_acc : accelerated via "!$acc parallel loop" directives               #
+    #              which relies on using processor level filters in main.F90.       #
+    #                                                                               #
+    # NOTE: avoid having both adjust_allocation and add_acc both True for now       #
+    #       as they don't currently communicate and they both modify the same files #
+    #       which may cause subroutine line numbers to change, etc...               #
+    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
     if(opt): 
         for s in sub_name_list: 
             local_vars = getLocalVariables(subroutines[s],verbose=False)
@@ -137,11 +136,11 @@ def main():
                            add_acc=add_acc,adjust_allocation=adjust_allocation)
         sys.exit("Done running in Optimization Mode")
     
-    file_list = sort_file_dependency(modtree)
+    # print_spel_module_dependencies(mod_dict=mod_dict,subs=subroutines)
 
     with open(f'{casename}/source_files_needed.txt','w') as ofile:
         for f in file_list:
-            ofile.write(f)
+            ofile.write(f+'\n')
     
     for s in sub_name_list:
         #
@@ -174,44 +173,44 @@ def main():
 
             write_types.append(key)
          
-    analyze_var = True
+    analyze_var = False
     if(analyze_var):
         write_var_dict = {}
         print(f"Opening {casename}-timelineanalysis.dat")
         vfile = open(f"{casename}-timelineanalysis.dat",'w')
         ffile = open(f"{casename}-analysis.dat",'w')
 
-    for s in sub_name_list:
-        vfile.write(f"++++++++++{s}++++++++++\n")
-        ffile.write(f"{s}\n")
+        for s in sub_name_list:
+            vfile.write(f"++++++++++{s}++++++++++\n")
+            ffile.write(f"{s}\n")
 
-        # Figure out what variables that written to in the subroutine
-        #  are used by other routines.
-        temp_write_vars = [] #combine key%val
-        for key,val in subroutines[s].elmtype_w.items():
-            key1 = replace_key(key)
-            for comp in val:
-                temp_write_vars.append(key1+'%'+comp)
+            # Figure out what variables that written to in the subroutine
+            #  are used by other routines.
+            temp_write_vars = [] #combine key%val
+            for key,val in subroutines[s].elmtype_w.items():
+                key1 = replace_key(key)
+                for comp in val:
+                    temp_write_vars.append(key1+'%'+comp)
 
-        #Adjust write_var_dict:
-        write_var_dict[s] = temp_write_vars[:]
-    
-        temp_read_vars = []
-        for key, val in subroutines[s].elmtype_r.items():
-            key1 = replace_key(key)
-            for comp in val:
-                temp_read_vars.append(key1+'%'+comp)
-    
-        for key in write_var_dict:
-            if (key == s): continue
-            ffile.write(tab+key+'\n')
-            for el in temp_read_vars:
-                if el in write_var_dict[key]:
-                    vfile.write(f"{s}::{el} reads from {key} \n")
-                    ffile.write(tab+tab+el+'\n')
+            #Adjust write_var_dict:
+            write_var_dict[s] = temp_write_vars[:]
         
-    vfile.close()
-    ffile.close()
+            temp_read_vars = []
+            for key, val in subroutines[s].elmtype_r.items():
+                key1 = replace_key(key)
+                for comp in val:
+                    temp_read_vars.append(key1+'%'+comp)
+        
+            for key in write_var_dict:
+                if (key == s): continue
+                ffile.write(tab+key+'\n')
+                for el in temp_read_vars:
+                    if el in write_var_dict[key]:
+                        vfile.write(f"{s}::{el} reads from {key} \n")
+                        ffile.write(tab+tab+el+'\n')
+            
+        vfile.close()
+        ffile.close()
 
     ######################################################
     agg_elm_read = []; agg_elm_write = [];
@@ -228,7 +227,8 @@ def main():
                 if(fname not in agg_elm_write):
                     agg_elm_write.append(fname)
 
-    
+    file_list = insert_header_for_unittest(file_list=file_list,mod_dict=mod_dict) 
+
     # Create a makefile for the unit test
     wr.generate_makefile(files=file_list,casename=casename)
 
@@ -236,7 +236,7 @@ def main():
     list_pp = ['veg_pp','lun_pp','col_pp','grc_pp','top_pp']
     for l in list_pp:
         read_types.append(l)
-    
+
     replace_inst = ['soilstate_inst','waterflux_inst','canopystate_inst','atm2lnd_inst','surfalb_inst',
                 'solarabs_inst','photosyns_inst','soilhydrology_inst','urbanparams_inst']
     read_types = list(set(read_types))
@@ -261,7 +261,6 @@ def main():
     
 
     for s in sub_name_list:
-        print(f"========== Derived Types for {s} =================")
         for x in subroutines[s].elmtypes:
             if(x in replace_inst): x = x.replace('_inst','_vars')
             aggregated_elmtypes_list.append(x)
@@ -271,6 +270,7 @@ def main():
         aggregated_elmtypes_list.append(l)
 
     aggregated_elmtypes_list = list(set(aggregated_elmtypes_list))
+    dtype_info_list = []
     # update the status of derived_types:
     for s in sub_name_list:
         for dtype, components in subroutines[s].elmtype_r.items():
@@ -279,10 +279,18 @@ def main():
             c13c14 = bool('c13' in dtype or 'c14' in dtype)
             if(c13c14): continue
             if(not vdict[dtype].analyzed):
-                vdict[dtype].analyzeDerivedType(verbose=True) 
+                vdict[dtype].analyzeDerivedType() 
             for c in vdict[dtype].components:
-                if c[1] in components: 
+                if c[1] in components:
                     c[0] = True
+                    cname    = c[1]
+                    datatype = c[3]
+                    # Figure out dimensionality of the variable
+                    if(not c[2]):
+                        dim = 0 # scalar
+                    else:
+                        dim = c[2].count(':')
+                    dtype_info_list.append([dtype,c[1],datatype,f"{dim}D"])
     
     for s in sub_name_list:
         for dtype, components in subroutines[s].elmtype_w.items():
@@ -293,31 +301,30 @@ def main():
             if(not vdict[dtype].analyzed):
                 vdict[dtype].analyzeDerivedType(verbose=True) 
             for c in vdict[dtype].components:
-                if c[1] in components: 
+                if c[1] in components:
                     c[0] = True
+                    cname    = c[1]
+                    datatype = c[3]
+                    # Figure out dimensionality of the variable
+                    if(not c[2]):
+                        dim = 0 # scalar
+                    else:
+                        dim = c[2].count(':')
+                    dtype_info_list.append([dtype,c[1],datatype,f"{dim}D"])
+    
     for el in write_types:
         if(el not in read_types):
             read_types.append(el)
-    
+    #
     # Write derived type info to csv file
-    active_dervived_types ={}
-
+    # 
     ofile = open(f"{casename}/derive_type_info.csv",'w')
     csv_file = csv.writer(ofile)
-
-    for var in vdict.keys():
-        if(vdict[var].analyzed):
-            active_dervived_types[var] = [] 
-            row = [var]
-            for c in vdict[var].components:
-                if(c[0]):
-                    active_dervived_types[var].append(c)
-                    row.append(c[1])
-            
-            if(len(row) > 1): csv_file.writerow(row)
-
+    row = ['Derived Type', 'Component', 'Type', 'Dimension']
+    csv_file.writerow(row)
+    for row in dtype_info_list:
+        csv_file.writerow(row)
     ofile.close()
-
 
     print(f"Call Tree for {casename}")
     for sub in subroutines.values():
@@ -375,7 +382,6 @@ def main():
 
     # Will need to read in physical properties type
     # so set all components to True
-    print("setting physical properties type to True")
     for varname, dtype in vdict.items():
         if varname in ['veg_pp','lun_pp','col_pp','grc_pp','top_pp']:
             for c in dtype.components:
@@ -383,15 +389,14 @@ def main():
 
     wr.clean_main_elminstMod(vdict, aggregated_elmtypes_list,
                          files=needed_mods,casename=casename)
-
+    
     wr.duplicate_clumps(vdict,aggregated_elmtypes_list)
-
- 
 
     files_for_unittest = ' '.join(needed_mods) 
     os.system(f"cp {files_for_unittest} {casename}")
     os.system(f"cp duplicateMod.F90 readMod.F90 writeMod.F90 {casename}")
     os.system(f"cp {spel_mods_dir}fileio_mod.F90 {casename}")
+    os.system(f"cp {spel_mods_dir}unittest_defs.h {casename}")
 
 if __name__ == '__main__':
     main()

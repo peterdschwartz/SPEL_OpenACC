@@ -1,12 +1,18 @@
 import re 
 import os
+import sys
 
 # Configure path information 
 scripts_dir = os.path.dirname(__file__)
 home_dir = f"{scripts_dir}/../"
 unittests_dir = home_dir+"unit-tests/"
-spel_mods_dir = home_dir+"SourceFiles/" 
-HOME = "/home/peter/projects/"
+spel_mods_dir = home_dir+"SourceFiles/"
+try: 
+    HOME = os.environ['HOME']+"/"
+except KeyError:
+    print("HOME environment variable not set. Please set it to your home directory\n"
+          "Or configure the PATH in the mod_config.py file. Exiting...")
+    sys.exit(1)
 
 # E3SM root directory
 E3SM_SRCROOT = HOME+"E3SM"  

@@ -6,7 +6,6 @@ import sys
 import re 
 import subprocess as sp
 from mod_config import ELM_SRC, _bc
-
 class Variable(object):
     """
     Class to hold information on the variable
@@ -758,37 +757,20 @@ def line_unwrapper(lines,ct,verbose=False):
         continuation = bool(full_line.endswith('&'))
     return full_line, newct
 
-def sort_file_dependency(modtree):
-    """
-    Function that unravels a list of all module files
-    that were parsed in process_for_unit_test. 
 
-    Each element of the list is a dictionary that contains
-    the following keys:
-        * 'file' : file name
-        * 'depth': nested depth w.r.t. unit-test subroutine
+def insert_header_for_unittest(file_list,mod_dict):
     """
-    file_list = []
-    max_depth = -9999
-
-    # Get the maximum depth level first, then 
-    # add all files at that level to the file_list
-    # and so on 
-    for el in modtree:
-        lvl, m = el['depth'], el['file']
-        if(lvl > max_depth): max_depth = lvl
-    
-    current_depth = max_depth
-    while(current_depth >= 0):
-        for el in modtree:
-            lvl, m = el['depth'], el['file']
-            if(el['depth'] == current_depth and m not in file_list):
-                file_list.append(m)
-                print(_bc.OKGREEN+m+_bc.ENDC)
-        current_depth -= 1
-    
+    Function that will insert the header file into files needed for unit test
+    The header file contains definitions to aid in compilation (e.g, override pio types) 
+    """
+    for f in file_list:
+        for mod in mod_dict:
+            if(f == mod_dict[mod].filepath):
+                linenumber = mod_dict[mod].ln
+                break
+        ifile = open(f,'r')
+        lines = ifile.readlines()
+        lines.insert(linenumber,'#include "unittest_defs.h"\n')
+        with(open(f,'w')) as ofile:
+            ofile.writelines(lines)
     return file_list
-    
-    
-
-        

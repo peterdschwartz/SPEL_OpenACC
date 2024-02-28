@@ -1,10 +1,8 @@
 import sys
 import re
-import subprocess as sp
 from analyze_subroutines import Subroutine
-from mod_config import ELM_SRC, SHR_SRC, _bc
 from utilityFunctions import getLocalVariables, find_file_for_subroutine, get_interface_list, line_unwrapper
-from fortran_modules import FortranModule
+from fortran_modules import FortranModule, get_filename_from_module, get_module_name_from_file
 
 # Compile list of lower-case module names to remove
 bad_modules =  ['abortutils','shr_log_mod',
@@ -18,8 +16,8 @@ bad_modules =  ['abortutils','shr_log_mod',
                'shr_mpi_mod', 'shr_nl_mod','shr_str_mod',
                'controlmod','getglobalvaluesmod',
                'organicfilemod','elmfatesinterfacemod','externalmodelconstants',
-               'externalmodelinterfacemod', 'waterstatetype',
-               'temperaturetype','waterfluxtype','shr_file_mod','mct_mod']
+               'externalmodelinterfacemod', 'waterstatetype', 'seq_drydep_mod',
+               'temperaturetype','waterfluxtype','shr_file_mod','mct_mod','elm_instmod']
 
 fates_mod = ['elmfatesinterfacemod']
 betr_mods = ['betrsimulationalm']
@@ -146,7 +144,7 @@ def process_fates_or_betr(lines,mode):
 
     return lines
 
-def get_used_mods(ifile,mods,singlefile,modtree,verbose=False):
+def get_used_mods(ifile,mods,singlefile,mod_dict,verbose=False):
     """
     Checks to see what mods are needed to compile the file
     """
@@ -154,9 +152,10 @@ def get_used_mods(ifile,mods,singlefile,modtree,verbose=False):
     file = open(fn,'r')
     lines = file.readlines()
     file.close()
-    # Keep track of nested level
-    depth= 0
 
+    # Keep track of nested level
+    linenumber, module_name = get_module_name_from_file(fpath=ifile)
+    fort_mod = FortranModule(fname=ifile,name=module_name,ln=linenumber) 
     needed_mods = []
     ct = 0
     
@@ -172,7 +171,9 @@ def get_used_mods(ifile,mods,singlefile,modtree,verbose=False):
             l = l.replace(',',' ') 
             mod = l.split()[1]
             mod = mod.strip()
-            
+            mod = mod.lower()
+            if(mod not in fort_mod.modules and mod not in bad_modules): 
+                fort_mod.modules.append(mod)
             # Needed since FORTRAN is not case-sensitive!
             lower_mods = [m.lower().replace('.F90','') for m in mods] 
             if(mod not in needed_mods and mod.lower() not in lower_mods 
@@ -185,40 +186,27 @@ def get_used_mods(ifile,mods,singlefile,modtree,verbose=False):
     #       that takes a module name and returns the filepath.
     files_to_parse = []
     for m in needed_mods:
-        if(m.lower() in bad_modules): continue 
-        cmd = f'grep -rin --exclude-dir=external_models/ "module {m}" {ELM_SRC}*'
-        output = sp.getoutput(cmd)
-        if(not output):
-            if(verbose): print(f"Checking shared modules...")
-            #
-            # If file is not an ELM file, may be a shared module in E3SM/share/util/
-            #
-            cmd = f'grep -rin --exclude-dir=external_models/ "module {m}" {SHR_SRC}*'
-            shr_output = sp.getoutput(cmd) 
-            
-            if(not shr_output):
-                if(verbose): print(f"Couldn't find {m} in ELM or shared source -- adding to removal list")
-                bad_modules.append(m.lower())
-            else:
-                needed_modfile = shr_output.split('\n')[0].split(':')[0]
-                modtree.append({'depth': -9999,'file': needed_modfile})
-                if(needed_modfile not in mods):
-                    files_to_parse.append(needed_modfile)
-                    mods.append(needed_modfile)
-        else:
-            needed_modfile = output.split('\n')[0].split(':')[0]
-            modtree.append({'depth': depth,'file': needed_modfile})
-            if(needed_modfile not in mods):
-                files_to_parse.append(needed_modfile)
-                mods.append(needed_modfile)
-    
+        if(m.lower() in bad_modules): continue
+        needed_modfile = get_filename_from_module(m,verbose=verbose) 
+        if(needed_modfile == None):
+            if(verbose): print(f"Couldn't find {m} in ELM or shared source -- adding to removal list")
+            bad_modules.append(m.lower())
+            if(m.lower() in fort_mod.modules): fort_mod.modules.remove(m.lower())
+        elif(needed_modfile not in mods):
+            files_to_parse.append(needed_modfile)
+            mods.append(needed_modfile)
+        
     # Recursive call to the mods that need to be processed
     if(files_to_parse): 
         for f in files_to_parse:
-            mods,modtree = get_used_mods(ifile=f,mods=mods,verbose=verbose,
-                                         singlefile=singlefile,modtree=modtree)
-    
-    return mods, modtree 
+            mods,mod_dict = get_used_mods(ifile=f,mods=mods,verbose=verbose,
+                                        singlefile=singlefile,mod_dict=mod_dict)
+    if(fort_mod.name in mod_dict.keys()):
+        print(f"Error: Module {fort_mod.name} already in mod_dict")
+        sys.exit(1)
+    mod_dict[fort_mod.name] = fort_mod
+
+    return mods, mod_dict 
 
 def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False): 
     """
@@ -232,8 +220,7 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
     remove_fates = False
     remove_betr = False
     in_subroutine = False
-    if('module pftvarcon' == lines[0].strip()):
-        verbose = True 
+   
     while( ct < len(lines)):
         line = lines[ct]
         l = line.split('!')[0]  # don't search comments
@@ -250,12 +237,13 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
         match_use = re.search(f'[\s]+(use)[\s]+{bad_mod_string}',l.lower())
         if(match_use):
             if(verbose): print(f"Matched modules to remove: {l}")
-            #get bad subs; Need to refine this for variables, etc...
+            # get bad subs; Need to refine this for variables, etc...
             if(':' in l and 'nan' not in l): 
+                # account for multiple lines
+                l, newct = line_unwrapper(lines=lines,ct=ct)
                 subs = l.split(':')[1]
                 subs = subs.rstrip('\n')
-                # account for multiple lines
-                subs, newct = line_unwrapper(lines=lines,ct=ct)
+                
 
                 subs.replace('=>',' ')
                 subs = subs.split(',')
@@ -263,6 +251,9 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
                     temp = el.strip().split()
                     if(len(temp)>1): el = temp[0]
                     if el.strip() not in bad_subroutines:
+                        if(verbose):
+                            print(f"Adding {el.strip()} to bad_subroutines")
+                            print(f"from {fn} \nline: {l}")
                         bad_subroutines.append(el.strip())
 
             #comment out use statement
@@ -318,15 +309,8 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
             if(verbose): print(f"Matched sub call to remove: {l}")
             lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
 
-        match_func = re.search(f'{bad_sub_string}',l)
-        if(match_func and '=' in l):
-            if(verbose): 
-                print(f"Matched functions to remove: {l}\n match: {match_func.group()}")
-            _str = l.split()[0]
-            lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
-
         # match SHR_ASSERT_ALL
-        match_assert = re.search(r'[\s]+(SHR_ASSERT_ALL|SHR_ASSERT)\b',line)
+        match_assert = re.search(r'^[\s]+(SHR_ASSERT_ALL|SHR_ASSERT)\b',line)
         if(match_assert): 
             lines, ct = comment_line(lines=lines,ct=ct)
             # newline = line.replace(line,''); lines[ct]=newline;
@@ -357,37 +341,43 @@ def process_for_unit_test(fname,casename,mods=None,overwrite=False,verbose=False
     """
     sub_list = []
     initial_mods = mods[:]
-    modtree = [] 
-    depth = 0
-    # First, get complete list of modules to be processed 
-    # and removed.
+    mod_dict = {}
+
+    # First, get complete list of modules  
+    # to be processed and removed.
     # add just processed file to list of mods:
+
     lower_mods =  [m.lower() for m in mods]
     if (fname.lower() not in lower_mods): 
         mods.append(fname)
 
     # Find if this file has any not-processed mods
     if(not singlefile):
-        mods, modtree = get_used_mods(ifile=fname,mods=mods,verbose=verbose,singlefile=singlefile,modtree=modtree)
+        mods, mod_dict = get_used_mods(ifile=fname,mods=mods,verbose=verbose,singlefile=singlefile,mod_dict=mod_dict)
 
     if(verbose):
         print("Total modules to edit are\n",mods)
         print("Modules to be removed list\n", bad_modules)
     
     for mod_file in mods:
-        if (mod_file in initial_mods): continue # Avoid preprocessing files over and over
+        # Avoid preprocessing files over and over
+        if (mod_file in initial_mods): continue 
         file = open(mod_file,'r')
         lines = file.readlines()
         file.close()
         if(verbose): print(f"Processing {mod_file}")
-        modify_file(lines,casename,mod_file,sub_list,verbose=verbose,overwrite=overwrite)
+        modify_file(lines,casename,mod_file,sub_list,
+                    verbose=verbose,overwrite=overwrite)
         if(overwrite):
             out_fn = mod_file
             if(verbose): print("Writing to file:",out_fn)
             with open(out_fn,'w') as ofile:
                 ofile.writelines(lines)
 
-    return modtree
+    linenumber,unit_test_module = get_module_name_from_file(fpath=fname)
+    file_list = sort_file_dependency(mod_dict,unit_test_module)
+
+    return mod_dict, file_list
     
 def remove_reference_to_subroutine(lines, subnames):
     """
@@ -407,3 +397,46 @@ def remove_reference_to_subroutine(lines, subnames):
             lines, ct = comment_line(lines=lines,ct=ct)
         ct+=1
     return lines
+
+def sort_file_dependency(mod_dict,unittest_module,file_list=[],verbose=False):
+    """
+    Function that unravels a dictionary of all module files
+    that were parsed in process_for_unit_test. 
+
+    Each element of the dictionary is a FortranModule object.
+    """
+    # Start with the module that we want to test
+    main_fort_mod = mod_dict[unittest_module]
+    if(main_fort_mod.name == 'atm2lndtype'): 
+        print("Found elm_varcon")   
+
+    for mod in main_fort_mod.modules:
+        if(mod in bad_modules): continue
+        
+        # Get module instance from dictionary
+        dependency_mod = mod_dict[mod]
+        if(dependency_mod.filepath in file_list): continue
+        
+        # This module has no other dependencies, add to list
+        if(not dependency_mod.modules and dependency_mod.filepath not in file_list): 
+            file_list.append(dependency_mod.filepath) 
+            continue
+        
+        # Test to see if all of its dependencies are in the file list 
+        for dep_mod in dependency_mod.modules:
+            if(mod in bad_modules): continue
+
+            # Check if module dependencies are already in the file list
+            if(mod_dict[dep_mod].filepath not in file_list):
+                if(verbose):
+                    print(f"Switching to {dep_mod} to get its dependencies")
+                dep_file_list = sort_file_dependency(mod_dict,unittest_module=dep_mod,file_list=file_list)
+                
+                if(verbose): 
+                    print(f"New dependency list: {dep_file_list}")
+                    print(f"Current list is:\n{file_list}")
+        # Since all of its dependencies are in the file list, add the module to the list
+        if(dependency_mod.filepath not in file_list): file_list.append(dependency_mod.filepath)
+            
+    file_list.append(main_fort_mod.filepath)
+    return file_list
