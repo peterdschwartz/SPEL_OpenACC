@@ -3,6 +3,8 @@ import re
 from analyze_subroutines import Subroutine
 from utilityFunctions import getLocalVariables, find_file_for_subroutine, get_interface_list, line_unwrapper
 from fortran_modules import FortranModule, get_filename_from_module, get_module_name_from_file
+from utilityFunctions import  parse_line_for_variables,comment_line
+from DerivedType import  get_derived_type_definition
 
 # Compile list of lower-case module names to remove
 bad_modules =  ['abortutils','shr_log_mod',
@@ -34,29 +36,7 @@ remove_subs = ['restartvar','hist_addfld1d','hist_addfld2d',
 Contains python scripts that are useful for editing files to prep for
 unit testing
 """
-def comment_line(lines,ct,mode='normal',verbose=False):
-    """
-    function comments out lines accounting for line continuation
-    """
-    if(mode == 'normal'): comment_ = '!#py '
-    if(mode == 'fates' ): comment_ = '!#fates_py '
-    if(mode == 'betr'  ): comment_ = '!#betr_py '
-    
-    newline = lines[ct]
-    str_ = newline.split()[0]
-    newline = newline.replace(str_,comment_+str_,1)
-    lines[ct] = newline
-    continuation = bool(newline.strip('\n').endswith('&'))
-    if(verbose): print(lines[ct])
-    while(continuation):
-        ct +=1
-        newline = lines[ct]
-        str_ = newline.split()[0]
-        newline = newline.replace(str_, comment_+str_,1)
-        lines[ct] = newline
-        if(verbose): print(lines[ct])
-        continuation = bool(newline.strip('\n').endswith('&'))
-    return lines, ct
+
 
 def remove_subroutine(lines, start):
     """
@@ -148,6 +128,7 @@ def get_used_mods(ifile,mods,singlefile,mod_dict,verbose=False):
     """
     Checks to see what mods are needed to compile the file
     """
+    func_name = "get_used_mods"
     fn = ifile 
     file = open(fn,'r')
     lines = file.readlines()
@@ -158,13 +139,52 @@ def get_used_mods(ifile,mods,singlefile,mod_dict,verbose=False):
     fort_mod = FortranModule(fname=ifile,name=module_name,ln=linenumber) 
     needed_mods = []
     ct = 0
-    
+
+    # Define regular expressions for catching variables declared in the module
+    regex_contains = re.compile(r'^(contains)',re.IGNORECASE)
+    user_defined_types = {} # dictionary to store user-defined types in module 
+
+    module_head = True
     while(ct < len(lines)):
         line = lines[ct]
-        l = line.split('!')[0].strip()
-        if(not l):
+        l, ct = line_unwrapper(lines=lines,ct=ct)
+        l = l.strip().lower()
+        match_contains = regex_contains.search(l)
+        if(match_contains): 
+            module_head = False
+            # Nothing else to check in this line
             ct+=1
             continue
+
+        if(module_head): 
+            # First check if a user-derived type is being defined
+            # create new l to simplify regex needed.
+            lprime = l.replace('public','').replace('private','').replace(',','')
+            match_type_def1 = re.search(r'^(type\s*::)',lprime) # type :: type_name
+            match_type_def2 = re.search(r'^(type\s+)(?!\()',lprime) # type type_name
+            type_name = None
+            if(match_type_def1):
+                # Get type name
+                type_name = lprime.split('::')[1].strip()
+            elif(match_type_def2):
+                # Get type name
+                matched_expr = match_type_def2.group()
+                type_name = lprime.replace(matched_expr,'').strip()
+            if(type_name): 
+                # Analyze the type definition
+                user_dtype,ct = get_derived_type_definition(ifile=ifile,modname=module_name,
+                                                            lines=lines,ln=ct,
+                                                            type_name=type_name,verbose=verbose)
+                user_defined_types[type_name] = user_dtype
+            
+            # Check for variable declarations
+            variable_list = parse_line_for_variables(ifile=ifile,l=l,ln=ct)
+            # Store variable as Variable Class object and add to Module object
+            if(variable_list):
+                for v in variable_list:
+                    v.declaration = module_name
+                fort_mod.global_vars.extend(variable_list)
+
         match_use = re.search(r'^(use)[\s]+',l)
         if(match_use):
             # Get rid of comma if no space
@@ -181,6 +201,7 @@ def get_used_mods(ifile,mods,singlefile,mod_dict,verbose=False):
                 needed_mods.append(mod)
         ct+=1
     
+    # Done with first pass through the file. 
     # Check against already used Mods
     # NOTE: Could refactor this loop into a function
     #       that takes a module name and returns the filepath.
@@ -195,22 +216,31 @@ def get_used_mods(ifile,mods,singlefile,mod_dict,verbose=False):
         elif(needed_modfile not in mods):
             files_to_parse.append(needed_modfile)
             mods.append(needed_modfile)
-        
+    
+    # Store user-defined types in the module object 
+    # and find any global variables that have the user-defined type
+    # 
+    list_type_names = [key for key in user_defined_types.keys()]
+    for gvar in fort_mod.global_vars:
+        if(gvar.type in list_type_names):
+            user_defined_types[gvar.type].instances.append(gvar)
+
+    fort_mod.defined_types  = user_defined_types
+    mod_dict[fort_mod.name] = fort_mod
+    
     # Recursive call to the mods that need to be processed
-    if(files_to_parse): 
+    if(files_to_parse and not singlefile): 
         for f in files_to_parse:
             mods,mod_dict = get_used_mods(ifile=f,mods=mods,verbose=verbose,
                                         singlefile=singlefile,mod_dict=mod_dict)
-    if(fort_mod.name in mod_dict.keys()):
-        print(f"Error: Module {fort_mod.name} already in mod_dict")
-        sys.exit(1)
-    mod_dict[fort_mod.name] = fort_mod
-
+    
     return mods, mod_dict 
 
 def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False): 
     """
-    Function that modifies the source code of the file
+    Function that modifies the source code of the file 
+    Occurs after parsing the file for subroutines and modules
+    that need to be removed.
     """
 
     subs_removed = []
@@ -220,13 +250,18 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
     remove_fates = False
     remove_betr = False
     in_subroutine = False
-   
+
+    regex_if = re.compile(r'^(if)[\s]*(?>=\()',re.IGNORECASE)
+    # if('ColumnDataType.F90' in fn):
+    #     print(f"??BAD?? subroutines are:\n {bad_subroutines}")
+    #     sys.exit(1)
+
     while( ct < len(lines)):
         line = lines[ct]
         l = line.split('!')[0]  # don't search comments
         if(not l.strip()):
             ct+=1; continue;
-        if("#include" in l.lower()):
+        if("#include" in l.lower() and 'unittest_defs' not in l.lower()):
             newline = l.replace('#include','!#py #include')
             lines[ct] = newline
         
@@ -237,14 +272,14 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
         match_use = re.search(f'[\s]+(use)[\s]+{bad_mod_string}',l.lower())
         if(match_use):
             if(verbose): print(f"Matched modules to remove: {l}")
-            # get bad subs; Need to refine this for variables, etc...
+            # Get bad subs; Need to refine this for variables, etc...
             if(':' in l and 'nan' not in l): 
                 # account for multiple lines
                 l, newct = line_unwrapper(lines=lines,ct=ct)
                 subs = l.split(':')[1]
                 subs = subs.rstrip('\n')
                 
-
+                # Add elements used from the module to be commented out 
                 subs.replace('=>',' ')
                 subs = subs.split(',')
                 for el in subs:
@@ -256,15 +291,18 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
                             print(f"from {fn} \nline: {l}")
                         bad_subroutines.append(el.strip())
 
-            #comment out use statement
+            # comment out use statement
             lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
 
-        #Test if subroutine has started
+        bad_sub_string = '|'.join(bad_subroutines)
+        bad_sub_string = f'({bad_sub_string})'
+        # Test if subroutine has started
         match_sub = re.search(r'^(\s*subroutine\s+)',l.lower())
+        # Test if a bad subrotuine is being called.
+        match_call = re.search(f'[\s]+(call)[\s]+{bad_sub_string}',l)
+        
         if(match_sub):
             endline = 0
-            if(verbose): print(f"Matched subroutines to remove: {l}")
-            
             subname = l.split()[1].split('(')[0]
             interface_list = get_interface_list()
             if(subname in interface_list or "_oacc" in subname): 
@@ -302,12 +340,12 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
                 ct = endline
                 subs_removed.append(subname)
         
-        bad_sub_string = '|'.join(bad_subroutines)
-        bad_sub_string = f'({bad_sub_string})'
-        match_call = re.search(f'[\s]+(call)[\s]+{bad_sub_string}',l)
-        if(match_call):
+        
+        elif(match_call):
             if(verbose): print(f"Matched sub call to remove: {l}")
             lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
+        else:
+            # Check if any thing used from a module that is to be removed
 
         # match SHR_ASSERT_ALL
         match_assert = re.search(r'^[\s]+(SHR_ASSERT_ALL|SHR_ASSERT)\b',line)
@@ -353,7 +391,9 @@ def process_for_unit_test(fname,casename,mods=None,overwrite=False,verbose=False
 
     # Find if this file has any not-processed mods
     if(not singlefile):
-        mods, mod_dict = get_used_mods(ifile=fname,mods=mods,verbose=verbose,singlefile=singlefile,mod_dict=mod_dict)
+        mods, mod_dict = get_used_mods(ifile=fname,mods=mods,
+                                       verbose=verbose,singlefile=singlefile,
+                                       mod_dict=mod_dict)
 
     if(verbose):
         print("Total modules to edit are\n",mods)

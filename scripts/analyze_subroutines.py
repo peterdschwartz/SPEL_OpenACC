@@ -298,7 +298,8 @@ class Subroutine(object):
                         print(f"preprocess file:", l)
                         args = getArguments(l)
 
-                        child_sub_name, childsub = resolve_interface(self,child_sub_name,args,varlist,verbose=True)
+                        child_sub_name, childsub = resolve_interface(self,child_sub_name,
+                                                                     args,varlist,verbose=verbose)
                         if(not child_sub_name): 
                             print(f"Error couldn't resolve interface for {x[1]}")
                             self.printSubroutineInfo(long=True)
@@ -468,7 +469,12 @@ class Subroutine(object):
                 temp_dtype_names.append(dtype)
         #
         #Create list that holds the names of the derived types only
-        elm_var_names = [v.name for v in elmvar]
+        # elm_var_names = [v.name for v in elmvar]
+        elm_var_names = [] 
+        for dtype in elmvar:
+            for inst in dtype.instances:
+                elm_var_names.append(inst.name)
+        
         if(associate_end == 0):
             ct = self.startline
         else:
@@ -642,9 +648,10 @@ class Subroutine(object):
                         'solarabs_inst','photosyns_inst','soilhydrology_inst','urbanparams_inst']
 
         for v in self.elmtype_w.keys():
-            if(v in replace_inst): v = v.replace('_inst','_vars')
-
+            if(v in replace_inst): 
+                v = v.replace('_inst','_vars')
             mod = elmvars_dict[v].declaration
+            
             ofile.write(spaces + f"use {mod}, only : {v} \n")
 
         ofile.write(spaces+"implicit none \n")
@@ -667,7 +674,7 @@ class Subroutine(object):
         acc = "!$acc "
 
         for v,comp_list in self.elmtype_w.items():
-            if(v in replace_inst): v = v.replace('_inst','_vars')
+            if(v in replace_inst):  v = v.replace('_inst','_vars')
             ofile.write(spaces+acc+"update self(& \n")
             i = 0
             for c in comp_list:
@@ -779,7 +786,8 @@ class Subroutine(object):
                     args = getArguments(l)
                     
                     if(child_sub_name in interface_list):
-                        child_sub_name, childsub = resolve_interface(self,child_sub_name,args,varlist,verbose=True)
+                        child_sub_name, childsub = resolve_interface(self,child_sub_name,args,
+                                                                     varlist,verbose=verbose)
                     else:
                         file,startline,endline = find_file_for_subroutine(child_sub_name)
                         childsub = Subroutine(child_sub_name,file,[self.name],startline,endline)

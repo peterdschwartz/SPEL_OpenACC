@@ -1,6 +1,6 @@
 from mod_config import spel_mods_dir, elm_dir_regex, shr_dir_regex
 from mod_config import unit_test_files, preproc_list
-from edit_files import comment_line
+from utilityFunctions import comment_line
 import re
 from fortran_modules import get_module_name_from_file 
 
@@ -15,11 +15,9 @@ def get_delta_from_dim(dim,delta):
         newdim = ''
         return newdim
 
-    dim = dim.replace('(','');
-    dim = dim.replace(')','');
+    dim = dim.replace('(','')
+    dim = dim.replace(')','')
     dim_li = dim.split(',')
-
-    ct = 0
 
     if(delta == 'y'):
         for el in dim_li:
@@ -119,7 +117,7 @@ def generate_makefile(files,casename):
     ofile.write("\t"+"rm -f *.mod *.o *.exe"+"\n")
     ofile.close()
 
-def write_elminstMod(vardict, type_list,casename):
+def write_elminstMod(elm_inst_vars,casename):
     """
     Writes elm_instMod since all variable declarations
     """
@@ -127,22 +125,14 @@ def write_elminstMod(vardict, type_list,casename):
     spaces = "     "
     file.write("module elm_instMod\n")
     # use statements
-    for name, v in vardict.items():
-        ln, mod = get_module_name_from_file(v.mod) 
-        vname = v.name
-        if(v.name not in type_list): continue
-        if("_vars" in vname):
-            file.write(spaces+'use {}, only : {} \n'.format(mod,v.dtype))
+    for name, v in elm_inst_vars.items():
+        file.write(spaces+'use {}, only : {} \n'.format(v.mod,v.type_name))
 
     file.write(spaces+"implicit none\n")
     file.write(spaces+"save\n")
     file.write(spaces+"public\n")
-    for name, v in vardict.items():
-        mod = v.mod
-        vname = v.name
-        if(v.name not in type_list): continue
-        if("_vars" in vname):
-            file.write(spaces+f"type({v.dtype}) :: {v.name} \n")
+    for name, v in elm_inst_vars.items():
+        file.write(spaces+f"type({v.type_name}) :: {name} \n")
 
     file.write("end module elm_instMod\n")
     file.close()
@@ -184,7 +174,7 @@ def clean_use_statements(mod_list, file,casename):
     with open(f"{casename}/{file}.F90",'w') as ofile:
         ofile.writelines(lines)
 
-def clean_main_elminstMod(vardict,type_list,files,casename):
+def clean_main(type_list,files,casename):
     """
     This function will clean the use lists of main, initializeParameters,
     and readConstants.  It will also clean the variable initializations and
@@ -230,10 +220,9 @@ def clean_main_elminstMod(vardict,type_list,files,casename):
     with open(f"{casename}/elm_initializeMod.F90","w") as of:
         of.writelines(lines)
 
-    write_elminstMod(vardict,type_list,casename)
     return
 
-def duplicate_clumps(vardict,types_list):
+def duplicate_clumps(typedict):
 
     file = open("duplicateMod.F90",'w')
     spaces = "   "
@@ -259,12 +248,13 @@ def duplicate_clumps(vardict,types_list):
 
     file.write("subroutine duplicate_clumps(mode,unique_sites,num_sites)\n")
 
-    #use statements
-    for name, v in vardict.items():
-        mod = v.declaration
-        vname = v.name
-        if(v.name not in types_list): continue
-        file.write(spaces+'use {}, only : {} \n'.format(mod,vname))
+    # Use statements
+    for type_name, dtype in typedict.items():
+        if(dtype.active):
+            for var in dtype.instances:
+                mod = var.declaration
+                vname = var.name
+                file.write(spaces+'use {}, only : {} \n'.format(mod,vname))
 
     file.write(spaces+'use decompMod, only : bounds_type, get_clump_bounds, procinfo \n')
     file.write(spaces+'use elm_varcon \n')
@@ -283,7 +273,6 @@ def duplicate_clumps(vardict,types_list):
     file.write(spaces+'nclumps = num_sites \n')
     #
     file.write(spaces+"if(mode == 0) then\n")
-    li = ['veg_pp','col_pp','lun_pp','grc_pp','top_pp']
     file.write(spaces+spaces+'do nc=unique_sites+1, num_sites \n')
     file.write(spaces*3+"nc_copy = mod(nc-1,unique_sites)+1\n")
     file.write(spaces*3+"call get_clump_bounds(nc,bounds)\n")
@@ -301,19 +290,25 @@ def duplicate_clumps(vardict,types_list):
     file.write(spaces*3+'begc=bounds%begc; endc=bounds%endc\n')
     file.write(spaces*3+'begp=bounds%begp; endp=bounds%endp\n')
 
+    li = ['veg_pp','col_pp','lun_pp','grc_pp','top_pp']
     ignore_list = ['is_veg','is_bareground','wt_ed']
-    for var in vardict.values():
-        if var.name not in li: continue
-        for c in var.components:
-            if(not c[0]): continue
-            if(c[1] in ignore_list): continue 
-            fname = var.name+'%'+c[1]
-            dim = c[2]
-            newdim = get_delta_from_dim(dim,'y')
-            dim1 = get_delta_from_dim(dim,'n'); dim1 = dim1.replace('_all','')
-            if(newdim == '(:)' or newdim == ''): continue
-            file.write(spaces*3+fname+newdim+' &'+'\n')
-            file.write(spaces+spaces+spaces+spaces+'= '+fname+dim1+'\n')
+    for type_name, dtype in typedict.items():
+        if(dtype.active):
+            for var in dtype.instances:
+                if(var.name not in li): continue
+                for c in dtype.components:
+                    active = c['active']
+                    field_var = c['var']
+                    bounds = c['bounds']
+                    if(not active): continue
+                    if(field_var.name in ignore_list): continue 
+                    fname = var.name+'%'+field_var.name
+                    dim = bounds
+                    newdim = get_delta_from_dim(dim,'y')
+                    dim1 = get_delta_from_dim(dim,'n'); dim1 = dim1.replace('_all','')
+                    if(newdim == '(:)' or newdim == ''): continue
+                    file.write(spaces*3+fname+newdim+' &'+'\n')
+                    file.write(spaces+spaces+spaces+spaces+'= '+fname+dim1+'\n')
 
     file.write(spaces*2+'end do\n')
 
@@ -335,18 +330,22 @@ def duplicate_clumps(vardict,types_list):
     file.write(spaces*3+'begc=bounds%begc; endc=bounds%endc\n')
     file.write(spaces*3+'begp=bounds%begp; endp=bounds%endp\n')
 
-    for var in vardict.values():
-        if var.name in li: continue
-        for c in var.components:
-            if(not c[0]): continue
-            if(c[1] in ignore_list): continue 
-            fname = var.name+'%'+c[1]
-            dim = c[2]
-            newdim = get_delta_from_dim(dim,'y')
-            dim1 = get_delta_from_dim(dim,'n'); dim1 = dim1.replace('_all','')
-            if(newdim == '(:)' or newdim == ''): continue
-            file.write(spaces*3+fname+newdim+' &'+'\n')
-            file.write(spaces+spaces+spaces+spaces+'= '+fname+dim1+'\n')
+    for type_name, dtype in typedict.items():
+        if(dtype.active):
+            for var in dtype.instances:
+                if(var.name in li): continue
+                for c in dtype.components:
+                    active = c['active']
+                    field_var = c['var']
+                    bounds = c['bounds']
+                    if(not active): continue 
+                    fname = var.name+'%'+field_var.name
+                    dim = bounds
+                    newdim = get_delta_from_dim(dim,'y')
+                    dim1 = get_delta_from_dim(dim,'n'); dim1 = dim1.replace('_all','')
+                    if(newdim == '(:)' or newdim == ''): continue
+                    file.write(spaces*3+fname+newdim+' &'+'\n')
+                    file.write(spaces+spaces+spaces+spaces+'= '+fname+dim1+'\n')
 
     file.write(spaces+'end do\n')
     file.write(spaces+'end if \n')

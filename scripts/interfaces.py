@@ -66,14 +66,19 @@ def resolve_interface(sub,iname,args,varlist,verbose=False):
         # then the type is already known 
         if(arg in sub.associate_vars):
             vname, comp = sub.associate_vars[arg][0].split("%")
-            for v in varlist:
-                if(vname == v.name):
-                    for c in v.components: 
-                        if(comp == c[1]):
-                            bounds = c[2] 
-                            m = re.search(f"(?<=beg)[a-z]",bounds)
-                            dim = bounds.count(',')+1
-                            newvar = Variable(type=c[3],name=arg,subgrid=m.group(),ln=0,dim=dim)
+            for dtype in varlist:
+                if(vname in dtype.instances):
+                # if(vname == v.name):
+                    for c in dtype.components:
+                        status = c['active']
+                        field_var = c['var'] 
+                        if(comp == field_var.name):
+                            bounds = c['bounds'] 
+                            # m = re.search(f"(?<=beg)[a-z]",bounds)
+                            dim = field_var.dim #bounds.count(',')+1
+                            subgrid = field_var.subgrid
+                            var_type = field_var.type
+                            newvar = Variable(type=var_type,name=arg,subgrid=subgird,ln=0,dim=dim)
                             l_args.append(newvar)
                             found = True
                             break 

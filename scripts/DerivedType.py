@@ -3,92 +3,176 @@ import sys
 import write_routines as wr
 import subprocess as sp 
 from mod_config import ELM_SRC
+from utilityFunctions import parse_line_for_variables
 ## arrow and tab are strings for writing files or printing readable output
 arrow = '|--->'
 tab   = '    '
-class derived_type(object):
-    def __init__(self, vname, vmod   # name of variable and mod file
-                , dtype  = None      # name of derived type
-                , components = None  # list of type and component name
-                ):
-        self.name = vname
-        self.mod = '' 
-        cmd = f'find {ELM_SRC}  \( -path "*external_models*" \) -prune -o  -name "{vmod}.F90" '
-        output = sp.getoutput(cmd)
-        if(not output): 
-            sys.exit(f"Couldn't locate file {vmod}")
+
+def get_derived_type_definition(ifile, modname, lines,
+                                ln, type_name, verbose=False):
+    """
+    Now find definition of type to find components 
+    """
+    type_start_line = ln
+    type_end_line = 0
+    user_derived_type = derived_type(type_name,vmod=modname,fpath=ifile)
+    
+    for ct in range(ln,len(lines)):
+        line = lines[ct]
+        l = line.split("!")[0] 
+        l = l.strip() 
+        # test to see if we exceeded type definition
+        _end  = re.search(f'^(end\s+type)',l)
+        if(not _end):
+            data_type = re.compile(f'^\s*(real|integer|logical|character)')
+            m = data_type.search(l)
+            if(m):
+                datatype = m.group()
+                lprime = re.sub(f'(?<={datatype})(.+)(?=::)','',l)
+                # remove => null() 
+                lprime = re.sub(r'(\s*=>\s*null\(\))','',lprime)
+                variable_list = parse_line_for_variables(ifile=ifile,l=lprime,ln=ct)
+                if(verbose):
+                   print(f"l : {l}")
+                   print(f"lprime : {lprime}")
+                   print(f"vars : {[x.name for x in variable_list]}")
+                for var in variable_list:
+                    user_derived_type._add_components(var_inst=var,lines=lines,
+                                                ln=type_start_line,
+                                                verbose=verbose)
         else:
-            output = output.split('\n')
-            for el in output: 
-                if("external_models" not in el):
-                    self.mod = el
-        
+            type_end_line = ct
+            break
+    # Sanity check
+    if(type_end_line == 0):
+        print("Error couldn't analyze type ",type_name)
+        print(f"File: {ifile}, start line {ln}")
+        sys.exit(1)
+    
+    return user_derived_type, ct
+
+
+class derived_type(object):
+    def __init__(self, type_name, vmod   # name of type and module name
+                , fpath = None       # path to mod file
+                , components = None  # list of type and component name
+                , instances = []      # list of global variables with this type
+                ):
+        self.type_name = type_name
+        if(fpath):
+            self.mod = fpath
+        else:
+            self.mod = '' 
+            cmd = f'find {ELM_SRC}  \( -path "*external_models*" \) -prune -o  -name "{vmod}.F90" '
+            output = sp.getoutput(cmd)
+            if(not output): 
+                sys.exit(f"Couldn't locate file {vmod}")
+            else:
+                output = output.split('\n')
+                for el in output: 
+                    if("external_models" not in el):
+                        self.mod = el
         if(not self.mod): 
-            sys.exit(f"Couldn't find file for {vname}\ncmd:{cmd}\n"
+            sys.exit(f"Couldn't find file for {type_name}\ncmd:{cmd}\n"
                      f"output: {output}\n")
         
         self.declaration = vmod
-        if dtype == None:
-            self.dtype = ''
-        else:
-            self.dtype = dtype
-        if components == None:
-            self.components = []
-        else :
-            self.components = components
-        #
+        self.components = []
+        self.instances = []      
         # Flag to see if Derived Type has been analyzed
-        #
         self.analyzed = False
+        self.active = False 
 
-    def _add_components(self,li, lines,array,ln,datatype,verbose=False):
+    def _add_components(self,var_inst, lines,ln,verbose=False):
         #
-        name = li[1]
+        name = var_inst.name
+        if(var_inst.dim > 0):
+            array = True
+        else:
+            array = False
         n = '%'+name
-        ct = 0
+        datatype = var_inst.type
+
         if(verbose): 
-            print(f"Adding component {datatype} {name} to {self.name}")
+            print(f"Adding component {datatype} {name} to {self.type_name}")
+        
         # Need to find the allocation of component
         # to get the bounds.  Necessary for duplicateMod.F90 creation
-        
         if(array):
-            for line in lines:
-                ct+=1
-                #get rid of comments
-                line = line.strip().split('!')[0]
-                alloc = re.compile(f'^(allocate)\s*\(\s*this{n}( |\()')
-                alloc_name = re.compile(f'^(allocate)\s*\({self.name}{n}( |\()')
-                string_name = f'allocate({self.name}{n}'
+            for ln  in range(ln,len(lines)):
+                line = lines[ln]
+                # Get rid of comments
+                line = line.split('!')[0].strip()
+                alloc = re.compile(f'^(allocate)\s*(.+)({n}\s*\()')
+                # alloc_name = re.compile(f'^(allocate)\s*\({self.name}{n}( |\()')
+                # string_name = f'allocate({self.name}{n}'
                 string = f'allocate(this{n}'
                 match_alloc = alloc.search(line.lower())
-                if match_alloc :
-                    line = line.split(';')[0]
-                    line = line[len(string):].strip()
-                    l = line[0:len(line)-1]
-                    if(verbose): print("matched alloc")
-                    self.components.append([False,name,l,datatype.strip()])
-                    break
-                match_alloc_name = alloc_name.search(line.lower())
-                if match_alloc_name :
-                    line = line.split(';')[0]
-                    line = line[len(string_name):].strip()
-                    l = line[0:len(line)-1]
-                    self.components.append([False,name,l,datatype.strip()])
-                    break
+                if(match_alloc):
+                    regex_b = re.compile(f'(?<=(%{name}))\s*\((.+?)\)')
+                    bounds = regex_b.search(line).group()
+                    beg_x = re.search(r'(?<=(beg))[a-z]',bounds,re.IGNORECASE)
+                    if(beg_x):
+                        end_x = re.search(r'(?<=(end))[a-z]',bounds,re.IGNORECASE)
+                        if(beg_x.group() != end_x.group()):
+                            print(f"Error: subgrid differs {beg_x.group()} {end_x.group()}") 
+                            sys.exit(1)
+                        else:
+                            var_inst.subgrid = beg_x.group()  
 
+                    self.components.append({'active':False, 'var':var_inst,'bounds':bounds})
+                    break
+                # NOTE: I don't recall what this is for 
+                # match_alloc_name = alloc_name.search(line.lower())
+                # if match_alloc_name :
+                #     line = line.split(';')[0]
+                #     line = line[len(string_name):].strip()
+                #     l = line[0:len(line)-1]
+                #     self.components.append([False,name,l,datatype.strip()])
+                #     break
         else:
-          self.components.append([False,name,'',datatype])
-        if(verbose): 
-            print("self.components:",self.components)
-
-    def _print_derived_type(self):
-        print("-----------------------------")
-        print("variable:",self.name, "from Mod:",self.mod)
-        print("type:",self.dtype)
-        print("has components:")
-        for c in self.components:
-            print(c[0],c[1],c[2])
-
+          self.components.append({'active':False, 'var':var_inst,'bounds':None})
+        return
+    
+    def print_derived_type(self,ofile=None,long=False):
+        """
+        Function to print info on the user derived type
+        """
+        instance_list = [x.name for x in self.instances]
+        if(ofile):
+            ofile.write("Derived Type:"+self.type_name+'\n')
+            ofile.write("from Mod:"+self.mod+'\n')
+            ofile.write(f"Instances: {instance_list}\n")
+            ofile.write("w/ components:")
+        else:
+            print("Derived Type:",self.type_name)
+            print("from Mod:",self.mod)
+            print(f"Instances: {instance_list}")
+            print("w/ components:")
+        if(long):
+            for c in self.components:
+                status = c['active']
+                var = c['var']
+                if(var.dim > 0):
+                    bounds = c['bounds']
+                else:
+                    bounds = ''
+                str_ = f"  {status} {var.type} {var.name} {bounds} {str(var.dim)}-D"
+                if(ofile):
+                    ofile.write(str_+'\n')
+                else:
+                    print(str_)
+        else:
+            for c in self.components:
+                status = c['active']
+                var = c['var']
+                if(var.dim > 0):
+                    bounds = c['bounds']
+                else:
+                    bounds = ''
+                str_ = f"  {status} {var.type} {var.name} {bounds} {str(var.dim)}-D"
+                if(status): 
+                    print(str_)
 
     def analyzeDerivedType(self,verbose=False):
         #
@@ -106,8 +190,11 @@ class derived_type(object):
         output1 = sp.getoutput(cmd)
         output2 = sp.getoutput(cmd2)
         output = ''
-        if(output1): output = output1; self.declaration = 'elm_instMod'
-        if(output2 and not (output1) and 'intent' not in output2): output = output2; self.declaration = 'dynSubgridDriverMod'
+        if(output1): 
+            output = output1
+            self.declaration = 'elm_instMod'
+        if(output2 and not (output1) and 'intent' not in output2): 
+            output = output2; self.declaration = 'dynSubgridDriverMod'
         if (output):
             output = output.replace(':',' ')
             output = output.split()
@@ -123,10 +210,10 @@ class derived_type(object):
             print(f"declaration in {self.declaration}")
         try:
             if(verbose): 
-                print(f"{self.name} Opening file: {self.mod}")
-            ifile = open(self.mod)
+                print(f"{self.name} Opening file: {self.fpath}")
+            ifile = open(self.fpath)
         except:
-            print("ERROR: file ",self.mod, "not found")
+            print("ERROR: file ",self.fpath, "not found")
             exit(1)
 
         # Find declaration of variable
@@ -144,8 +231,8 @@ class derived_type(object):
                     m = par.search(line)
                     if(not m): 
                         print("Error in analyzeDerivedType")
-                        print(line);
-                        print(f"var : {var} , file = {self.mod} ")
+                        print(line)
+                        print(f"var : {var} , file = {self.fpath} ")
                         sys.exit() 
                     inner_str = m.group()
                     self.dtype = inner_str
@@ -159,45 +246,7 @@ class derived_type(object):
             exit(1)
 
         # Now find definition of type to find components!
-        type_start_line = 0
-        type_end_line = 0
-        ct = 0
-        print("============ ",self.name," =================================================")
-        regex_type = re.compile(f"^\s*(type)",re.IGNORECASE)
-        regex_dtype = re.compile(f'(::)\s*({self.dtype})',re.IGNORECASE)
-        for line in lines:
-            l = line.split("!")[0] 
-            l = l.strip() 
-            ct += 1
-            match_type = regex_type.search(l)
-            if(match_type):
-                match_dtype = regex_dtype.search(l)
-                if(match_dtype):
-                    type_start_line = ct
-                    if(verbose): print(f"{self.name} -- Type start line is {ct}")
-            array = False
-            if(type_start_line != 0):
-                #test to see if we exceeded type definition
-                _end1 = re.search(f"^\s*(contains)",l)
-                _end  = re.search(f'^\s*(end type)',l)
-                if(not _end and not _end1):
-                    data_type = re.compile(f'^\s*(real|integer|logical|character)')
-                    m = data_type.search(line)
-                    if(m):
-                        datatype = m.group()
-                        l = l.replace(',',' ')
-                        l = l.replace('pointer','')
-                        l = l.replace('private','')
-                        l = l.replace('public','')
-                        l = l.replace('allocatable','')
-                        x    = l.split()
-                        x[2] = re.sub(r'[^\w]','',x[2])
-                        l = l.replace('::',' ')
-                        if ':' in l: array = True
-                        self._add_components([x[0],x[2]],lines,array,ln=type_start_line,datatype=datatype,verbose=verbose)
-                else:
-                    type_end_line = ct
-                    break
+        get_derived_type_definition(ifile,modname, lines,ln,type_name,verbose=False)
         ifile.close()
         if(type_start_line == 0) :
             print(f"Error couldn't analyze type {self.name} {self.dtype}")

@@ -1,5 +1,5 @@
 import subprocess as sp
-from mod_config import ELM_SRC,SHR_SRC
+from mod_config import ELM_SRC,SHR_SRC, _bc
 
 def get_module_name_from_file(fpath):
     """
@@ -74,12 +74,7 @@ def print_spel_module_dependencies(mod_dict,subs,depth=0):
             if(dep_mod.modules):
                 modtree = unravel_module_dependencies(modtree=modtree,
                                                       mod_dict=mod_dict,
-                                                      mod=dep_mod,depth=depth) 
-    # for el in modtree:
-    #     mod   = el['module'] 
-    #     depth = el['depth'] 
-    #     if(depth <3): print(f"{arrow*depth}{mod}")
-            
+                                                      mod=dep_mod,depth=depth)             
 class FortranModule:
     """
     A class to represent a Fortran module. 
@@ -94,9 +89,34 @@ class FortranModule:
         self.modules = []     # any modules used in the module
         self.filepath = fname # the file path of the module
         self.ln = ln          # line number of start module block
+        self.defined_types = {}
 
-    def display_info(self):
-        print(f"Module Name: {self.name}")
-        print("Variables:")
-        for variable in self.variables:
-            print(f"- {variable}")
+    def display_info(self,ofile=None):
+        if(ofile):
+            ofile.write(f"Module Name: {self.name}\n")
+            ofile.write(f"Module Depedencies:\n")
+        else:
+            print(_bc.BOLD+_bc.HEADER+f"Module Name: {self.name}"+_bc.ENDC)
+            print(_bc.BOLD+_bc.WARNING+f"Module Depedencies"+_bc.ENDC)
+
+
+        for module in self.modules:
+            if(ofile): 
+                ofile.write(f"used {module}\n")
+            else:
+                print(_bc.WARNING+f"used {module}"+_bc.ENDC)
+            
+        if(not ofile):
+            print(_bc.BOLD+_bc.OKBLUE+"Variables:"+_bc.ENDC)
+        else: 
+            ofile.write(f"Variables:\n")
+
+        for variable in self.global_vars:
+            variable.printVariable(ofile=ofile)
+        
+        if(ofile): 
+            ofile.write(f"User Types:\n")
+        else:
+            print(_bc.BOLD+_bc.OKBLUE+"User Types:"+_bc.ENDC)
+        for utype in self.defined_types:
+            self.defined_types[utype].print_derived_type(ofile=ofile)

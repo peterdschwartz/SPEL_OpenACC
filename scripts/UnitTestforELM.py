@@ -10,25 +10,27 @@ def main():
     """
     import sys
     import os
-    from DerivedType import derived_type
     from analyze_subroutines import Subroutine, replace_key
-    from utilityFunctions import getLocalVariables, insert_header_for_unittest
+    from utilityFunctions import getLocalVariables, insert_header_for_unittest, Variable
     import write_routines as wr
     from mod_config import default_mods, unittests_dir, scripts_dir,spel_mods_dir
+    from mod_config import ELM_SRC
     from edit_files import process_for_unit_test
     from fortran_modules import print_spel_module_dependencies
+    import subprocess as sp
     import csv 
     
     print(f"CWD is {os.getcwd()}")
 
     main_sub_dict = {}
-    case = "SoilTemp22"
+    case = "LakeTemp"
     casename = unittests_dir+case
     # Determines if SPEL should run to make optimizations 
     opt = False
     add_acc = False
     adjust_allocation = False  
     preprocess = False 
+
     # Create script output directory if not present:
     if(not os.path.isdir(f"{scripts_dir}/script-output")):
         print("Making script output directory")
@@ -73,7 +75,7 @@ def main():
                     # "CarbonStateUpdate2h","NitrogenStateUpdate2h",  "PhosphorusStateUpdate2h",
                     # "WoodProducts", "CropHarvestPools", "FireArea","FireFluxes"]
     
-    sub_name_list = ["SoilTemperature"]
+    sub_name_list = ["LakeTemperature"]
     
     # modfile is a running list of which modules hold derived-type definitions
     modfile = 'usemod.txt'
@@ -91,14 +93,14 @@ def main():
             dict_mod[line[0]].append(el)
 
     # Removing redundancies from mod_list:
-    var_list = []
-    mod_list = list(dict_mod.keys())
-    # Create derived type instance for each variable:
-    for mod in mod_list:
-        for var in dict_mod[mod]:
-            c13c14 = bool('c13' in var or 'c14' in var)
-            if(c13c14): continue
-            var_list.append(derived_type(var,mod))
+    # var_list = []
+    # mod_list = list(dict_mod.keys())
+    # # Create derived type instance for each variable:
+    # for mod in mod_list:
+    #     for var in dict_mod[mod]:
+    #         c13c14 = bool('c13' in var or 'c14' in var)
+    #         if(c13c14): continue
+    #         var_list.append(derived_type(var,mod))
 
     # Initialize list of derived types to 
     read_types  = []; write_types = [];
@@ -137,11 +139,20 @@ def main():
         sys.exit("Done running in Optimization Mode")
     
     # print_spel_module_dependencies(mod_dict=mod_dict,subs=subroutines)
+    ofile = open(f"{casename}/module_dependencies.txt",'w')
+    for mod in mod_dict.values():
+        mod.display_info(ofile=ofile)
+    ofile.close()
 
     with open(f'{casename}/source_files_needed.txt','w') as ofile:
         for f in file_list:
             ofile.write(f+'\n')
     
+    type_dict = {}
+    for modname, mod in mod_dict.items():
+        for utype, dtype in mod.defined_types.items():
+            type_dict[utype] = dtype
+    var_list = [dtype for dtype in type_dict.values()]
     for s in sub_name_list:
         #
         # Parsing means getting info on the variables read and written
@@ -241,25 +252,23 @@ def main():
                 'solarabs_inst','photosyns_inst','soilhydrology_inst','urbanparams_inst']
     read_types = list(set(read_types))
     write_types = list(set(write_types))
-    for v in var_list:
-        if(v.name in ['filter','clumps','procinfo']): continue
-        c13c14 = bool('c13' in v.name or 'c14' in v.name)
-        if(c13c14): continue
-        if(v.name in write_types or v.name in read_types):
-            if(not v.analyzed): 
-                v.analyzeDerivedType()
-    
-    vdict ={v.name : v for v in var_list}
-    ofile = open("SharedPhysicalPropertiesVars.dat",'w')
-    for v in list_pp:
-        ofile.write(v+"\n")
-        for c in vdict[v].components:
-            ofile.write("   "+c[1]+"\n")
-    ofile.close()
+
+    # for v in var_list:
+    #     if(v.name in ['filter','clumps','procinfo']): continue
+    #     c13c14 = bool('c13' in v.name or 'c14' in v.name)
+    #     if(c13c14): continue
+    #     if(v.name in write_types or v.name in read_types):
+    #         if(not v.analyzed): 
+    #            v.analyzeDerivedType()
+    # type_dict ={v.name : v for v in var_list}
+    # ofile = open("SharedPhysicalPropertiesVars.dat",'w')
+    # for v in list_pp:
+    #     ofile.write(v+"\n")
+    #     for c in type_dict[v].components:
+    #         ofile.write("   "+c[1]+"\n")
+    # ofile.close()
 
     aggregated_elmtypes_list = []
-    
-
     for s in sub_name_list:
         for x in subroutines[s].elmtypes:
             if(x in replace_inst): x = x.replace('_inst','_vars')
@@ -270,48 +279,79 @@ def main():
         aggregated_elmtypes_list.append(l)
 
     aggregated_elmtypes_list = list(set(aggregated_elmtypes_list))
+
+    instance_to_user_type = {}
+    elm_inst_vars = {}
+    for type_name, dtype in type_dict.items():
+        if('bounds' in type_name): continue
+        if(not dtype.instances):
+            cmd = f'grep -rin -E "^[[:space:]]*(type)[[:space:]]*\({type_name}" {ELM_SRC}/main/elm_instMod.F90'
+            output = sp.getoutput(cmd)
+            if(output):
+                output = output.split('\n')
+                if(len(output) > 1):
+                    print(f"Warning: multiple instances found for {type_name}")
+                    print(output)
+                    sys.exit(1)
+                line = output[0]
+                line = line.replace('::','')
+                line = line.split(':')
+                
+                decl = line[1].strip()
+                decl = decl.split()
+                var = decl[1]
+                new_inst = Variable(type_name,var,subgrid='?',ln=0,dim=0,declaration='elm_instMod')
+                dtype.instances.append(new_inst)
+                elm_inst_vars[var] = dtype
+            else:
+                print(f"Warning: no instances found for {type_name}")
+        for instance in dtype.instances:
+            instance_to_user_type[instance.name] = type_name
+        
     dtype_info_list = []
-    # update the status of derived_types:
+    # Update the active status of user defined types:
     for s in sub_name_list:
         for dtype, components in subroutines[s].elmtype_r.items():
             if(dtype in replace_inst): dtype = dtype.replace('_inst','_vars')
             if(dtype == 'col_cf_input'): dtype = 'col_cf'
             c13c14 = bool('c13' in dtype or 'c14' in dtype)
             if(c13c14): continue
-            if(not vdict[dtype].analyzed):
-                vdict[dtype].analyzeDerivedType() 
-            for c in vdict[dtype].components:
-                if c[1] in components:
-                    c[0] = True
-                    cname    = c[1]
-                    datatype = c[3]
-                    # Figure out dimensionality of the variable
-                    if(not c[2]):
-                        dim = 0 # scalar
-                    else:
-                        dim = c[2].count(':')
-                    dtype_info_list.append([dtype,c[1],datatype,f"{dim}D"])
+            type_name = instance_to_user_type[dtype]
+            type_dict[type_name].active = True 
+            for c in type_dict[type_name].components:
+                field_var = c['var']
+                if field_var.name in components:
+                    c['active'] = True
+                    datatype = field_var.type
+                    dim = field_var.dim 
+                    dtype_info_list.append([dtype,field_var.name,datatype,f"{dim}D"])
     
     for s in sub_name_list:
         for dtype, components in subroutines[s].elmtype_w.items():
             if(dtype in replace_inst): dtype = dtype.replace('_inst','_vars')
             if(dtype == 'col_cf_input'): dtype = 'col_cf'
             c13c14 = bool('c13' in dtype or 'c14' in dtype)
-            if(c13c14): continue
-            if(not vdict[dtype].analyzed):
-                vdict[dtype].analyzeDerivedType(verbose=True) 
-            for c in vdict[dtype].components:
-                if c[1] in components:
-                    c[0] = True
-                    cname    = c[1]
-                    datatype = c[3]
-                    # Figure out dimensionality of the variable
-                    if(not c[2]):
-                        dim = 0 # scalar
-                    else:
-                        dim = c[2].count(':')
-                    dtype_info_list.append([dtype,c[1],datatype,f"{dim}D"])
+            type_name = instance_to_user_type[dtype]
+            type_dict[type_name].active = True 
+            for c in type_dict[type_name].components:
+                field_var = c['var']
+                if field_var.name in components:
+                    c['active'] = True
+                    datatype = field_var.type
+                    dim = field_var.dim 
+                    dtype_info_list.append([dtype,field_var.name,datatype,f"{dim}D"])
     
+    # Will need to read in physical properties type
+    # so set all components to True
+    for type_name, dtype in type_dict.items():
+        instances = [inst.name for inst in dtype.instances]
+        for varname in instances:
+            if varname in ['veg_pp','lun_pp','col_pp','grc_pp','top_pp']:
+                dtype.active = True
+                for c in dtype.components:
+                    c['active'] = True
+    # for dtype in type_dict.values():
+    #     dtype.print_derived_type()
     for el in write_types:
         if(el not in read_types):
             read_types.append(el)
@@ -335,8 +375,13 @@ def main():
     # the subroutines.  
     # Call the relevant update_vars_{sub} after the parallel region.
     #
+    elmvars_dict = {}
+    for dtype in type_dict.values():
+        for inst in dtype.instances:
+            elmvars_dict[inst.name] = inst
+    
     for sub in subroutines.values():
-        sub.generate_update_directives(vdict)
+        sub.generate_update_directives(elmvars_dict)
 
     with open(f'{scripts_dir}/script-output/concat.F90','w') as outfile:
         outfile.write("module verificationMod \n")
@@ -372,25 +417,12 @@ def main():
             print(acc+el+'     , &'+endc)
     print(acc+'  )'+endc)
 
-    const_mods = ['elm_varcon','elm_varpar','shr_const_mod',
-              'landunit_varcon','column_varcon','pftvarcon',
-              'elm_varctl']
-    constants = {k : [] for k in const_mods}
-
-    #for s in subroutines:
-    #    s._get_global_constants(constants)
-
-    # Will need to read in physical properties type
-    # so set all components to True
-    for varname, dtype in vdict.items():
-        if varname in ['veg_pp','lun_pp','col_pp','grc_pp','top_pp']:
-            for c in dtype.components:
-                c[0] = True
-
-    wr.clean_main_elminstMod(vdict, aggregated_elmtypes_list,
+    wr.clean_main(aggregated_elmtypes_list,
                          files=needed_mods,casename=casename)
     
-    wr.duplicate_clumps(vdict,aggregated_elmtypes_list)
+    wr.write_elminstMod(elm_inst_vars,casename)
+    
+    wr.duplicate_clumps(type_dict)
 
     files_for_unittest = ' '.join(needed_mods) 
     os.system(f"cp {files_for_unittest} {casename}")

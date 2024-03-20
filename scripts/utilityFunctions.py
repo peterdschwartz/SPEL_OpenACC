@@ -6,6 +6,23 @@ import sys
 import re 
 import subprocess as sp
 from mod_config import ELM_SRC, _bc
+
+# Regular Expressions
+find_type = re.compile(r'(?<=\()\w+(?=\))') # Matches type(user-type) -> user-type
+# Match any variable declarations
+find_variables = re.compile(r'^(class\s*\(|type\s*\(|integer|real|logical|character)',re.IGNORECASE)
+# Match variable names
+regex_var = re.compile(r'\w+')
+# Match subgrid index i.e., bounds%begc -> c
+regex_subgrid_index = re.compile(r'(?<=bounds\%beg)[a-z]',re.IGNORECASE)
+# Capture instrinsic types to separate from user-defined types
+intrinsic_type = re.compile(r'^(integer|real|logical|character)', re.IGNORECASE)
+# Capture user-defined types
+user_type = re.compile(r'^(class\s*\(|type\s*\()',re.IGNORECASE) 
+# non-greedy capture for arrays
+ng_regex_array = re.compile(f'\w+?\s*\(.+?\)')
+# capture array bounds only:
+regex_bounds = re.compile(r'(?<=(\w|\s))\(.+\)')
 class Variable(object):
     """
     Class to hold information on the variable
@@ -15,7 +32,8 @@ class Variable(object):
         * self.subgrid -> subgrid level used for allocation 
         * self.ln -> line number of declaration
     """
-    def __init__(self, type,name,subgrid,ln,dim,optional=False,keyword=''):
+    def __init__(self, type,name,subgrid,ln,
+                 dim,declaration='',optional=False,keyword=''):
         self.type = type
         self.name = name
         self.subgrid = subgrid
@@ -25,17 +43,49 @@ class Variable(object):
         self.keyword = keyword
         self.filter_used = ''
         self.subs = []
-        self.declaration = '' 
+        if(declaration):
+            self.declaration = declaration
+        else:
+            self.declaration = '' 
+            
 
+    def printVariable(self,ofile=None): 
+        if(ofile):
+            ofile.write(f"{self.type} {self.dim}-D {self.name}\n")
+            if(self.subs):
+                ofile.write(f"Passed to {self.subs} {self.keyword}\n")
+        else:
+            print(f"{self.type} {self.dim}-D {self.name}")
+            if(self.subs):
+                print(f"Passed to {self.subs} {self.keyword}")
+        
+def comment_line(lines,ct,mode='normal',verbose=False):
+    """
+    function comments out lines accounting for line continuation
+    """
+    if(mode == 'normal'): comment_ = '!#py '
+    if(mode == 'fates' ): comment_ = '!#fates_py '
+    if(mode == 'betr'  ): comment_ = '!#betr_py '
     
-    def printVariable(self): 
-        print(f"Variable:\n {self.type} {self.name} subgrid: {self.subgrid} {self.dim}-D")
-        print(f"Passed to {self.subs} {self.keyword}")
+    newline = lines[ct]
+    str_ = newline.split()[0]
+    newline = newline.replace(str_,comment_+str_,1)
+    lines[ct] = newline
+    continuation = bool(newline.strip('\n').endswith('&'))
+    if(verbose): print(lines[ct])
+    while(continuation):
+        ct +=1
+        newline = lines[ct]
+        str_ = newline.split()[0]
+        newline = newline.replace(str_, comment_+str_,1)
+        lines[ct] = newline
+        if(verbose): print(lines[ct])
+        continuation = bool(newline.strip('\n').endswith('&'))
+    return lines, ct
 
 def removeBounds(line,verbose=False):
     """
-    This function matches (beg:end) style phrases in
-    subroutine calls.  They must be removed to use !$acc routine
+    This function matches (:,:,:) and removes it from the line
 
     """
     cc = "[ a-zA-Z0-9%\-\+]*?:[ a-zA-Z0-9%\-\+]*?"
@@ -60,6 +110,25 @@ def removeBounds(line,verbose=False):
     m4D = non_greedy4D.findall(newline)
     for bound in m4D: 
         newline = newline.replace(bound,'')
+
+    match_arrays = ng_regex_array.findall(newline)
+    # Check if an array is being assigned
+    match_array_init = re.search(r'(\(/)(.+)(/\))',newline) 
+    if(match_arrays):
+        # not all bounds could be removed. 
+        # Check if they are of the form arr(1,2) (no semicolon)
+        for arr in match_arrays:
+            expr = regex_bounds.search(arr).group()
+            newline = newline.replace(expr,'')
+    elif(match_array_init):
+        newline = newline.replace(match_array_init.group(),'')
+    
+    
+    match_arrays = ng_regex_array.findall(newline)
+    if(match_arrays):
+        print(f"removeBounds::Error - Coudln't remove array bounds completely")
+        print(f"line: {line}")
+        sys.exit(1)
     
     return newline
 
@@ -218,12 +287,12 @@ def getLocalVariables(sub,verbose=False,class_var=False ):
     
     find_arg = re.compile(r'(intent)',re.IGNORECASE)
     find_type = re.compile(r'(?<=\()\w+(?=\))')
-    find_variables = re.compile('^(class\(|type\(|integer|real|logical|character)',re.IGNORECASE)
+    find_variables = re.compile('^(class\s*\(|type\s*\(|integer|real|logical|character)',re.IGNORECASE)
     regex_var = re.compile(r'\w+')
     regex_subgrid_index = re.compile('(?<=bounds\%beg)[a-z]',re.IGNORECASE)
     # test for intrinsic data types or user defined
     intrinsic_type = re.compile(r'^(integer|real|logical|character)', re.IGNORECASE)
-    user_type = re.compile(r'^(class\(|type\()',re.IGNORECASE)
+    user_type = re.compile(r'^(class\s*\(|type\s*\()',re.IGNORECASE)
     #
     for ln in range(startline,endline):
         line = lines[ln].split("!")[0]
@@ -354,15 +423,10 @@ def convertAssociateDict(associate_vars, varlist):
                 dtypes.append(_type)
     
     # Analyze derived type if not already
-    for _type in dtypes:
-        for var in varlist: 
-            if(_type == var.name and not var.analyzed):
-                if(var.name == "lun_ef"):
-                    print("convertAssociateDict:")
-                    var.analyzeDerivedType(verbose=True)
-                    var._print_derived_type()
-                else:
-                    var.analyzeDerivedType(verbose=False) 
+    # for _type in dtypes:
+    #     for var in varlist: 
+    #         if(_type == var.name and not var.analyzed):
+    #             var.analyzeDerivedType(verbose=False) 
 
     return
 
@@ -770,7 +834,95 @@ def insert_header_for_unittest(file_list,mod_dict):
                 break
         ifile = open(f,'r')
         lines = ifile.readlines()
-        lines.insert(linenumber,'#include "unittest_defs.h"\n')
-        with(open(f,'w')) as ofile:
-            ofile.writelines(lines)
+        ifile.close()
+        # First check if the header is already included
+        match_include = re.search(r'^(#include "unittest_defs.h")',lines[linenumber+1])
+        if(match_include):
+            print("unittest_defs already included")
+            continue
+        else:
+            lines.insert(linenumber,'#include "unittest_defs.h"\n')
+            with(open(f,'w')) as ofile:
+                ofile.writelines(lines)
     return file_list
+
+def parse_line_for_variables(ifile,l,ln,verbose=False):
+    """
+    Function that takes a line of code and returns the variables 
+    that are declared in it. 
+    """
+    # NOTE: This code is duplicated from getLocalVariables
+    #       which should be refactored?
+    func_name = "parse_line_for_variables"
+    variable_list = [] 
+    match_var = find_variables.search(l)
+    if(match_var):
+        if("::" not in l):
+            print(f"{func_name}:: Single Var? '::' {ifile}L{ln+1} {l}")
+            # regex to separate type from variable when there is no '::' separator 
+            ng_type = re.compile(f'^\w+?\s*\(.+?\)')
+            match_type = ng_type.search(l)
+            if(match_type): # Means there exists a character(len=) or type(.) or real(r8)
+                temp_decl = match_type.group() 
+                temp_vars = l.split(temp_decl)[1] 
+            else: # means it's a simple decl such as 'integer' 
+                temp_decl = find_variables.search(l)
+                temp_vars = find_variables.sub('',l).strip()
+        else:
+            temp = l.split("::") # Is this a poor assumption?
+            if(len(temp)<2):
+                print(f"{func_name}:: Error - Thought there was a variable decl at \n {ifile}::L{ln+1}\n{l} ")
+                sys.exit(1)
+            temp_decl = l.split("::")[0]
+            temp_vars = l.split("::")[1]
+            if(verbose): 
+                print(f"temp_decl: {temp_decl} temp_vars: {temp_vars}")
+
+        # Get data type of variable by checking for intrinsic types
+        # and then user-defined types separately  
+        m_type = intrinsic_type.search(temp_decl)
+        if(m_type):
+            data_type = m_type.group() 
+            if(verbose): print("matched data type: ",data_type)
+        else: # User-Defined Type 
+            m_type = user_type.search(temp_decl)
+            if(not m_type): 
+                print(f"Error: Can't Identify Data Type for {ifile}::L{ln+1}\n {l}")
+                print(f"decl: {temp_decl}")
+                sys.exit(1)
+            data_type = find_type.search(temp_decl).group()
+            if(verbose): print("matched user data type: ",data_type)
+        
+        # Go through and replace all arrays first
+        # match_arrays = ng_regex_array.findall(temp_vars)
+        remove_slices = removeBounds(temp_vars)
+
+        var_list = remove_slices.split(',')
+        var_list = [x.strip() for x in var_list if x.strip()]
+
+        for var in var_list:
+            if('=' in var):
+                var = var.split('=')[0]
+            # Check if current variable is an array
+            ng_var_array = re.compile(f'{var}?\s*\(.+?\)',re.IGNORECASE)
+            match_array = ng_var_array.search(temp_vars)
+            if(match_array):
+                arr = match_array.group()
+                index = regex_subgrid_index.search(var)
+                if(index):
+                    subgrid = index.group() 
+                else:
+                    if(verbose): 
+                        print(f"{arr} Not allocated by bounds")
+                    subgrid = '?'
+                # Storing line number of declaration 
+                dim = arr.count(',') + 1
+                if(verbose): 
+                    print(f"var = {var}; subgrid = {subgrid}; {dim}-D")
+            else:
+                parameter = bool("parameter" in temp_decl.lower())
+                subgrid = ''
+                dim = 0
+            variable_list.append(Variable(data_type,var,subgrid,ln,dim) )
+
+    return variable_list
