@@ -10,6 +10,8 @@ contains
     use elm_varcon
     use elm_varpar
     use timeInfoMod
+    use UrbanParamsType
+    use elm_varctl
     !#USE_START
     use AllocationMod
     use PhenologyMod
@@ -33,36 +35,63 @@ contains
     call fio_open(18,in_file, 1)
 
   if(mode == 0) then
-    !from elm_varpar
-    call fio_read(18,"nlevsoi  ",nlevsoi  ,errcode=errcode)
-    call fio_read(18,"nlevsoifl",nlevsoifl,errcode=errcode)
-    call fio_read(18,"nlevgrnd ",nlevgrnd ,errcode=errcode)
-    call fio_read(18,"nlevurb        ",nlevurb        ,errcode=errcode)
-    call fio_read(18,"nlevlak        ",nlevlak        ,errcode=errcode)
-    call fio_read(18,"nlevdecomp     ",nlevdecomp     ,errcode=errcode)
-    call fio_read(18,"nlevdecomp_full",nlevdecomp_full,errcode=errcode)
-    call fio_read(18,"nlevtrc_soil",nlevtrc_soil,errcode=errcode)
-    call fio_read(18,"nlevtrc_full",nlevtrc_full,errcode=errcode)
-    
-    !from timeInfoMod 
-    call fio_read(18,"dtime_mod",dtime_mod,errcode=errcode)       
-    call fio_read(18,"dayspyr_mod",dayspyr_mod,errcode=errcode)
-    call fio_read(18,"first",first,errcode=errcode)
-    call fio_read(18,"year_curr",year_curr,errcode=errcode)
-    call fio_read(18,"mon_curr",mon_curr,errcode=errcode)
-    call fio_read(18,"day_curr",day_curr,errcode=errcode)
-    call fio_read(18,"secs_curr",secs_curr,errcode=errcode)
-    call fio_read(18,"nstep_mod",nstep_mod,errcode=errcode)
-    call fio_read(18,"jday_mod",jday_mod,errcode=errcode)
-    call fio_read(18,"thiscalday_mod",thiscalday_mod,errcode=errcode)
-    call fio_read(18,"nextsw_cday_mod",nextsw_cday_mod,errcode=errcode)
-    call fio_read(18,"end_cd_mod",end_cd_mod,errcode=errcode)
-    call fio_read(18,"doalb",doalb,errcode=errcode)
-    call fio_read(18,"year_prev",year_prev,errcode=errcode)
-    call fio_read(18,"mon_prev",mon_prev,errcode=errcode)
-    call fio_read(18,"day_prev",day_prev,errcode=errcode)
-    call fio_read(18,"secs_prev",secs_prev,errcode=errcode)
 
+   call fio_read(18,"glc_do_dynglacier",glc_do_dynglacier,errcode=errcode)
+   call fio_read(18,"more_vertlayers", more_vertlayers,errcode=errcode)
+   call fio_read(18,"nsegspc",nsegspc,errcode=errcode)
+   call fio_read(18,"anoxia",anoxia,errcode=errcode)
+   call fio_read(18,"nu_com" , nu_com,errcode=errcode)
+   call fio_read(18,"nyears_ad_carbon_only",nyears_ad_carbon_only,errcode=errcode)
+   call fio_read(18,"spinup_mortality_factor",spinup_mortality_factor,errcode=errcode)
+   call fio_read(18,"spinup_state" ,spinup_state,errcode=errcode)
+   call fio_read(18,"urban_hac",urban_hac,errcode=errcode)
+   call fio_read(18,"urban_traffic",urban_traffic,errcode=errcode)
+   call fio_read(18,"is_active_betr_bgc",is_active_betr_bgc,errcode=errcode)
+   call fio_read(18,"use_century_decomp",use_century_decomp,errcode=errcode)
+   call fio_read(18,"use_cn" , use_cn,errcode=errcode)
+   call fio_read(18,"use_crop" , use_crop,errcode=errcode) 
+   call fio_read(18,"use_dynroot" , use_dynroot    ,errcode=errcode) 
+   call fio_read(18,"use_fates"  ,use_fates    ,errcode=errcode)   
+   call fio_read(18,"use_lch4", use_lch4 ,errcode=errcode)     
+   call fio_read(18,"use_vertsoilc", use_vertsoilc,errcode=errcode)
+   call fio_read(18,"use_c13", use_c13,errcode=errcode)
+   call fio_read(18,"use_c14", use_c14,errcode=errcode)
+   call fio_read(18,"fin_use_fsat", fin_use_fsat,errcode=errcode)
+   call fio_read(18,"use_aereoxid_prog", use_aereoxid_prog,errcode=errcode)
+   call fio_read(18,"Carbon_only", Carbon_only,errcode=errcode)
+   call fio_read(18,"CarbonNitrogen_only", CarbonNitrogen_only,errcode=errcode)
+   call fio_read(18,"CarbonPhosphorus_only", CarbonPhosphorus_only,errcode=errcode)
+   call fio_read(18,"use_vsfm", use_vsfm, errcode=errcode ) 
+
+   !from elm_varpar
+   call fio_read(18,"nlevsoi  ",nlevsoi  ,errcode=errcode)
+   call fio_read(18,"nlevsoifl",nlevsoifl,errcode=errcode)
+   call fio_read(18,"nlevgrnd ",nlevgrnd ,errcode=errcode)
+   call fio_read(18,"nlevurb        ",nlevurb        ,errcode=errcode)
+   call fio_read(18,"nlevlak        ",nlevlak        ,errcode=errcode)
+   call fio_read(18,"nlevdecomp     ",nlevdecomp     ,errcode=errcode)
+   call fio_read(18,"nlevdecomp_full",nlevdecomp_full,errcode=errcode)
+   call fio_read(18,"nlevtrc_soil",nlevtrc_soil,errcode=errcode)
+   call fio_read(18,"nlevtrc_full",nlevtrc_full,errcode=errcode)
+    
+   !from timeInfoMod 
+   call fio_read(18,"dtime_mod",dtime_mod,errcode=errcode)       
+   call fio_read(18,"dayspyr_mod",dayspyr_mod,errcode=errcode)
+   call fio_read(18,"first",first,errcode=errcode)
+   call fio_read(18,"year_curr",year_curr,errcode=errcode)
+   call fio_read(18,"mon_curr",mon_curr,errcode=errcode)
+   call fio_read(18,"day_curr",day_curr,errcode=errcode)
+   call fio_read(18,"secs_curr",secs_curr,errcode=errcode)
+   call fio_read(18,"nstep_mod",nstep_mod,errcode=errcode)
+   call fio_read(18,"jday_mod",jday_mod,errcode=errcode)
+   call fio_read(18,"thiscalday_mod",thiscalday_mod,errcode=errcode)
+   call fio_read(18,"nextsw_cday_mod",nextsw_cday_mod,errcode=errcode)
+   call fio_read(18,"end_cd_mod",end_cd_mod,errcode=errcode)
+   call fio_read(18,"doalb",doalb,errcode=errcode)
+   call fio_read(18,"year_prev",year_prev,errcode=errcode)
+   call fio_read(18,"mon_prev",mon_prev,errcode=errcode)
+   call fio_read(18,"day_prev",day_prev,errcode=errcode)
+   call fio_read(18,"secs_prev",secs_prev,errcode=errcode)
 
   else
     !from pftconrd
@@ -257,6 +286,7 @@ contains
     call fio_read(18,"npcropmax              ",npcropmax           ,errcode=errcode)
     call fio_read(18,"nc3crop                ",nc3crop             ,errcode=errcode)
     call fio_read(18,"nc3irrig               ",nc3irrig            ,errcode=errcode)
+    call fio_read(18, "rsub_top_globalmax", rsub_top_globalmax, errcode=errcode) 
 
     !-------- elm_varcon --------- !
     call fio_read(18,"zlak ",zlak ,errcode=errcode)

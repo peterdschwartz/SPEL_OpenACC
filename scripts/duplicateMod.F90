@@ -17,7 +17,9 @@ subroutine duplicate_weights(unique_sites,total_gridcells)
    end do
 end subroutine duplicate_weights
 subroutine duplicate_clumps(mode,unique_sites,num_sites)
+   use elm_instMod, only : canopystate_vars 
    use GridcellType, only : grc_pp 
+   use TopounitDataType, only : top_af 
    use LandunitType, only : lun_pp 
    use ColumnType, only : col_pp 
    use ColumnDataType, only : col_es 
@@ -25,12 +27,14 @@ subroutine duplicate_clumps(mode,unique_sites,num_sites)
    use ColumnDataType, only : col_ws 
    use ColumnDataType, only : col_wf 
    use VegetationType, only : veg_pp 
+   use VegetationDataType, only : veg_wf 
    use VegetationDataType, only : veg_ef 
-   use elm_instMod, only : ch4_vars 
    use elm_instMod, only : soilstate_vars 
    use elm_instMod, only : solarabs_vars 
+   use UrbanParamsType, only : urbanparams_vars 
    use TopounitType, only : top_pp 
-   use elm_instMod, only : lakestate_vars 
+   use LandunitDataType, only : lun_es 
+   use LandunitDataType, only : lun_ef 
    use decompMod, only : bounds_type, get_clump_bounds, procinfo 
    use elm_varcon 
    use elm_varpar 
@@ -103,6 +107,10 @@ subroutine duplicate_clumps(mode,unique_sites,num_sites)
             = grc_pp%dayl(begg_copy:endg_copy)
          grc_pp%prev_dayl(begg:endg) &
             = grc_pp%prev_dayl(begg_copy:endg_copy)
+         grc_pp%elevation(begg:endg) &
+            = grc_pp%elevation(begg_copy:endg_copy)
+         grc_pp%froudenum(begg:endg) &
+            = grc_pp%froudenum(begg_copy:endg_copy)
          grc_pp%landunit_indices(:,begg:endg) &
             = grc_pp%landunit_indices(:,begg_copy:endg_copy)
          lun_pp%gridcell(begl:endl) &
@@ -205,6 +213,8 @@ subroutine duplicate_clumps(mode,unique_sites,num_sites)
             = col_pp%lakedepth(begc_copy:endc_copy)
          col_pp%hydrologically_active(begc:endc) &
             = col_pp%hydrologically_active(begc_copy:endc_copy)
+         col_pp%is_fates(begc:endc) &
+            = col_pp%is_fates(begc_copy:endc_copy)
          veg_pp%gridcell(begp:endp) &
             = veg_pp%gridcell(begp_copy:endp_copy)
          veg_pp%wtgcell(begp:endp) &
@@ -227,6 +237,8 @@ subroutine duplicate_clumps(mode,unique_sites,num_sites)
             = veg_pp%mxy(begp_copy:endp_copy)
          veg_pp%active(begp:endp) &
             = veg_pp%active(begp_copy:endp_copy)
+         veg_pp%sp_pftorder_index(begp:endp) &
+            = veg_pp%sp_pftorder_index(begp_copy:endp_copy)
          veg_pp%is_fates(begp:endp) &
             = veg_pp%is_fates(begp_copy:endp_copy)
          top_pp%gridcell(begt:endt) &
@@ -291,64 +303,94 @@ subroutine duplicate_clumps(mode,unique_sites,num_sites)
          begl=bounds%begl; endl=bounds%endl
          begc=bounds%begc; endc=bounds%endc
          begp=bounds%begp; endp=bounds%endp
+         canopystate_vars%frac_veg_nosno_patch(begp:endp) &
+            = canopystate_vars%frac_veg_nosno_patch(begp_copy:endp_copy)
+         top_af%lwrad(begt:endt) &
+            = top_af%lwrad(begt_copy:endt_copy)
          col_es%t_soisno(begc:endc,:) &
             = col_es%t_soisno(begc_copy:endc_copy,:)
+         col_es%t_ssbef(begc:endc,:) &
+            = col_es%t_ssbef(begc_copy:endc_copy,:)
+         col_es%t_h2osfc(begc:endc) &
+            = col_es%t_h2osfc(begc_copy:endc_copy)
          col_es%t_grnd(begc:endc) &
             = col_es%t_grnd(begc_copy:endc_copy)
-         col_es%t_lake(begc:endc,:) &
-            = col_es%t_lake(begc_copy:endc_copy,:)
+         col_es%emg(begc:endc) &
+            = col_es%emg(begc_copy:endc_copy)
+         col_es%fact(begc:endc,:) &
+            = col_es%fact(begc_copy:endc_copy,:)
+         col_es%c_h2osfc(begc:endc) &
+            = col_es%c_h2osfc(begc_copy:endc_copy)
+         col_ef%eflx_bot(begc:endc) &
+            = col_ef%eflx_bot(begc_copy:endc_copy)
          col_ws%h2osoi_liq(begc:endc,:) &
             = col_ws%h2osoi_liq(begc_copy:endc_copy,:)
          col_ws%h2osoi_ice(begc:endc,:) &
             = col_ws%h2osoi_ice(begc_copy:endc_copy,:)
+         col_ws%h2osfc(begc:endc) &
+            = col_ws%h2osfc(begc_copy:endc_copy)
          col_ws%h2osno(begc:endc) &
             = col_ws%h2osno(begc_copy:endc_copy)
+         col_ws%int_snow(begc:endc) &
+            = col_ws%int_snow(begc_copy:endc_copy)
          col_ws%snow_depth(begc:endc) &
             = col_ws%snow_depth(begc_copy:endc_copy)
-         col_wf%qflx_snofrz(begc:endc) &
-            = col_wf%qflx_snofrz(begc_copy:endc_copy)
-         veg_ef%eflx_sh_grnd(begp:endp) &
-            = veg_ef%eflx_sh_grnd(begp_copy:endp_copy)
-         veg_ef%eflx_sh_tot(begp:endp) &
-            = veg_ef%eflx_sh_tot(begp_copy:endp_copy)
-         veg_ef%eflx_soil_grnd(begp:endp) &
-            = veg_ef%eflx_soil_grnd(begp_copy:endp_copy)
-         veg_ef%eflx_gnet(begp:endp) &
-            = veg_ef%eflx_gnet(begp_copy:endp_copy)
+         col_ws%frac_sno_eff(begc:endc) &
+            = col_ws%frac_sno_eff(begc_copy:endc_copy)
+         col_ws%frac_h2osfc(begc:endc) &
+            = col_ws%frac_h2osfc(begc_copy:endc_copy)
+         col_wf%qflx_glcice(begc:endc) &
+            = col_wf%qflx_glcice(begc_copy:endc_copy)
+         veg_ef%dlrad(begp:endp) &
+            = veg_ef%dlrad(begp_copy:endp_copy)
+         veg_ef%cgrnd(begp:endp) &
+            = veg_ef%cgrnd(begp_copy:endp_copy)
+         soilstate_vars%bsw_col(begc:endc,:) &
+            = soilstate_vars%bsw_col(begc_copy:endc_copy,:)
          soilstate_vars%watsat_col(begc:endc,:) &
             = soilstate_vars%watsat_col(begc_copy:endc_copy,:)
+         soilstate_vars%sucsat_col(begc:endc,:) &
+            = soilstate_vars%sucsat_col(begc_copy:endc_copy,:)
          soilstate_vars%tkmg_col(begc:endc,:) &
             = soilstate_vars%tkmg_col(begc_copy:endc_copy,:)
          soilstate_vars%tkdry_col(begc:endc,:) &
             = soilstate_vars%tkdry_col(begc_copy:endc_copy,:)
-         soilstate_vars%tksatu_col(begc:endc,:) &
-            = soilstate_vars%tksatu_col(begc_copy:endc_copy,:)
          soilstate_vars%csol_col(begc:endc,:) &
             = soilstate_vars%csol_col(begc_copy:endc_copy,:)
+         solarabs_vars%sabg_soil_patch(begp:endp) &
+            = solarabs_vars%sabg_soil_patch(begp_copy:endp_copy)
+         solarabs_vars%sabg_snow_patch(begp:endp) &
+            = solarabs_vars%sabg_snow_patch(begp_copy:endp_copy)
          solarabs_vars%sabg_patch(begp:endp) &
             = solarabs_vars%sabg_patch(begp_copy:endp_copy)
          solarabs_vars%sabg_lyr_patch(begp:endp,:) &
             = solarabs_vars%sabg_lyr_patch(begp_copy:endp_copy,:)
-         solarabs_vars%fsds_nir_d_patch(begp:endp) &
-            = solarabs_vars%fsds_nir_d_patch(begp_copy:endp_copy)
-         solarabs_vars%fsds_nir_i_patch(begp:endp) &
-            = solarabs_vars%fsds_nir_i_patch(begp_copy:endp_copy)
-         solarabs_vars%fsr_nir_d_patch(begp:endp) &
-            = solarabs_vars%fsr_nir_d_patch(begp_copy:endp_copy)
-         solarabs_vars%fsr_nir_i_patch(begp:endp) &
-            = solarabs_vars%fsr_nir_i_patch(begp_copy:endp_copy)
-         lakestate_vars%etal_col(begc:endc) &
-            = lakestate_vars%etal_col(begc_copy:endc_copy)
-         lakestate_vars%lake_raw_col(begc:endc) &
-            = lakestate_vars%lake_raw_col(begc_copy:endc_copy)
-         lakestate_vars%ks_col(begc:endc) &
-            = lakestate_vars%ks_col(begc_copy:endc_copy)
-         lakestate_vars%ws_col(begc:endc) &
-            = lakestate_vars%ws_col(begc_copy:endc_copy)
-         lakestate_vars%lake_icefrac_col(begc:endc,:) &
-            = lakestate_vars%lake_icefrac_col(begc_copy:endc_copy,:)
-         lakestate_vars%lake_icethick_col(begc:endc) &
-            = lakestate_vars%lake_icethick_col(begc_copy:endc_copy)
+         urbanparams_vars%nlev_improad(begl:endl) &
+            = urbanparams_vars%nlev_improad(begl_copy:endl_copy)
+         urbanparams_vars%tk_wall(begl:endl,:) &
+            = urbanparams_vars%tk_wall(begl_copy:endl_copy,:)
+         urbanparams_vars%tk_roof(begl:endl,:) &
+            = urbanparams_vars%tk_roof(begl_copy:endl_copy,:)
+         urbanparams_vars%tk_improad(begl:endl,:) &
+            = urbanparams_vars%tk_improad(begl_copy:endl_copy,:)
+         urbanparams_vars%cv_wall(begl:endl,:) &
+            = urbanparams_vars%cv_wall(begl_copy:endl_copy,:)
+         urbanparams_vars%cv_roof(begl:endl,:) &
+            = urbanparams_vars%cv_roof(begl_copy:endl_copy,:)
+         urbanparams_vars%cv_improad(begl:endl,:) &
+            = urbanparams_vars%cv_improad(begl_copy:endl_copy,:)
+         urbanparams_vars%t_building_max(begl:endl) &
+            = urbanparams_vars%t_building_max(begl_copy:endl_copy)
+         urbanparams_vars%t_building_min(begl:endl) &
+            = urbanparams_vars%t_building_min(begl_copy:endl_copy)
+         lun_es%t_building(begl:endl) &
+            = lun_es%t_building(begl_copy:endl_copy)
+         lun_ef%eflx_traffic(begl:endl) &
+            = lun_ef%eflx_traffic(begl_copy:endl_copy)
+         lun_ef%eflx_wasteheat(begl:endl) &
+            = lun_ef%eflx_wasteheat(begl_copy:endl_copy)
+         lun_ef%eflx_heat_from_ac(begl:endl) &
+            = lun_ef%eflx_heat_from_ac(begl_copy:endl_copy)
    end do
    end if 
 end subroutine duplicate_clumps 

@@ -1,6 +1,8 @@
-import sys
-import os
-from mod_config import home_dir, elm_files
+from mod_config import spel_mods_dir, elm_dir_regex, shr_dir_regex
+from mod_config import unit_test_files, preproc_list
+from utilityFunctions import comment_line
+import re
+from fortran_modules import get_module_name_from_file 
 
 def get_delta_from_dim(dim,delta):
     """
@@ -13,11 +15,9 @@ def get_delta_from_dim(dim,delta):
         newdim = ''
         return newdim
 
-    dim = dim.replace('(','');
-    dim = dim.replace(')','');
+    dim = dim.replace('(','')
+    dim = dim.replace(')','')
     dim_li = dim.split(',')
-
-    ct = 0
 
     if(delta == 'y'):
         for el in dim_li:
@@ -55,87 +55,84 @@ def get_delta_from_dim(dim,delta):
     return newdim
 
 def generate_makefile(files,casename):
-    from mod_config import preproc_list,unit_test_files
     """
     This function takes the list of needed files
-    and makes a makefile and stores it in the case dir
+    and generates a makefile and finally saves it in the case dir
     """
-    noF90 = [f.replace('.F90','') for f in files]
-    #preproc_dict = {k : False for k in preproc_list}
+    noF90 = [ elm_dir_regex.sub('',f) for f in files]
+    noF90 = [ shr_dir_regex.sub('',f) for f in noF90]
+    object_list = [f.replace('.F90','.o') for f in noF90]
+
     FC = "nvfortran"
-    FC_FLAGS_ACC = " -ta=tesla:deepcopy -Minfo=accel -acc -Mcuda\n"
+    FC_FLAGS_ACC = " -gpu=deepcopy -Minfo=accel -acc -cuda\n"
     FC_FLAGS_DEBUG = " -g -O0 -Mbounds -Mchkptr -Mchkstk\n"
     MODEL_FLAGS = " -DMODAL_AER -DCPL_BYPASS"
 
-    #Get complete preproccesor flags:
+    # Get complete preproccesor flags:
     for f in noF90:
         if f in preproc_list:
             temp = f.upper()
             MODEL_FLAGS = MODEL_FLAGS + ' -D'+temp
-
+    
     MODEL_FLAGS = MODEL_FLAGS+'\n'
-    object_file = open(f'{home_dir}list_of_object_files.txt','r')
-    obj_list = object_file.readlines()
-    object_file.close()
-    ordered_list = []
-    for f in obj_list:
-        if f.strip('\n') in noF90:
-            ordered_list.append(f.strip('\n')+'.o')
-
-    for f in unit_test_files:
-        ordered_list.append(f)
 
     ofile = open(f"{casename}/Makefile",'w')
     ofile.write("FC= "+FC+"\n")
     ofile.write("FC_FLAGS_ACC= "+ FC_FLAGS_ACC)
     ofile.write("FC_FLAGS_DEBUG = "+FC_FLAGS_DEBUG)
     ofile.write("MODEL_FLAGS= "+MODEL_FLAGS)
+    ofile.write('INCLUDE_DIR = "${CURDIR}"\n')
     ofile.write("FC_FLAGS = $(FC_FLAGS_DEBUG) $(MODEL_FLAGS)"+"\n")
-    objs = ' '.join(ordered_list)
-    ofile.write("objects = "+objs+'\n')
+    ofile.write("TEST = $(findstring acc,$(FC_FLAGS))\n")
+
+    # Create string of ordered objct files.
+    unit_test_objs = ' '.join(unit_test_files)
+    objs = ' '.join(object_list)
+    ofile.write("objects = "+objs+' '+unit_test_objs+'\n')
 
     ofile.write("elmtest.exe : $(objects)"+"\n")
     ofile.write("\t"+"$(FC) $(FC_FLAGS) -o elmtest.exe $(objects)"+"\n")
-    ofile.write("\n \n")
+    ofile.write("\n\n")
     ofile.write("#.SUFFIXES: .o .F90"+"\n")
     # These files do not need to be compiled with ACC flags or optimizations
     # Can cause errors or very long compile times
     noopt_list = ["fileio_mod","readConstants","readMod","duplicateMod"]
     for f in noopt_list:
         ofile.write(f"{f}.o : {f}.F90"+"\n")
-        ofile.write("\t"+"$(FC) -O0 -c $<"+"\n")
+        ofile.write("\t"+f"$(FC) -O0 -c $(MODEL_FLAGS) $<"+"\n")
 
     ofile.write("%.o : %.F90"+"\n")
-    ofile.write("\t"+"$(FC) $(FC_FLAGS) -c $<"+"\n")
+    ofile.write("\t"+"$(FC) $(FC_FLAGS) -c -I $(INCLUDE_DIR) $<"+"\n")
+
+    ofile.write("ifeq (,$(TEST))\n")
+    ofile.write("verificationMod.o : verificationMod.F90\n")
+    ofile.write("\t"+"$(FC) -O0 -c $<\n")
+    ofile.write("else\n")
+    ofile.write("verificationMod.o : verificationMod.F90\n")
+    ofile.write("\t"+"$(FC) -O0 -gpu=deepcopy -acc -c $<\n")
+    ofile.write("endif\n")
+    
     ofile.write("\n\n"+".PHONY: clean"+"\n")
     ofile.write("clean:"+"\n")
     ofile.write("\t"+"rm -f *.mod *.o *.exe"+"\n")
     ofile.close()
 
-def write_elminstMod(vardict, type_list,casename):
+def write_elminstMod(elm_inst_vars,casename):
     """
     Writes elm_instMod since all variable declarations
     """
     file = open(f"{casename}/elm_instMod.F90",'w')
     spaces = "     "
     file.write("module elm_instMod\n")
-    #use statements
-    for name, v in vardict.items():
-        mod = v.mod
-        vname = v.name
-        if(v.name not in type_list): continue
-        if("_vars" in vname):
-            file.write(spaces+'use {}, only : {} \n'.format(mod,v.dtype))
+    # use statements
+    for name, v in elm_inst_vars.items():
+        file.write(spaces+'use {}, only : {} \n'.format(v.mod,v.type_name))
 
     file.write(spaces+"implicit none\n")
     file.write(spaces+"save\n")
     file.write(spaces+"public\n")
-    for name, v in vardict.items():
-        mod = v.mod
-        vname = v.name
-        if(v.name not in type_list): continue
-        if("_vars" in vname):
-            file.write(spaces+f"type({v.dtype}) :: {v.name} \n")
+    for name, v in elm_inst_vars.items():
+        file.write(spaces+f"type({v.type_name}) :: {name} \n")
 
     file.write("end module elm_instMod\n")
     file.close()
@@ -143,15 +140,20 @@ def write_elminstMod(vardict, type_list,casename):
 
 def clean_use_statements(mod_list, file,casename):
     from edit_files import comment_line
-
     """
      function that will clean both initializeParameters
      and readConstants
     """
-    ifile = open(f"{elm_files}{file}.F90",'r')
+    ifile = open(f"{spel_mods_dir}{file}.F90",'r')
     lines = ifile.readlines()
     ifile.close()
-    noF90 = [f.replace('.F90','') for f in mod_list]
+
+    noF90 = [ elm_dir_regex.sub('',f) for f in mod_list]
+    noF90 = [ shr_dir_regex.sub('',f) for f in noF90]
+    
+    # Doesn't account for module names not being the same as file names
+    noF90 = [f.replace('.F90','') for f in noF90]
+
     start = "!#USE_START"; end = "!#USE_END"
     analyze = False
     ct = 0
@@ -172,13 +174,7 @@ def clean_use_statements(mod_list, file,casename):
     with open(f"{casename}/{file}.F90",'w') as ofile:
         ofile.writelines(lines)
 
-######################################################3
-
-
-def clean_main_elminstMod(vardict,type_list,files,casename):
-    from edit_files import comment_line
-    from analyze_subroutines import find_file_for_subroutine
-    import re
+def clean_main(type_list,files,casename):
     """
     This function will clean the use lists of main, initializeParameters,
     and readConstants.  It will also clean the variable initializations and
@@ -193,18 +189,17 @@ def clean_main_elminstMod(vardict,type_list,files,casename):
     ifile = open(f"{casename}/elm_initializeMod.F90",'r')
     lines = ifile.readlines()
     ifile.close()
-    noF90 = [f.replace('.F90','') for f in files]
-    file2,startline,endline = find_file_for_subroutine('elm_init')
-    ct = startline
+
+    ct = 1
     start = "!#VAR_INIT_START"
     stop = "!#VAR_INIT_STOP"
     analyze = False
-    while ct < endline:
+    while ct < len(lines)-1:
         line = lines[ct]
-        ##Adjusting variable init
+        # Adjusting variable init
         if(line.strip() == start):
             analyze = True
-            ct += 1; continue;
+            ct += 1; continue
         if(line.strip() == stop):
             analyze = False
             break
@@ -212,8 +207,9 @@ def clean_main_elminstMod(vardict,type_list,files,casename):
             l = line.split('!')[0]
             match_call = re.search(f'^(call)[\s]+',l.strip())
             if(match_call):
-                #should be derived type init:
-                if('%' not in l.strip()): print("ERROR")
+                # Should be derived type init:
+                if('%' not in l.strip()): 
+                    print("ERROR")
                 l = l.strip()
                 temp = l.split()[1].split('%')
                 varname = temp[0].lower()
@@ -224,10 +220,9 @@ def clean_main_elminstMod(vardict,type_list,files,casename):
     with open(f"{casename}/elm_initializeMod.F90","w") as of:
         of.writelines(lines)
 
-    write_elminstMod(vardict,type_list,casename)
-#####################################################
+    return
 
-def duplicate_clumps(vardict,types_list):
+def duplicate_clumps(typedict):
 
     file = open("duplicateMod.F90",'w')
     spaces = "   "
@@ -253,12 +248,13 @@ def duplicate_clumps(vardict,types_list):
 
     file.write("subroutine duplicate_clumps(mode,unique_sites,num_sites)\n")
 
-    #use statements
-    for name, v in vardict.items():
-        mod = v.declaration
-        vname = v.name
-        if(v.name not in types_list): continue
-        file.write(spaces+'use {}, only : {} \n'.format(mod,vname))
+    # Use statements
+    for type_name, dtype in typedict.items():
+        if(dtype.active):
+            for var in dtype.instances:
+                mod = var.declaration
+                vname = var.name
+                file.write(spaces+'use {}, only : {} \n'.format(mod,vname))
 
     file.write(spaces+'use decompMod, only : bounds_type, get_clump_bounds, procinfo \n')
     file.write(spaces+'use elm_varcon \n')
@@ -277,7 +273,6 @@ def duplicate_clumps(vardict,types_list):
     file.write(spaces+'nclumps = num_sites \n')
     #
     file.write(spaces+"if(mode == 0) then\n")
-    li = ['veg_pp','col_pp','lun_pp','grc_pp','top_pp']
     file.write(spaces+spaces+'do nc=unique_sites+1, num_sites \n')
     file.write(spaces*3+"nc_copy = mod(nc-1,unique_sites)+1\n")
     file.write(spaces*3+"call get_clump_bounds(nc,bounds)\n")
@@ -295,19 +290,25 @@ def duplicate_clumps(vardict,types_list):
     file.write(spaces*3+'begc=bounds%begc; endc=bounds%endc\n')
     file.write(spaces*3+'begp=bounds%begp; endp=bounds%endp\n')
 
+    li = ['veg_pp','col_pp','lun_pp','grc_pp','top_pp']
     ignore_list = ['is_veg','is_bareground','wt_ed']
-    for var in vardict.values():
-        if var.name not in li: continue
-        for c in var.components:
-            if(not c[0]): continue
-            if(c[1] in ignore_list): continue 
-            fname = var.name+'%'+c[1]
-            dim = c[2]
-            newdim = get_delta_from_dim(dim,'y')
-            dim1 = get_delta_from_dim(dim,'n'); dim1 = dim1.replace('_all','')
-            if(newdim == '(:)' or newdim == ''): continue
-            file.write(spaces*3+fname+newdim+' &'+'\n')
-            file.write(spaces+spaces+spaces+spaces+'= '+fname+dim1+'\n')
+    for type_name, dtype in typedict.items():
+        if(dtype.active):
+            for var in dtype.instances:
+                if(var.name not in li): continue
+                for c in dtype.components:
+                    active = c['active']
+                    field_var = c['var']
+                    bounds = c['bounds']
+                    if(not active): continue
+                    if(field_var.name in ignore_list): continue 
+                    fname = var.name+'%'+field_var.name
+                    dim = bounds
+                    newdim = get_delta_from_dim(dim,'y')
+                    dim1 = get_delta_from_dim(dim,'n'); dim1 = dim1.replace('_all','')
+                    if(newdim == '(:)' or newdim == ''): continue
+                    file.write(spaces*3+fname+newdim+' &'+'\n')
+                    file.write(spaces+spaces+spaces+spaces+'= '+fname+dim1+'\n')
 
     file.write(spaces*2+'end do\n')
 
@@ -329,18 +330,22 @@ def duplicate_clumps(vardict,types_list):
     file.write(spaces*3+'begc=bounds%begc; endc=bounds%endc\n')
     file.write(spaces*3+'begp=bounds%begp; endp=bounds%endp\n')
 
-    for var in vardict.values():
-        if var.name in li: continue
-        for c in var.components:
-            if(not c[0]): continue
-            if(c[1] in ignore_list): continue 
-            fname = var.name+'%'+c[1]
-            dim = c[2]
-            newdim = get_delta_from_dim(dim,'y')
-            dim1 = get_delta_from_dim(dim,'n'); dim1 = dim1.replace('_all','')
-            if(newdim == '(:)' or newdim == ''): continue
-            file.write(spaces*3+fname+newdim+' &'+'\n')
-            file.write(spaces+spaces+spaces+spaces+'= '+fname+dim1+'\n')
+    for type_name, dtype in typedict.items():
+        if(dtype.active):
+            for var in dtype.instances:
+                if(var.name in li): continue
+                for c in dtype.components:
+                    active = c['active']
+                    field_var = c['var']
+                    bounds = c['bounds']
+                    if(not active): continue 
+                    fname = var.name+'%'+field_var.name
+                    dim = bounds
+                    newdim = get_delta_from_dim(dim,'y')
+                    dim1 = get_delta_from_dim(dim,'n'); dim1 = dim1.replace('_all','')
+                    if(newdim == '(:)' or newdim == ''): continue
+                    file.write(spaces*3+fname+newdim+' &'+'\n')
+                    file.write(spaces+spaces+spaces+spaces+'= '+fname+dim1+'\n')
 
     file.write(spaces+'end do\n')
     file.write(spaces+'end if \n')
@@ -355,7 +360,7 @@ def create_write_vars(vardict,read_types,subname,use_isotopes=False):
     E3SM prior to execution of the desired subroutine
     """
     print("Creating: writeMod.F90")
-    spaces = "     " #holds tabs indentations without using \t
+    spaces = "     " # holds tabs indentations without using \t
     ofile = open('writeMod.F90','w')
     ofile.write('module writeMod\n')
     ofile.write('contains\n')
@@ -363,7 +368,8 @@ def create_write_vars(vardict,read_types,subname,use_isotopes=False):
     ofile.write(spaces + "use fileio_mod, only : fio_open, fio_close\n")
     ofile.write(spaces+"use elm_varsur, only : wt_lunit, urban_valid\n")
     #use statements
-    print(read_types)
+    print("create_write_vars::",read_types)
+    li = ['veg_pp','col_pp','lun_pp','grc_pp','top_pp']
 
     for key in vardict.keys():
         if(vardict[key].name not in read_types): continue
@@ -375,10 +381,24 @@ def create_write_vars(vardict,read_types,subname,use_isotopes=False):
 
     ofile.write(spaces + 'implicit none \n')
     ofile.write(spaces +' integer :: fid \n')
-    ofile.write(spaces + f'character(len=256) :: ofile = "output_{subname}_vars.txt" \n')
+    ofile.write(spaces + f'character(len=64) :: ofile = "{subname}_vars.txt" \n')
     ofile.write(spaces + 'fid = 23 \n')
+    
+    for key in vardict.keys():
+            if(key in li):
+                vardict[key]._create_write_read_functions('w',ofile,gpu=True)
+    
+    # glc2lnd_vars%icemask: 
+    ofile.write(spaces+"write(fid,'(A)') 'glc2lnd_vars%icemask_grc'\n")
+    ofile.write(spaces+'write(fid,*) glc2lnd_vars%icemask_grc')
+
+    for key in vardict.keys():
+        c13c14 = bool('c13' in key or 'c14' in key)
+        if(key not in li and not(c13c14)):
+            if(vardict[key].name not in read_types): continue
+            vardict[key]._create_write_read_functions('w',ofile,gpu=True)
+
     ofile.write(spaces + "call fio_open(fid,ofile, 2) \n\n")
-    li = ['veg_pp','col_pp','lun_pp','grc_pp','top_pp']
     ofile.write(spaces+'write(fid,"(A)") "wt_lunit"\n')
     ofile.write(spaces+'write(fid,*) wt_lunit\n')
     ofile.write(spaces+'write(fid,"(A)") "urban_valid"\n')
@@ -418,6 +438,7 @@ def create_read_vars(vardict,read_types):
     ofile.write('use elm_varpar \n')
     ofile.write('use elm_varctl \n')
     ofile.write('use landunit_varcon \n')
+    ofile.write('use elm_instMod, only: glc2lnd_vars \n')
     ofile.write('contains \n')
 
     # read_weights
@@ -473,6 +494,8 @@ def create_read_vars(vardict,read_types):
     for key in vardict.keys():
         if(key in li):
             vardict[key]._create_write_read_functions('r',ofile)
+    ofile.write(spaces+'call fio_read(18,"glc2lnd_vars%icemask_grc",glc2lnd_vars%icemask_grc,errcode=errcode)\n')
+    ofile.write(spaces+'if(errcode .ne. 0) stop\n')
     ofile.write(spaces+"else\n")
     for key in vardict.keys():
         c13c14 = bool('c13' in key or 'c14' in key)

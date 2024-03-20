@@ -237,7 +237,6 @@ program main()
 
      !!!$acc update device(first_step, nlevgrnd, eccen, obliqr, lambm0, mvelpp )
      call update_acc_variables()
-     
      !Note: copy/paste enter data directives here for FUT. 
      !      Will make this automatic in the future 
      !#ACC_COPYIN
@@ -258,9 +257,10 @@ program main()
       !$acc veg_pp      &
       !$acc   )
 
-      call get_proc_bounds(bounds_proc)
-      !$acc enter data copyin(filter(:),gpu_clumps(:), gpu_procinfo, proc_filter, bounds_proc )
-      call setProcFilters(bounds_proc, proc_filter, .false.)
+     call get_proc_bounds(bounds_proc)
+     !$acc enter data copyin(filter(:),gpu_clumps(:), gpu_procinfo, proc_filter, bounds_proc )
+     ! Calculate filters on device
+     call setProcFilters(bounds_proc, proc_filter, .false.)
 
 #if _CUDA
     ! Heap Limit may need to be increased for certain routines
@@ -304,26 +304,16 @@ program main()
     ! calls for a given FUT in the future
     
     ! This is the "Naive" Implementation
+    !#NAIVE
     !$acc parallel loop independent gang vector default(present) private(bounds_clump) 
     do nc=1, nclumps
       call get_clump_bounds_gpu(nc, bounds_clump)
-     ! Set lake temperature
-     if(filter(nc)%num_lakec > 0 ) then
-         call  LakeTemperature(bounds_clump, filter(nc)%num_lakec, filter(nc)%lakec, &
-            filter(nc)%num_lakep, filter(nc)%lakep, &
-            solarabs_vars, soilstate_vars, ch4_vars, &
-            lakestate_vars)
-      end if
+
     end do
+    !#NAIVE
 
     ! This call should be used if running SPEL with "opt = True" and "add_acc = True" 
     ! and all internal loops have been accelerated -- must comment out the above
-
-   !  call LakeTemperature(bounds_proc,             &
-   !      proc_filter%num_lakec, proc_filter%lakec,   &
-   !      proc_filter%num_lakep, proc_filter%lakep,   &
-   !      solarabs_vars, soilstate_vars,  ch4_vars, &
-   !      lakestate_vars)
 
     #if _CUDA
       istat = cudaMemGetInfo(free1, total)

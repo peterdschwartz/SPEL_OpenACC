@@ -30,33 +30,6 @@ module initializeParameters
         use UrbanParamsType
 
         implicit none
-        glc_do_dynglacier = .false.
-        more_vertlayers = .false.
-        nsegspc = 20
-        nu_com = 'RD'
-        nyears_ad_carbon_only   = 25
-        spinup_mortality_factor = 10
-        spinup_state  = 1
-        urban_hac     =  "ON"
-        urban_traffic = .false.
-        is_active_betr_bgc = .false.
-        use_century_decomp = .false.
-        use_cn             = .true.
-        use_crop           = .false.
-        use_dynroot        = .false.
-        use_fates          = .false.
-        use_lch4           = .true.
-        use_vertsoilc       = .true.
-        use_c13           = .false.
-        use_c14           = .false.
-        !Ch4
-        fin_use_fsat = .true.
-        use_aereoxid_prog = .true.
-
-
-        Carbon_only = .false.
-        CarbonNitrogen_only   =  .false.
-        CarbonPhosphorus_only =  .false.
 
 #ifdef ALLOCATIONMOD
         select case(nu_com)

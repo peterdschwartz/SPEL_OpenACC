@@ -1,7 +1,33 @@
+import re 
+import os
+import sys
 
-home_dir = "../"
-elm_files = home_dir+"SourceFiles/"
+# Configure path information 
+scripts_dir = os.path.dirname(__file__)
+home_dir = f"{scripts_dir}/../"
 unittests_dir = home_dir+"unit-tests/"
+spel_mods_dir = home_dir+"SourceFiles/"
+try: 
+    HOME = os.environ['HOME']+"/"
+except KeyError:
+    print("HOME environment variable not set. Please set it to your home directory\n"
+          "Or configure the PATH in the mod_config.py file. Exiting...")
+    sys.exit(1)
+
+# E3SM root directory
+E3SM_SRCROOT = HOME+"E3SM"  
+SHR_SRC = E3SM_SRCROOT+"/share/util/" # path for modules shared by components (eg, shr_kind_mod)
+ELM_SRC = E3SM_SRCROOT + "/components/elm/src/" # elm source directory
+E3SM_dir = ELM_SRC 
+
+# Need regex to subsitutue elm folder structure (include sanity check here?)
+elm_dir_regex = re.compile(f'{ELM_SRC}(main|biogeophys|biogeochem|utils|cpl|data_types|dyn_subgrid)/')
+shr_dir_regex = re.compile(f'{SHR_SRC}')
+
+dont_adjust = ['c2g','p2c','p2g','p2c','c2l','l2g','tridiagonal']
+
+dont_adjust_string = '|'.join(dont_adjust)
+regex_skip_string = re.compile(f"({dont_adjust_string})",re.IGNORECASE)
 
 default_mods = ['shr_kind_mod.F90', 'elm_varctl.F90', 'elm_varcon.F90', 'shr_const_mod.F90', 'elm_varpar.F90',
                  'decompMod.F90', 'CNDecompCascadeConType.F90', 'landunit_varcon.F90',"LakeCon.F90",

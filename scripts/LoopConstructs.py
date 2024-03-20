@@ -58,9 +58,11 @@ def exportVariableDependency(subname, var_list,global_vars,local_vars,DoLoops,mo
     header_string = "".join(header)
     print(f'{" ":<20} {header_string}')
 
-    ofile = open(f"{subname}AllLoopVariables.dat",'w')
+    ofile = open(f"./script-output/{subname}AllLoopVariables.txt",'w')
     ofile.write(f'{" ":<20} {header_string}'+'\n')
-    #Update formatted status for each var
+    #
+    # Update formatted status for each var
+    #
     current_name = subname
     old_name = subname
     for n, loop in enumerate(DoLoops):
@@ -85,9 +87,10 @@ def exportVariableDependency(subname, var_list,global_vars,local_vars,DoLoops,mo
             skey = _bc.OKBLUE+key+_bc.ENDC
         
         print(f"{skey: <28} {string}")
-        ofile.write(f"{skey: <28} {string}"+'\n')
+        ofile.write(f"{key: <28} {string}"+'\n')
     ofile.close()
-    create_latex_table(header_tex,varsForAllLoops, DoLoops,subname)
+
+    if(mode=='LaTex'): create_latex_table(header_tex,varsForAllLoops, DoLoops,subname)
     return 
 
 def create_latex_table(header,varsForAllLoops,doloops,subname):
@@ -95,7 +98,7 @@ def create_latex_table(header,varsForAllLoops,doloops,subname):
     Take dependency data and generate a LaTeX table 
     """
 
-    ofile = open(f"{subname}Table.tex",'w')
+    ofile = open(f"./script-output/{subname}Table.tex",'w')
     ofile.write("\\begin{table*}[]\n")
     ofile.write("\centering\n")
     ofile.write("\caption{}\n")
@@ -297,21 +300,24 @@ class Loop(object):
         # ng_regex_array = re.compile(f'\w+?\({cc}+?\)')
         ng_regex_array = re.compile("\w+\s*\([,\w+\*-]+\)",re.IGNORECASE)
 
-        regex_if = re.compile(r'^(if|else if)')
+        regex_if = re.compile(r'^(if|else if|elseif)')
         regex_cond = re.compile(r'\((.+)\)')
         regex_subcall = re.compile(r'^(call)')
         # 
         #regex to match code that should be ignored 
-        regex_skip = re.compile(r'^(write)')
+        regex_skip = re.compile(r'^(write|print)')
         regex_dowhile = re.compile(f'\s*(do while)',re.IGNORECASE)
 
         # regex for scalar variables:
         # since SPEL already has the loop indices, no need to hardcode this?
-        indices = ['i','j','k','g','l','t','c','p','fc','fp','fl','ci','pi','n','m'] 
-        list_of_scalars = [v.name for v in self.subcall.LocalVariables['scalars'] if v.name not in indices]
-        
-        str_ = "|".join(list_of_scalars)
-        regex_scalars = re.compile(f"(?<!\w)({str_})(?!\w)",re.IGNORECASE)
+        indices = ['i','j','k','g','l','t','c','p','fc','fp','fl','ci','pi','n','m','s'] 
+        if(self.subcall.LocalVariables['scalars']):
+            list_of_scalars = [v.name for v in self.subcall.LocalVariables['scalars'] if v.name not in indices]
+            # print(_bc.OKBLUE+f"list of scalars for {self.subcall.name}\n {list_of_scalars}"+_bc.ENDC)
+            str_ = "|".join(list_of_scalars)
+            regex_scalars = re.compile(f"(?<!\w)({str_})(?!\w)",re.IGNORECASE)
+        else:
+            list_of_scalars = [] 
         
         # Initialize dictionary that will 
         # hold array variables used in the loop
@@ -361,9 +367,10 @@ class Loop(object):
                         variable_dict, reprint = self._getArrayVariables(ln,l,m_arr,variable_dict,reprint=reprint,verbose=verbose)
                 
                 # Find all local scalar variables
-                m_scalars = regex_scalars.findall(l)
-                if(m_scalars):
-                    self._get_scalars(ln,l,m_scalars,variable_dict,verbose=verbose)
+                if(list_of_scalars):
+                    m_scalars = regex_scalars.findall(l)
+                    if(m_scalars):
+                        self._get_scalars(ln,l,m_scalars,variable_dict,verbose=verbose)
         
         if(self.reduction): 
             print(_bc.WARNING+"This Loop may contain a race-condition for the variables \n",f"{self.reduce_vars}"+_bc.ENDC)
@@ -382,14 +389,14 @@ class Loop(object):
         self.vars = variable_dict.copy()
         return 
 
-    def addOpenACCFlags(self, lines_adjusted, subline_adjust,verbose=False):
+    def addOpenACCFlags(self, lines_adjusted, subline_adjust,id,verbose=False):
         """
         Function that will add openACC directives to loop
         
         lines_adjusted is a dictionary to keep track of line insertions into a subroutine
         to appropriately adjust where the loops start.
         """
-        from mod_config import elm_files
+        from mod_config import elm_files, _bc
         
         total_loops = self.nested + 1 
         ifile = open(f"{elm_files}{self.file}",'r')
@@ -400,6 +407,9 @@ class Loop(object):
         # First check if OpenACC flags have already been added.
         if("!$acc" in mod_lines[outer_lstart-2]): 
             print("Loop already has OpenACC flags, Skipping")
+            return
+        if(self.reduction):
+            print(_bc.WARNING + f"Reduction in {self.file}::{id} for:\n {self.reduce_vars}"+_bc.ENDC)
             return
 
         tightly_nested = 1
@@ -451,7 +461,13 @@ class Loop(object):
         variable present
         """
         # split the about the assignment
+        if("=" not in l):
+            print(f"Line does not contain an assignment -- Bug in code or regex?")
+            print(l)
+            sys.exit()
+
         assignment = l.split("=")
+        
         if(len(assignment)>2):
             print(l) 
             sys.exit("getArrayVariables::Too many equals in this case!")
@@ -500,7 +516,7 @@ class Loop(object):
                 variable_dict.setdefault(varname,[]).append('r')
 
             # Now check if variable appears on both sides
-            # Requires additional checking for reduction operation
+            # Requires additional checking for race conditions/reduction operation
             elif(in_lhs and in_rhs):
                 m_indices = regex_indices.search(var).group()
                 indices = m_indices.split(',')
@@ -520,7 +536,6 @@ class Loop(object):
                 if(verbose) : print(f"This line {ln} is inside {loopcount} Loops!")
                 
                 if(loopcount < 1): 
-                    print(l)
                     for n, loopstart in enumerate(self.start):
                         print(loopstart, self.end[n])
                     sys.exit("Error: Not in a Loop!?")
@@ -592,6 +607,10 @@ class Loop(object):
         function that takes the local scalars matched in m_scalars 
         and determines the write/read status and reduction status
         """
+        ltemp = l.split('=') 
+        if(len(ltemp) < 2 ): 
+            print(f"Error no assignment at {l}")
+            sys.exit()
         lhs = l.split('=')[0]
         rhs = l.split('=')[1]
 

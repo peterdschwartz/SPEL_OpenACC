@@ -26,12 +26,65 @@ contains
     use SoilLittDecompMod
     use Tracer_varcon
     use timeInfoMod
+    use MaintenanceRespMod
+    use UrbanParamsType
     implicit none
     integer :: fid = 23
-    character(len=256) :: ofile = "test-E3SM_constants.txt"
+    character(len=64) :: ofile = "E3SM_constants.txt"
 
     call fio_open(fid, ofile, 2)
-
+    write(fid, "(A)") "glc_do_dynglacier"
+    write(fid,*) glc_do_dynglacier
+    write(fid, "(A)") "more_vertlayers"
+    write(fid,*) more_vertlayers
+    write(fid, "(A)") "nsegspc"
+    write(fid,*) nsegspc
+    write(fid, "(A)") "nu_com"
+    write(fid,*) nu_com
+    write(fid, "(A)") "nyears_ad_carbon_only"  
+    write(fid,*) nyears_ad_carbon_only
+    write(fid,"(A)") "anoxia"
+    write(fid,*) anoxia
+   write(fid, "(A)") "spinup_mortality_factor"
+   write(fid,*) spinup_mortality_factor
+   write(fid, "(A)") "spinup_state"
+   write(fid,*) spinup_state
+   write(fid, "(A)") "urban_hac"
+   write(fid,*) urban_hac
+   write(fid, "(A)") "urban_traffic"
+   write(fid,*) urban_traffic
+   write(fid, "(A)") "is_active_betr_bgc"
+   write(fid,*) is_active_betr_bgc
+   write(fid, "(A)") "use_century_decomp"
+   write(fid,*) use_century_decomp
+   write(fid, "(A)") "use_cn" 
+   write(fid,*) use_cn
+   write(fid, "(A)") "use_crop"  
+   write(fid,*)  use_crop
+   write(fid, "(A)") "use_dynroot" 
+   write(fid,*)  use_dynroot
+   write(fid, "(A)") "use_fates" 
+   write(fid,*)  use_fates
+   write(fid, "(A)") "use_lch4"    
+   write(fid,*) use_lch4
+   write(fid, "(A)") "use_vertsoilc"
+   write(fid,*) use_vertsoilc
+   write(fid, "(A)") "use_c13"
+   write(fid,*) use_c13
+   write(fid, "(A)") "use_c14"
+   write(fid,*) use_c14
+   write(fid, "(A)") "fin_use_fsat"
+   write(fid,*) fin_use_fsat
+   write(fid, "(A)") "use_aereoxid_prog"
+   write(fid,*) use_aereoxid_prog
+   write(fid, "(A)") "Carbon_only"
+   write(fid,*) Carbon_only
+   write(fid, "(A)") "CarbonNitrogen_only"
+   write(fid,*) CarbonNitrogen_only
+   write(fid, "(A)") "CarbonPhosphorus_only"
+   write(fid,*) CarbonPhosphorus_only
+   write(fid,"(A)") "use_vsfm"
+   write(fid,*) use_vsfm 
     !elm_varpar
     write(fid, "(A)") "nlevsoi  "
     write(fid,*) nlevsoi
@@ -470,7 +523,8 @@ contains
     write(fid,*) nc3crop
     write(fid,"(A)") "nc3irrig               "
     write(fid,*) nc3irrig
-
+    write(fid,"(A)") "rsub_top_globalmax"
+    write(fid,*) rsub_top_globalmax 
     !-------- elm_varcon --------- !
     write(fid,"(A)") "zlak "
     write(fid,*) zlak
@@ -684,90 +738,93 @@ contains
     write(fid,"(A)") "ext_cff_mss_dst4"
     write(fid,*) ext_cff_mss_dst4
 
-    !!PhotosynthesisMod:
-    write(fid,"(A)") "params_inst%krmax       "
-    write(fid,*) params_inst%krmax
-    write(fid,"(A)") "params_inst%kmax        "
-    write(fid,*) params_inst%kmax
-    write(fid,"(A)") "params_inst%psi50       "
-    write(fid,*) params_inst%psi50
-    write(fid,"(A)") "params_inst%ck          "
-    write(fid,*) params_inst%ck
-    write(fid,"(A)") "params_inst%psi_soil_ref"
-    write(fid,*) params_inst%psi_soil_ref
+   !!PhotosynthesisMod:
+   write(fid,"(A)") "params_inst%krmax       "
+   write(fid,*) params_inst%krmax
+   write(fid,"(A)") "params_inst%kmax        "
+   write(fid,*) params_inst%kmax
+   write(fid,"(A)") "params_inst%psi50       "
+   write(fid,*) params_inst%psi50
+   write(fid,"(A)") "params_inst%ck          "
+   write(fid,*) params_inst%ck
+   write(fid,"(A)") "params_inst%psi_soil_ref"
+   write(fid,*) params_inst%psi_soil_ref
 
-    !! CH4Mod !!
-    write(fid,"(A)") "CH4ParamsInst%q10ch4              "
-    write(fid,*) CH4ParamsInst%q10ch4
-    write(fid,"(A)") "CH4ParamsInst%q10ch4base          "
-    write(fid,*) CH4ParamsInst%q10ch4base
-    write(fid,"(A)") "CH4ParamsInst%f_ch4               "
-    write(fid,*) CH4ParamsInst%f_ch4
-    write(fid,"(A)") "CH4ParamsInst%rootlitfrac         "
-    write(fid,*) CH4ParamsInst%rootlitfrac
-    write(fid,"(A)") "CH4ParamsInst%cnscalefactor       "
-    write(fid,*) CH4ParamsInst%cnscalefactor
-    write(fid,"(A)") "CH4ParamsInst%redoxlag            "
-    write(fid,*) CH4ParamsInst%redoxlag
-    write(fid,"(A)") "CH4ParamsInst%lake_decomp_fact    "
-    write(fid,*) CH4ParamsInst%lake_decomp_fact
-    write(fid,"(A)") "CH4ParamsInst%redoxlag_vertical   "
-    write(fid,*) CH4ParamsInst%redoxlag_vertical
-    write(fid,"(A)") "CH4ParamsInst%pHmax               "
-    write(fid,*) CH4ParamsInst%pHmax
-    write(fid,"(A)") "CH4ParamsInst%pHmin               "
-    write(fid,*) CH4ParamsInst%pHmin
-    write(fid,"(A)") "CH4ParamsInst%oxinhib             "
-    write(fid,*) CH4ParamsInst%oxinhib
-    write(fid,"(A)") "CH4ParamsInst%vmax_ch4_oxid       "
-    write(fid,*) CH4ParamsInst%vmax_ch4_oxid
-    write(fid,"(A)") "CH4ParamsInst%k_m                 "
-    write(fid,*) CH4ParamsInst%k_m
-    write(fid,"(A)") "CH4ParamsInst%q10_ch4oxid         "
-    write(fid,*) CH4ParamsInst%q10_ch4oxid
-    write(fid,"(A)") "CH4ParamsInst%smp_crit            "
-    write(fid,*) CH4ParamsInst%smp_crit
-    write(fid,"(A)") "CH4ParamsInst%k_m_o2              "
-    write(fid,*) CH4ParamsInst%k_m_o2
-    write(fid,"(A)") "CH4ParamsInst%k_m_unsat           "
-    write(fid,*) CH4ParamsInst%k_m_unsat
-    write(fid,"(A)") "CH4ParamsInst%vmax_oxid_unsat     "
-    write(fid,*) CH4ParamsInst%vmax_oxid_unsat
-    write(fid,"(A)") "CH4ParamsInst%aereoxid            "
-    write(fid,*) CH4ParamsInst%aereoxid
-    write(fid,"(A)") "CH4ParamsInst%scale_factor_aere   "
-    write(fid,*) CH4ParamsInst%scale_factor_aere
-    write(fid,"(A)") "CH4ParamsInst%nongrassporosratio  "
-    write(fid,*) CH4ParamsInst%nongrassporosratio
-    write(fid,"(A)") "CH4ParamsInst%unsat_aere_ratio    "
-    write(fid,*) CH4ParamsInst%unsat_aere_ratio
-    write(fid,"(A)") "CH4ParamsInst%porosmin            "
-    write(fid,*) CH4ParamsInst%porosmin
-    write(fid,"(A)") "CH4ParamsInst%vgc_max             "
-    write(fid,*) CH4ParamsInst%vgc_max
-    write(fid,"(A)") "CH4ParamsInst%satpow              "
-    write(fid,*) CH4ParamsInst%satpow
-    write(fid,"(A)") "CH4ParamsInst%scale_factor_gasdiff"
-    write(fid,*) CH4ParamsInst%scale_factor_gasdiff
-    write(fid,"(A)") "CH4ParamsInst%scale_factor_liqdiff"
-    write(fid,*) CH4ParamsInst%scale_factor_liqdiff
-    write(fid,"(A)") "CH4ParamsInst%capthick            "
-    write(fid,*) CH4ParamsInst%capthick
-    write(fid,"(A)") "CH4ParamsInst%f_sat               "
-    write(fid,*) CH4ParamsInst%f_sat
-    write(fid,"(A)") "CH4ParamsInst%qflxlagd            "
-    write(fid,*) CH4ParamsInst%qflxlagd
-    write(fid,"(A)") "CH4ParamsInst%highlatfact         "
-    write(fid,*) CH4ParamsInst%highlatfact
-    write(fid,"(A)") "CH4ParamsInst%q10lakebase         "
-    write(fid,*) CH4ParamsInst%q10lakebase
-    write(fid,"(A)") "CH4ParamsInst%atmch4              "
-    write(fid,*) CH4ParamsInst%atmch4
-    write(fid,"(A)") "CH4ParamsInst%rob                 "
-    write(fid,*) CH4ParamsInst%rob
-
-    !! DecompCascadeBGCMod
-    if((.not. is_active_betr_bgc) .and. use_century_decomp) then
+   !! CH4Mod !!
+   if(use_lch4) then 
+      write(fid,"(A)") "CH4ParamsInst%q10ch4              "
+      write(fid,*) CH4ParamsInst%q10ch4
+      write(fid,"(A)") "CH4ParamsInst%q10ch4base          "
+      write(fid,*) CH4ParamsInst%q10ch4base
+      write(fid,"(A)") "CH4ParamsInst%f_ch4               "
+      write(fid,*) CH4ParamsInst%f_ch4
+      write(fid,"(A)") "CH4ParamsInst%rootlitfrac         "
+      write(fid,*) CH4ParamsInst%rootlitfrac
+      write(fid,"(A)") "CH4ParamsInst%cnscalefactor       "
+      write(fid,*) CH4ParamsInst%cnscalefactor
+      write(fid,"(A)") "CH4ParamsInst%redoxlag            "
+      write(fid,*) CH4ParamsInst%redoxlag
+      write(fid,"(A)") "CH4ParamsInst%lake_decomp_fact    "
+      write(fid,*) CH4ParamsInst%lake_decomp_fact
+      write(fid,"(A)") "CH4ParamsInst%redoxlag_vertical   "
+      write(fid,*) CH4ParamsInst%redoxlag_vertical
+      write(fid,"(A)") "CH4ParamsInst%pHmax               "
+      write(fid,*) CH4ParamsInst%pHmax
+      write(fid,"(A)") "CH4ParamsInst%pHmin               "
+      write(fid,*) CH4ParamsInst%pHmin
+      write(fid,"(A)") "CH4ParamsInst%oxinhib             "
+      write(fid,*) CH4ParamsInst%oxinhib
+      write(fid,"(A)") "CH4ParamsInst%vmax_ch4_oxid       "
+      write(fid,*) CH4ParamsInst%vmax_ch4_oxid
+      write(fid,"(A)") "CH4ParamsInst%k_m                 "
+      write(fid,*) CH4ParamsInst%k_m
+      write(fid,"(A)") "CH4ParamsInst%q10_ch4oxid         "
+      write(fid,*) CH4ParamsInst%q10_ch4oxid
+      write(fid,"(A)") "CH4ParamsInst%smp_crit            "
+      write(fid,*) CH4ParamsInst%smp_crit
+      write(fid,"(A)") "CH4ParamsInst%k_m_o2              "
+      write(fid,*) CH4ParamsInst%k_m_o2
+      write(fid,"(A)") "CH4ParamsInst%k_m_unsat           "
+      write(fid,*) CH4ParamsInst%k_m_unsat
+      write(fid,"(A)") "CH4ParamsInst%vmax_oxid_unsat     "
+      write(fid,*) CH4ParamsInst%vmax_oxid_unsat
+      write(fid,"(A)") "CH4ParamsInst%aereoxid            "
+      write(fid,*) CH4ParamsInst%aereoxid
+      write(fid,"(A)") "CH4ParamsInst%scale_factor_aere   "
+      write(fid,*) CH4ParamsInst%scale_factor_aere
+      write(fid,"(A)") "CH4ParamsInst%nongrassporosratio  "
+      write(fid,*) CH4ParamsInst%nongrassporosratio
+      write(fid,"(A)") "CH4ParamsInst%unsat_aere_ratio    "
+      write(fid,*) CH4ParamsInst%unsat_aere_ratio
+      write(fid,"(A)") "CH4ParamsInst%porosmin            "
+      write(fid,*) CH4ParamsInst%porosmin
+      write(fid,"(A)") "CH4ParamsInst%vgc_max             "
+      write(fid,*) CH4ParamsInst%vgc_max
+      write(fid,"(A)") "CH4ParamsInst%satpow              "
+      write(fid,*) CH4ParamsInst%satpow
+      write(fid,"(A)") "CH4ParamsInst%scale_factor_gasdiff"
+      write(fid,*) CH4ParamsInst%scale_factor_gasdiff
+      write(fid,"(A)") "CH4ParamsInst%scale_factor_liqdiff"
+      write(fid,*) CH4ParamsInst%scale_factor_liqdiff
+      write(fid,"(A)") "CH4ParamsInst%capthick            "
+      write(fid,*) CH4ParamsInst%capthick
+      write(fid,"(A)") "CH4ParamsInst%f_sat               "
+      write(fid,*) CH4ParamsInst%f_sat
+      write(fid,"(A)") "CH4ParamsInst%qflxlagd            "
+      write(fid,*) CH4ParamsInst%qflxlagd
+      write(fid,"(A)") "CH4ParamsInst%highlatfact         "
+      write(fid,*) CH4ParamsInst%highlatfact
+      write(fid,"(A)") "CH4ParamsInst%q10lakebase         "
+      write(fid,*) CH4ParamsInst%q10lakebase
+      write(fid,"(A)") "CH4ParamsInst%atmch4              "
+      write(fid,*) CH4ParamsInst%atmch4
+      write(fid,"(A)") "CH4ParamsInst%rob                 "
+      write(fid,*) CH4ParamsInst%rob
+   end if 
+   write(fid,"(A)") "br_mr_inst"
+   write(fid,*) br_mr_inst
+   !! DecompCascadeBGCMod
+   if((.not. is_active_betr_bgc) .and. use_century_decomp) then
       write(fid, "(A)") "DecompBGCParamsInst%cn_s1_bgc    "
       write(fid,*) DecompBGCParamsInst%cn_s1_bgc
       write(fid, "(A)") "DecompBGCParamsInst%cn_s2_bgc    "
@@ -822,9 +879,8 @@ contains
       write(fid,*) DecompBGCParamsInst%k_frag_bgc
       write(fid, "(A)") "DecompBGCParamsInst%minpsi_bgc   "
       write(fid,*) DecompBGCParamsInst%minpsi_bgc
-    else
+   else
       !!! DecompCNParamsInst
-      print *, "DecompCNParamsInst"
       write(fid,"(A)") "DecompCNParamsInst%cn_s1_cn    "
       write(fid, *)  DecompCNParamsInst%cn_s1_cn
       write(fid,"(A)") "DecompCNParamsInst%cn_s2_cn    "
@@ -883,34 +939,34 @@ contains
       write(fid, *)  DecompCNParamsInst%k_frag_cn
       write(fid,"(A)") "DecompCNParamsInst%minpsi_cn   "
       write(fid, *)  DecompCNParamsInst%minpsi_cn
-    end if
+   end if
 
-    !! SoilLittVertTranspMod
-    write(fid, "(A)") "SoilLittVertTranspParamsInst%som_diffus                "
-    write(fid, *) SoilLittVertTranspParamsInst%som_diffus
-    write(fid, "(A)") "SoilLittVertTranspParamsInst%cryoturb_diffusion_k      "
-    write(fid, *) SoilLittVertTranspParamsInst%cryoturb_diffusion_k
-    write(fid, "(A)") "SoilLittVertTranspParamsInst%max_altdepth_cryoturbation"
-    write(fid, *) SoilLittVertTranspParamsInst%max_altdepth_cryoturbation
+   !! SoilLittVertTranspMod
+   write(fid, "(A)") "SoilLittVertTranspParamsInst%som_diffus                "
+   write(fid, *) SoilLittVertTranspParamsInst%som_diffus
+   write(fid, "(A)") "SoilLittVertTranspParamsInst%cryoturb_diffusion_k      "
+   write(fid, *) SoilLittVertTranspParamsInst%cryoturb_diffusion_k
+   write(fid, "(A)") "SoilLittVertTranspParamsInst%max_altdepth_cryoturbation"
+   write(fid, *) SoilLittVertTranspParamsInst%max_altdepth_cryoturbation
 
-    write(fid,"(A)") "CNGapMortParamsInst%am    "
-    write(fid,  *) CNGapMortParamsInst%am
-    write(fid,"(A)") "CNGapMortParamsInst%k_mort"
-    write(fid,  *) CNGapMortParamsInst%k_mort
+   write(fid,"(A)") "CNGapMortParamsInst%am    "
+   write(fid,  *) CNGapMortParamsInst%am
+   write(fid,"(A)") "CNGapMortParamsInst%k_mort"
+   write(fid,  *) CNGapMortParamsInst%k_mort
 
-    !SoilLittDecompMod
-    write(fid,"(A)") "CNDecompParamsInst%dnp"
-    write(fid,*)  CNDecompParamsInst%dnp
+   !SoilLittDecompMod
+   write(fid,"(A)") "CNDecompParamsInst%dnp"
+   write(fid,*)  CNDecompParamsInst%dnp
 
-    !SurfaceAlbedoMod
-    write(fid,"(A)") "albsat "
-    write(fid, *) albsat
-    write(fid,"(A)") "albdry "
-    write(fid, *) albdry
-    write(fid,"(A)") "isoicol"
-    write(fid, *) isoicol
+   !SurfaceAlbedoMod
+   write(fid,"(A)") "albsat "
+   write(fid, *) albsat
+   write(fid,"(A)") "albdry "
+   write(fid, *) albdry
+   write(fid,"(A)") "isoicol"
+   write(fid, *) isoicol
 
-    call fio_close(fid)
+   call fio_close(fid)
 
   end subroutine writeConstants
 

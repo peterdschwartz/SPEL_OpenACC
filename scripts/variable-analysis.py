@@ -35,6 +35,7 @@ def find_global_variables(file, vars_d ):
     #open and read in file:
     ifile = open(elm_files+file,'r')
     lines = ifile.readlines()
+    print(f"find_global_variables::Opening File {elm_files+file}")
     type_start = False
     for l in lines:
         line = l.split('!')[0] #don't regex Comments
@@ -161,7 +162,7 @@ def find_elm_global_variables():
     Provides info needed for GPU declarations an generation
     of update routines.
     """
-    file = "SnowSnicarMod"+".F90"
+    file = "LakeTemperatureMod"+".F90"
     global_variables = {}
     find_global_variables(file=file,vars_d=global_variables)
     for v in global_variables.values():

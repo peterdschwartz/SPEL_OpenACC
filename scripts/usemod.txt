@@ -1,4 +1,4 @@
-ffilterMod                filter
+filterMod                filter
 decompMod                clumps  procinfo
 CanopyStateType          canopystate_vars
 GridcellType             grc_pp

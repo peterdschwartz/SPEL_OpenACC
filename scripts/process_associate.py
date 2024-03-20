@@ -7,9 +7,8 @@ def getAssociateClauseVars(sub, overwrite=False):
 
     """
     import re
-    from mod_config import elm_files
 
-    iofile = open(elm_files+sub.filepath, 'r')
+    iofile = open(sub.filepath, 'r')
     # status intitialized to False -- routine needs analysis
     status = False
     lines = iofile.readlines()
