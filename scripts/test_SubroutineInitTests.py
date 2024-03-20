@@ -34,7 +34,7 @@ class SubroutineTests(unittest.TestCase):
         singlefile = False 
 
         mods, mod_dict = get_used_mods(ifile=file_path,mods=mods,
-                                        verbose=False,singlefile=singlefile,
+                                        verbose=True,singlefile=singlefile,
                                         mod_dict=mod_dict)
         # No module depencies for shr_kind_mod
         self.assertListEqual(mods,[])

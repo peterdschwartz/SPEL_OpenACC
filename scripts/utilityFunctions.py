@@ -902,7 +902,7 @@ def parse_line_for_variables(ifile,l,ln,verbose=False):
 
         for var in var_list:
             if('=' in var):
-                var = var.split('=')[0]
+                var = var.split('=')[0].strip()
             # Check if current variable is an array
             ng_var_array = re.compile(f'{var}?\s*\(.+?\)',re.IGNORECASE)
             match_array = ng_var_array.search(temp_vars)

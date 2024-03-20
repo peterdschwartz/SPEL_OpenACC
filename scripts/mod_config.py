@@ -14,8 +14,8 @@ except KeyError:
           "Or configure the PATH in the mod_config.py file. Exiting...")
     sys.exit(1)
 
-# E3SM root directory
-E3SM_SRCROOT = HOME+"E3SM"  
+# E3SM root directory. Assume it's cloned in same directory as SPEL
+E3SM_SRCROOT = home_dir+'../E3SM'  
 SHR_SRC = E3SM_SRCROOT+"/share/util/" # path for modules shared by components (eg, shr_kind_mod)
 ELM_SRC = E3SM_SRCROOT + "/components/elm/src/" # elm source directory
 E3SM_dir = ELM_SRC 

@@ -178,7 +178,7 @@ def get_used_mods(ifile,mods,singlefile,mod_dict,verbose=False):
                 user_defined_types[type_name] = user_dtype
             
             # Check for variable declarations
-            variable_list = parse_line_for_variables(ifile=ifile,l=l,ln=ct)
+            variable_list = parse_line_for_variables(ifile=ifile,l=l,ln=ct,verbose=verbose)
             # Store variable as Variable Class object and add to Module object
             if(variable_list):
                 for v in variable_list:
@@ -252,9 +252,6 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
     in_subroutine = False
 
     regex_if = re.compile(r'^(if)[\s]*(?>=\()',re.IGNORECASE)
-    # if('ColumnDataType.F90' in fn):
-    #     print(f"??BAD?? subroutines are:\n {bad_subroutines}")
-    #     sys.exit(1)
 
     while( ct < len(lines)):
         line = lines[ct]
@@ -345,8 +342,8 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
             if(verbose): print(f"Matched sub call to remove: {l}")
             lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
         else:
-            # Check if any thing used from a module that is to be removed
-
+            # Check if any thing used from a module that is to be removed 
+            match_if = regex_if.search(l)
         # match SHR_ASSERT_ALL
         match_assert = re.search(r'^[\s]+(SHR_ASSERT_ALL|SHR_ASSERT)\b',line)
         if(match_assert): 
