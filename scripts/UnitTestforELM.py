@@ -16,7 +16,6 @@ def main():
     from mod_config import default_mods, unittests_dir, scripts_dir,spel_mods_dir
     from mod_config import ELM_SRC
     from edit_files import process_for_unit_test
-    from fortran_modules import print_spel_module_dependencies
     import subprocess as sp
     import csv 
     
@@ -76,31 +75,6 @@ def main():
                     # "WoodProducts", "CropHarvestPools", "FireArea","FireFluxes"]
     
     sub_name_list = ["LakeTemperature"]
-    
-    # modfile is a running list of which modules hold derived-type definitions
-    modfile = 'usemod.txt'
-    file = open(modfile, 'r')
-    mods = file.readlines()
-    file.close()
-
-    mod_list = [l.split()[0] for l in mods]
-    dict_mod = {k : [] for k in mod_list}
-
-    for l in mods:
-        l.strip('\n')
-        line = l.split()
-        for el in line[1:]:
-            dict_mod[line[0]].append(el)
-
-    # Removing redundancies from mod_list:
-    # var_list = []
-    # mod_list = list(dict_mod.keys())
-    # # Create derived type instance for each variable:
-    # for mod in mod_list:
-    #     for var in dict_mod[mod]:
-    #         c13c14 = bool('c13' in var or 'c14' in var)
-    #         if(c13c14): continue
-    #         var_list.append(derived_type(var,mod))
 
     # Initialize list of derived types to 
     read_types  = []; write_types = [];
@@ -183,53 +157,13 @@ def main():
                 print(f"new write_types key: {key}")
 
             write_types.append(key)
-         
-    analyze_var = False
-    if(analyze_var):
-        write_var_dict = {}
-        print(f"Opening {casename}-timelineanalysis.dat")
-        vfile = open(f"{casename}-timelineanalysis.dat",'w')
-        ffile = open(f"{casename}-analysis.dat",'w')
 
-        for s in sub_name_list:
-            vfile.write(f"++++++++++{s}++++++++++\n")
-            ffile.write(f"{s}\n")
-
-            # Figure out what variables that written to in the subroutine
-            #  are used by other routines.
-            temp_write_vars = [] #combine key%val
-            for key,val in subroutines[s].elmtype_w.items():
-                key1 = replace_key(key)
-                for comp in val:
-                    temp_write_vars.append(key1+'%'+comp)
-
-            #Adjust write_var_dict:
-            write_var_dict[s] = temp_write_vars[:]
-        
-            temp_read_vars = []
-            for key, val in subroutines[s].elmtype_r.items():
-                key1 = replace_key(key)
-                for comp in val:
-                    temp_read_vars.append(key1+'%'+comp)
-        
-            for key in write_var_dict:
-                if (key == s): continue
-                ffile.write(tab+key+'\n')
-                for el in temp_read_vars:
-                    if el in write_var_dict[key]:
-                        vfile.write(f"{s}::{el} reads from {key} \n")
-                        ffile.write(tab+tab+el+'\n')
-            
-        vfile.close()
-        ffile.close()
-
-    ######################################################
+    #  #  #  #  #  #  #  #  #  #  #  #  #  #  #  #  #  #  #  #  #  # 
     agg_elm_read = []; agg_elm_write = [];
     for s in sub_name_list:
         for key, fieldlist in subroutines[s].elmtype_r.items():
             for field in fieldlist:
                 fname = key+"_"+field
-                if(key=="lun_ef"): print(fname) 
                 if(fname not in agg_elm_read):
                     agg_elm_read.append(fname)
         for key, fieldlist in subroutines[s].elmtype_w.items():
@@ -243,30 +177,15 @@ def main():
     # Create a makefile for the unit test
     wr.generate_makefile(files=file_list,casename=casename)
 
-    # make sure physical properties types are read/written:
+    # Make sure physical properties types are read/written:
     list_pp = ['veg_pp','lun_pp','col_pp','grc_pp','top_pp']
     for l in list_pp:
         read_types.append(l)
 
     replace_inst = ['soilstate_inst','waterflux_inst','canopystate_inst','atm2lnd_inst','surfalb_inst',
-                'solarabs_inst','photosyns_inst','soilhydrology_inst','urbanparams_inst']
+                    'solarabs_inst','photosyns_inst','soilhydrology_inst','urbanparams_inst']
     read_types = list(set(read_types))
     write_types = list(set(write_types))
-
-    # for v in var_list:
-    #     if(v.name in ['filter','clumps','procinfo']): continue
-    #     c13c14 = bool('c13' in v.name or 'c14' in v.name)
-    #     if(c13c14): continue
-    #     if(v.name in write_types or v.name in read_types):
-    #         if(not v.analyzed): 
-    #            v.analyzeDerivedType()
-    # type_dict ={v.name : v for v in var_list}
-    # ofile = open("SharedPhysicalPropertiesVars.dat",'w')
-    # for v in list_pp:
-    #     ofile.write(v+"\n")
-    #     for c in type_dict[v].components:
-    #         ofile.write("   "+c[1]+"\n")
-    # ofile.close()
 
     aggregated_elmtypes_list = []
     for s in sub_name_list:
@@ -350,8 +269,7 @@ def main():
                 dtype.active = True
                 for c in dtype.components:
                     c['active'] = True
-    # for dtype in type_dict.values():
-    #     dtype.print_derived_type()
+    # 
     for el in write_types:
         if(el not in read_types):
             read_types.append(el)

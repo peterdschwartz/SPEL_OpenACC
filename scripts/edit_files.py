@@ -3,7 +3,7 @@ import re
 from analyze_subroutines import Subroutine
 from utilityFunctions import getLocalVariables, find_file_for_subroutine, get_interface_list, line_unwrapper
 from fortran_modules import FortranModule, get_filename_from_module, get_module_name_from_file
-from utilityFunctions import  parse_line_for_variables,comment_line
+from utilityFunctions import  parse_line_for_variables,comment_line, find_variables
 from DerivedType import  get_derived_type_definition
 
 # Compile list of lower-case module names to remove
@@ -26,7 +26,7 @@ betr_mods = ['betrsimulationalm']
 
 bad_subroutines = ['endrun','restartvar','hist_addfld1d','hist_addfld2d',
                'init_accum_field','extract_accum_field','hist_addfld_decomp',
-               'ncd_pio_openfile','ncd_io','ncd_pio_closefile']
+               'ncd_pio_openfile','ncd_io','ncd_pio_closefile','shr_infnan_isnan']
 
 remove_subs = ['restartvar','hist_addfld1d','hist_addfld2d',
                'init_accum_field','extract_accum_field',
@@ -236,7 +236,7 @@ def get_used_mods(ifile,mods,singlefile,mod_dict,verbose=False):
     
     return mods, mod_dict 
 
-def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False): 
+def modify_file(lines,fn,sub_list,verbose=False,overwrite=False): 
     """
     Function that modifies the source code of the file 
     Occurs after parsing the file for subroutines and modules
@@ -251,14 +251,17 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
     remove_betr = False
     in_subroutine = False
 
-    regex_if = re.compile(r'^(if)[\s]*(?>=\()',re.IGNORECASE)
-
+    regex_if = re.compile(r'^(if)[\s]*(?=\()',re.IGNORECASE)
+    regex_endif = re.compile(r'^(end\s*if)',re.IGNORECASE)
+    regex_ifthen = re.compile(r'^(if)(.+)(then)$',re.IGNORECASE)
     while( ct < len(lines)):
         line = lines[ct]
         l = line.split('!')[0]  # don't search comments
-        if(not l.strip()):
+        l = l.strip().lower()
+        # l, newct = line_unwrapper(lines=lines,ct=ct)
+        if(not l):
             ct+=1; continue;
-        if("#include" in l.lower() and 'unittest_defs' not in l.lower()):
+        if("#include" in l.lower() and 'unittest_defs' not in l):
             newline = l.replace('#include','!#py #include')
             lines[ct] = newline
         
@@ -266,37 +269,42 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
         bad_mod_string = '|'.join(bad_modules)
         bad_mod_string = f'({bad_mod_string})'
         
-        match_use = re.search(f'[\s]+(use)[\s]+{bad_mod_string}',l.lower())
+        match_use = re.search(f'\s*(use)[\s]+{bad_mod_string}',l,re.IGNORECASE)
         if(match_use):
-            if(verbose): print(f"Matched modules to remove: {l}")
+            if(verbose): 
+                print(f"Matched modules to remove: {l}")
+            #
             # Get bad subs; Need to refine this for variables, etc...
-            if(':' in l and 'nan' not in l): 
+            #
+            if ( ':' in l ): 
                 # account for multiple lines
-                l, newct = line_unwrapper(lines=lines,ct=ct)
+                l, newct = line_unwrapper(lines=lines, ct=ct)
                 subs = l.split(':')[1]
                 subs = subs.rstrip('\n')
                 
                 # Add elements used from the module to be commented out 
-                subs.replace('=>',' ')
                 subs = subs.split(',')
                 for el in subs:
+                    if ( '=>' in el): 
+                       el = re.sub(r'\s*(=>)\s*','|',el)
                     temp = el.strip().split()
-                    if(len(temp)>1): el = temp[0]
-                    if el.strip() not in bad_subroutines:
+                    if(len(temp)>1): 
+                        el = temp[0]
+                    if(el.strip() not in bad_subroutines):
                         if(verbose):
                             print(f"Adding {el.strip()} to bad_subroutines")
                             print(f"from {fn} \nline: {l}")
                         bad_subroutines.append(el.strip())
-
             # comment out use statement
             lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
 
         bad_sub_string = '|'.join(bad_subroutines)
         bad_sub_string = f'({bad_sub_string})'
         # Test if subroutine has started
-        match_sub = re.search(r'^(\s*subroutine\s+)',l.lower())
+        match_sub = re.search(r'^(\s*subroutine\s+)',l,re.IGNORECASE)
         # Test if a bad subrotuine is being called.
-        match_call = re.search(f'[\s]+(call)[\s]+{bad_sub_string}',l)
+        match_call = re.search(f'\s*(call)[\s]+{bad_sub_string}',l,re.IGNORECASE)
+        match_bad_inst = re.search(r'\b({})\b'.format(bad_sub_string), l.lower())
         
         if(match_sub):
             endline = 0
@@ -329,7 +337,7 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
                 subs_removed.append(subname)
             
             # Remove if it's an IO routine
-            elif('readnl' in subname.lower()):
+            elif('readnl' in subname.lower() or re.search(r'(gsmap)',subname.lower())):
                 if(verbose): print(f'Removing subroutine {subname}')
                 lines, endline = remove_subroutine(lines=lines,start=sub_start)
                 if(endline == 0): 
@@ -337,23 +345,60 @@ def modify_file(lines,casename,fn,sub_list,verbose=False,overwrite=False):
                 ct = endline
                 subs_removed.append(subname)
         
-        
         elif(match_call):
             if(verbose): print(f"Matched sub call to remove: {l}")
             lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
-        else:
+        elif(match_bad_inst):
             # Check if any thing used from a module that is to be removed 
             match_if = regex_if.search(l)
+            match_decl = find_variables.search(l)
+            if(not match_use and not match_decl):
+                # Check if the bad element is in an if statement.
+                # If so, need to remove the entire if statement.
+                if(match_if): 
+                    # Get a new line adjusted for continuation lines
+                    # So that we can match 'if() then' versus just a 'if()'
+                    l_cont, newct = line_unwrapper(lines=lines,ct=ct)
+                    l_cont = l_cont.strip().lower() 
+                    match_ifthen = regex_ifthen.search(l_cont)
+                    if(match_ifthen):
+                        if_counter = 1
+                        match_end_if = regex_endif.search(l)
+                        lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
+                        while(if_counter > 0):
+                            ct+=1
+                            line = lines[ct]
+                            l = line.split('!')[0]  # don't search comments
+                            l = l.strip().lower()
+                            if(l):
+                                # Get another complete line to check for nested if statements
+                                #
+                                l_cont, newct = line_unwrapper(lines=lines,ct=ct)
+                                l_cont = l_cont.strip().lower() 
+
+                                match_nested_ifthen = regex_ifthen.search(l_cont)
+                                if(match_nested_ifthen): if_counter+=1
+
+                                # See if we are at the end of the if statement
+                                match_end_if = regex_endif.search(l)
+                                if(match_end_if): if_counter-=1
+                                lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
+
+                    else: # not match_ifthen 
+                        lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
+                else: # not match_if
+                    lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
+        elif(re.search(r'(gsmap)',l,re.IGNORECASE)):
+            lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
         # match SHR_ASSERT_ALL
         match_assert = re.search(r'^[\s]+(SHR_ASSERT_ALL|SHR_ASSERT)\b',line)
         if(match_assert): 
             lines, ct = comment_line(lines=lines,ct=ct)
-            # newline = line.replace(line,''); lines[ct]=newline;
         match_end = re.search(r'^(\s*end subroutine)',lines[ct])
         if(match_end): in_subroutine = False
         ct+=1
     
-    # added to try and avoid the compilation 
+    # Added to try and avoid the compilation 
     # warnings concerning not declared procedures
     if(subs_removed and overwrite):
         lines = remove_reference_to_subroutine(lines=lines,subnames=subs_removed)
@@ -403,7 +448,7 @@ def process_for_unit_test(fname,casename,mods=None,overwrite=False,verbose=False
         lines = file.readlines()
         file.close()
         if(verbose): print(f"Processing {mod_file}")
-        modify_file(lines,casename,mod_file,sub_list,
+        modify_file(lines,mod_file,sub_list,
                     verbose=verbose,overwrite=overwrite)
         if(overwrite):
             out_fn = mod_file
@@ -444,8 +489,6 @@ def sort_file_dependency(mod_dict,unittest_module,file_list=[],verbose=False):
     """
     # Start with the module that we want to test
     main_fort_mod = mod_dict[unittest_module]
-    if(main_fort_mod.name == 'atm2lndtype'): 
-        print("Found elm_varcon")   
 
     for mod in main_fort_mod.modules:
         if(mod in bad_modules): continue
