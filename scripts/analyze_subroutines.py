@@ -641,7 +641,7 @@ class Subroutine(object):
         """
         ofile = open(f"{home_dir}scripts/script-output/update_vars_{self.name}.F90",'w')
 
-        spaces ="     "
+        spaces =" "*2
         ofile.write("subroutine update_vars_{}(gpu,desc)\n".format(self.name))
 
         replace_inst = ['soilstate_inst','waterflux_inst','canopystate_inst','atm2lnd_inst','surfalb_inst',

@@ -68,18 +68,22 @@ def comment_line(lines,ct,mode='normal',verbose=False):
     if(mode == 'betr'  ): comment_ = '!#betr_py '
     
     newline = lines[ct]
-    str_ = newline.split()[0]
+    # Get first non-whitespace character:
+    str_ = newline.strip()[0]
+    if(not str_): 
+        print("comment_line :: Error - Empty line")
+    
     newline = newline.replace(str_,comment_+str_,1)
     lines[ct] = newline
     continuation = bool(newline.strip('\n').endswith('&'))
-    if(verbose): print(lines[ct])
+    if(verbose): print(lines[ct].rstrip('\n'))
     while(continuation):
         ct +=1
         newline = lines[ct]
         str_ = newline.split()[0]
         newline = newline.replace(str_, comment_+str_,1)
         lines[ct] = newline
-        if(verbose): print(lines[ct])
+        if(verbose): print(lines[ct].rstrip('\n'))
         continuation = bool(newline.strip('\n').endswith('&'))
     return lines, ct
 
@@ -812,6 +816,8 @@ def line_unwrapper(lines,ct,verbose=False):
     """
     l = lines[ct].split('!')[0] # remove comments
     full_line = l 
+    # remove new line character 
+    l = l.rstrip('\n')
     continuation = bool(l.endswith('&'))
     newct = ct
     while(continuation):

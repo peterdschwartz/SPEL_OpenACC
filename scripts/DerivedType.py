@@ -6,8 +6,7 @@ from mod_config import ELM_SRC
 from utilityFunctions import parse_line_for_variables
 ## arrow and tab are strings for writing files or printing readable output
 arrow = '|--->'
-tab   = '    '
-
+tab   = ' '*2
 def get_derived_type_definition(ifile, modname, lines,
                                 ln, type_name, verbose=False):
     """
@@ -253,7 +252,7 @@ class derived_type(object):
             sys.exit()
         self.analyzed = True
 
-    def _create_write_read_functions(self, rw,ofile,gpu=False):
+    def create_write_read_functions(self,rw,ofile,include_list,gpu=False):
         #
         # This function will write two .F90 functions
         # that write read and write statements for all
@@ -261,54 +260,57 @@ class derived_type(object):
         #
         # rw is a variable that holds either read or write mode
         #
-        spaces = "     "
         fates_list = ["veg_pp%is_veg","veg_pp%is_bareground","veg_pp%wt_ed"]
-        if(rw.lower() == 'write' or rw.lower() == 'w'):
-            ofile.write(spaces+'\n')
-            ofile.write(spaces+'!====================== {} ======================!\n'.format(self.name))
-            ofile.write(spaces+'\n')
-            if(gpu):
-                ofile.write(spaces+"!$acc update self(& \n")
-                vars = [] 
-            for n, component in enumerate(self.components):
-                if component[0] == False:  continue
-                c13c14 = bool('c13' in component[1] or 'c14' in component[1])
-                if(c13c14): continue
-                fname = self.name+'%'+component[1]
-                if(fname in fates_list): continue
+        for var in self.instances:
+            if(var.name not in include_list): continue
+            if(rw.lower() == 'write' or rw.lower() == 'w'):
+                ofile.write(tab+'\n')
+                ofile.write(tab+'!====================== {} ======================!\n'.format(var.name))
+                ofile.write(tab+'\n')
                 if(gpu):
-                    vars.append(fname)
-                else:
-                    str1 = f'write (fid, "(A)") "{fname}" \n'
-                    str2 = f'write (fid, *) {fname}\n'
-                    ofile.write(spaces + str1)
-                    ofile.write(spaces + str2)
-            if(gpu):
-                for n, v in enumerate(vars):
-                    if(n+1 < len(vars)):
-                        ofile.write(spaces+f"!$acc {v}, &\n")
+                    ofile.write(tab+"!$acc update self(& \n")
+                    vars = [] 
+                for n, component in enumerate(self.components):
+                    active = component['active']
+                    field_var = component['var']
+                    if (not active): continue
+
+                    c13c14 = bool('c13' in field_var.name or 'c14' in field_var.name)
+                    if(c13c14): continue
+                    fname = var.name+'%'+field_var.name
+                    if(fname in fates_list): continue
+                    if(gpu):
+                        vars.append(fname)
                     else:
-                        ofile.write(spaces+f"!$acc {v} )\n") 
-
-        elif(rw.lower() == 'read' or rw.lower() =='r'):
-            ofile.write(spaces+'\n')
-            ofile.write(spaces+'!====================== {} ======================!\n'.format(self.name))
-            ofile.write(spaces+'\n')
-
-            for component in self.components:
-
-                if component[0] == False: continue
-                c13c14 = bool('c13' in component[1] or 'c14' in component[1])
-                if(c13c14): continue
-                fname = self.name+'%'+component[1]
-                if(fname in fates_list): continue
-
-                dim = component[2]
-                dim1 = wr.get_delta_from_dim(dim,'y'); dim1 = dim1.replace('_all','')
-                str1 = "call fio_read(18,'{}', {}{}, errcode=errcode)\n".format(fname,fname,dim1)
-                str2 = 'if (errcode .ne. 0) stop\n'
-                ofile.write(spaces + str1)
-                ofile.write(spaces + str2)
+                        str1 = f'write (fid, "(A)") "{fname}" \n'
+                        str2 = f'write (fid, *) {fname}\n'
+                        ofile.write(tab + str1)
+                        ofile.write(tab + str2)
+                if(gpu):
+                    for n, v in enumerate(vars):
+                        if(n+1 < len(vars)):
+                            ofile.write(tab+f"!$acc {v}, &\n")
+                        else:
+                            ofile.write(tab+f"!$acc {v} )\n") 
+            elif(rw.lower() == 'read' or rw.lower() =='r'):
+                ofile.write(tab+'\n')
+                ofile.write(tab+'!====================== {} ======================!\n'.format(var.name))
+                ofile.write(tab+'\n')
+                for component in self.components:
+                    active = component['active']
+                    field_var = component['var']
+                    bounds = component['bounds']
+                    if(not active): continue
+                    c13c14 = bool('c13' in field_var.name or 'c14' in field_var.name)
+                    if(c13c14): continue
+                    fname = var.name+'%'+field_var.name
+                    if(fname in fates_list): continue
+                    dim = bounds
+                    dim1 = wr.get_delta_from_dim(dim,'y'); dim1 = dim1.replace('_all','')
+                    str1 = "call fio_read(18,'{}', {}{}, errcode=errcode)\n".format(fname,fname,dim1)
+                    str2 = 'if (errcode .ne. 0) stop\n'
+                    ofile.write(tab + str1)
+                    ofile.write(tab + str2)
 
 
 

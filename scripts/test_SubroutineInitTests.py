@@ -21,7 +21,10 @@ class SubroutineTests(unittest.TestCase):
         regex_fp = re.compile(f"({correct_filepath})$")
         self.assertRegex(s.filepath,regex_fp)
 
-    def test_parse_modules(self):
+    def test_parse_modules_simple(self):
+        """
+        Test to verfiy that modules are parsed correctly
+        """
         module_name = 'shr_kind_mod'
         file_path = get_filename_from_module(module_name)
         correct_filepath = "E3SM/share/util/shr_kind_mod.F90"

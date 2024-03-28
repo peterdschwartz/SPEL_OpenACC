@@ -9,7 +9,7 @@ def check_new_additions():
 
     for f in files: 
         sublist = process_for_unit_test(fname=f,casename="casename",
-                     mods=needed_mods,overwrite=False,verbose=True,singlefile=True)
+                     mods=needed_mods,overwrite=False,verbose=False,singlefile=True)
     
     for s in sublist:
         s.examineLoops()
