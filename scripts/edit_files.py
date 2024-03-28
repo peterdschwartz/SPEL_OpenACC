@@ -26,7 +26,7 @@ betr_mods = ['betrsimulationalm']
 
 bad_subroutines = ['endrun','restartvar','hist_addfld1d','hist_addfld2d',
                'init_accum_field','extract_accum_field','hist_addfld_decomp',
-               'ncd_pio_openfile','ncd_io','ncd_pio_closefile','shr_infnan_isnan']
+               'ncd_pio_openfile','ncd_io','ncd_pio_closefile']
 
 remove_subs = ['restartvar','hist_addfld1d','hist_addfld2d',
                'init_accum_field','extract_accum_field',
@@ -236,7 +236,7 @@ def get_used_mods(ifile,mods,singlefile,mod_dict,verbose=False):
     
     return mods, mod_dict 
 
-def modify_file(lines,fn,sub_list,verbose=False,overwrite=False): 
+def modify_file(lines,fn,sub_list,verbose=True,overwrite=False): 
     """
     Function that modifies the source code of the file 
     Occurs after parsing the file for subroutines and modules
@@ -268,45 +268,49 @@ def modify_file(lines,fn,sub_list,verbose=False,overwrite=False):
         #match use statements
         bad_mod_string = '|'.join(bad_modules)
         bad_mod_string = f'({bad_mod_string})'
-        
         match_use = re.search(f'\s*(use)[\s]+{bad_mod_string}',l,re.IGNORECASE)
         if(match_use):
             if(verbose): 
                 print(f"Matched modules to remove: {l}")
-            #
             # Get bad subs; Need to refine this for variables, etc...
-            #
             if ( ':' in l ): 
                 # account for multiple lines
                 l, newct = line_unwrapper(lines=lines, ct=ct)
                 subs = l.split(':')[1]
                 subs = subs.rstrip('\n')
-                
+                subs = re.sub(r'\b(assignment\(=\))\b','',subs)
                 # Add elements used from the module to be commented out 
                 subs = subs.split(',')
                 for el in subs:
-                    if ( '=>' in el): 
-                       el = re.sub(r'\s*(=>)\s*','|',el)
-                    temp = el.strip().split()
-                    if(len(temp)>1): 
-                        el = temp[0]
-                    if(el.strip() not in bad_subroutines):
+                    if ( '=>' in el):
+                        match_nan = re.search(r'\b(nan)\b',el)
+                        if(match_nan):
+                            el = re.sub(r'\b(nan)\s*(=>)\s*','',el)
+                        else:
+                           el = re.sub(r'\s*(=>)\s*','|',el)
+                    el = el.strip().lower()
+                    if(el not in bad_subroutines):
                         if(verbose):
-                            print(f"Adding {el.strip()} to bad_subroutines")
+                            print(f"Adding {el} to bad_subroutines")
                             print(f"from {fn} \nline: {l}")
-                        bad_subroutines.append(el.strip())
+                        bad_subroutines.append(el)
             # comment out use statement
             lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
 
         bad_sub_string = '|'.join(bad_subroutines)
         bad_sub_string = f'({bad_sub_string})'
+
         # Test if subroutine has started
         match_sub = re.search(r'^(\s*subroutine\s+)',l,re.IGNORECASE)
         # Test if a bad subrotuine is being called.
         match_call = re.search(f'\s*(call)[\s]+{bad_sub_string}',l,re.IGNORECASE)
-        match_bad_inst = re.search(r'\b({})\b'.format(bad_sub_string), l.lower())
+        
+        lprime, newct = line_unwrapper(lines=lines, ct=ct)
+        lprime = lprime.strip().lower()
+        match_bad_inst = re.search(r'\b({})\b'.format(bad_sub_string), lprime)
         
         if(match_sub):
+            in_subroutine = True
             endline = 0
             subname = l.split()[1].split('(')[0]
             interface_list = get_interface_list()
@@ -346,9 +350,12 @@ def modify_file(lines,fn,sub_list,verbose=False,overwrite=False):
                 subs_removed.append(subname)
         
         elif(match_call):
-            if(verbose): print(f"Matched sub call to remove: {l}")
+            if(verbose):
+                print(f"Matched sub call to remove: {l}")
             lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
         elif(match_bad_inst):
+            if(verbose):
+                print(f"Matched bad subroutine instance: {match_bad_inst.group()}\n{l}")
             # Check if any thing used from a module that is to be removed 
             match_if = regex_if.search(l)
             match_decl = find_variables.search(l)
@@ -388,14 +395,19 @@ def modify_file(lines,fn,sub_list,verbose=False,overwrite=False):
                         lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
                 else: # not match_if
                     lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
-        elif(re.search(r'(gsmap)',l,re.IGNORECASE)):
+            elif(match_decl and not in_subroutine):
+                lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
+        elif(re.search(r'(gsmap)',l.lower() )):
+            if(verbose):
+                print("Removing gsmap ")
             lines, ct = comment_line(lines=lines,ct=ct,verbose=verbose)
         # match SHR_ASSERT_ALL
         match_assert = re.search(r'^[\s]+(SHR_ASSERT_ALL|SHR_ASSERT)\b',line)
         if(match_assert): 
             lines, ct = comment_line(lines=lines,ct=ct)
         match_end = re.search(r'^(\s*end subroutine)',lines[ct])
-        if(match_end): in_subroutine = False
+        if(match_end): 
+            in_subroutine = False
         ct+=1
     
     # Added to try and avoid the compilation 

@@ -1,5 +1,5 @@
 from mod_config import spel_mods_dir, elm_dir_regex, shr_dir_regex
-from mod_config import unit_test_files, preproc_list
+from mod_config import unit_test_files, preproc_list, spel_output_dir
 from utilityFunctions import comment_line
 import re
 from fortran_modules import get_module_name_from_file 
@@ -122,11 +122,11 @@ def write_elminstMod(elm_inst_vars,casename):
     Writes elm_instMod since all variable declarations
     """
     file = open(f"{casename}/elm_instMod.F90",'w')
-    spaces = "     "
+    spaces = " "*2
     file.write("module elm_instMod\n")
     # use statements
     for name, v in elm_inst_vars.items():
-        file.write(spaces+'use {}, only : {} \n'.format(v.mod,v.type_name))
+        file.write(spaces+'use {}, only : {} \n'.format(v.declaration,v.type_name))
 
     file.write(spaces+"implicit none\n")
     file.write(spaces+"save\n")
@@ -223,9 +223,13 @@ def clean_main(type_list,files,casename):
     return
 
 def duplicate_clumps(typedict):
-
-    file = open("duplicateMod.F90",'w')
-    spaces = "   "
+    """
+    Function that writes a Fortran module containing 
+    subroutines needed to duplicate the input data 
+    to an arbirtary number of gridcells
+    """
+    file = open(f"{spel_output_dir}duplicateMod.F90",'w')
+    spaces = " "*2
     file.write("module duplicateMod\n")
     file.write("contains\n")
     
@@ -354,85 +358,84 @@ def duplicate_clumps(typedict):
     file.write("end module \n")
     file.close()
 
-def create_write_vars(vardict,read_types,subname,use_isotopes=False):
+def create_write_vars(typedict,read_types,subname,use_isotopes=False):
     """
     This function generates the subroutine write_vars that is to be called from
     E3SM prior to execution of the desired subroutine
     """
     print("Creating: writeMod.F90")
     spaces = "     " # holds tabs indentations without using \t
-    ofile = open('writeMod.F90','w')
+    ofile = open(f'{spel_output_dir}writeMod.F90','w')
     ofile.write('module writeMod\n')
     ofile.write('contains\n')
     ofile.write('subroutine write_vars()\n')
     ofile.write(spaces + "use fileio_mod, only : fio_open, fio_close\n")
     ofile.write(spaces+"use elm_varsur, only : wt_lunit, urban_valid\n")
     #use statements
-    print("create_write_vars::",read_types)
     li = ['veg_pp','col_pp','lun_pp','grc_pp','top_pp']
-
-    for key in vardict.keys():
-        if(vardict[key].name not in read_types): continue
-        mod = vardict[key].declaration
-        vname = vardict[key].name
-        c13c14 = bool('c13' in vname or 'c14' in vname)
-        if(c13c14): continue
-        ofile.write(spaces+'use {}, only : {} \n'.format(mod,vname))
+    
+    # Use statements
+    for type_name, dtype in typedict.items():
+        if(dtype.active):
+            for var in dtype.instances:
+                if(var.name not in read_types): continue
+                c13c14 = bool('c13' in var.name or 'c14' in var.name)
+                if(c13c14): continue
+                mod = var.declaration
+                ofile.write(spaces+'use {}, only : {} \n'.format(mod,var.name))
 
     ofile.write(spaces + 'implicit none \n')
     ofile.write(spaces +' integer :: fid \n')
     ofile.write(spaces + f'character(len=64) :: ofile = "{subname}_vars.txt" \n')
     ofile.write(spaces + 'fid = 23 \n')
     
-    for key in vardict.keys():
-            if(key in li):
-                vardict[key]._create_write_read_functions('w',ofile,gpu=True)
+    for dtype in typedict.values():
+        if(dtype.active):
+            dtype.create_write_read_functions('w',ofile,include_list=li,gpu=True)
     
     # glc2lnd_vars%icemask: 
     ofile.write(spaces+"write(fid,'(A)') 'glc2lnd_vars%icemask_grc'\n")
     ofile.write(spaces+'write(fid,*) glc2lnd_vars%icemask_grc')
 
-    for key in vardict.keys():
-        c13c14 = bool('c13' in key or 'c14' in key)
-        if(key not in li and not(c13c14)):
-            if(vardict[key].name not in read_types): continue
-            vardict[key]._create_write_read_functions('w',ofile,gpu=True)
+    for dtype in typedict.values():
+        if(dtype.active):
+            dtype.create_write_read_functions('w',ofile, include_list=read_types,gpu=True)
 
-    ofile.write(spaces + "call fio_open(fid,ofile, 2) \n\n")
+    ofile.write(spaces+"call fio_open(fid,ofile, 2) \n\n")
     ofile.write(spaces+'write(fid,"(A)") "wt_lunit"\n')
     ofile.write(spaces+'write(fid,*) wt_lunit\n')
     ofile.write(spaces+'write(fid,"(A)") "urban_valid"\n')
     ofile.write(spaces+'write(fid,*) urban_valid\n\n')
 
-    for key in vardict.keys():
-        if(key in li):
-            vardict[key]._create_write_read_functions('w',ofile)
+    for dtype in typedict.values():
+        if(dtype.active):
+            dtype.create_write_read_functions('w',ofile,include_list=li)
 
-    for key in vardict.keys():
-        c13c14 = bool('c13' in key or 'c14' in key)
-        if(key not in li and not(c13c14)):
-            if(vardict[key].name not in read_types): continue
-            vardict[key]._create_write_read_functions('w',ofile)
+    for dtype in typedict.values():
+        if(dtype.active):
+            dtype.create_write_read_functions('w',ofile,include_list=read_types)
 
     ofile.write(spaces+"call fio_close(fid) \n")
     ofile.write("end subroutine write_vars\n")
     ofile.write("end module writeMod\n")
     ofile.close()
 
-def create_read_vars(vardict,read_types):
-    ##======================= READ VARS ==================================#
+def create_read_vars(typedict,read_types):
+    """
+    """
     print("Creating subroutine read_vars / read_weights in readMod.F90")
-    spaces = "     " #holds tabs indentations without using \t
-    ofile = open('readMod.F90','w')
+    spaces = " "*2 
+    ofile = open(f'{spel_output_dir}readMod.F90','w')
     ofile.write('module readMod \n')
-    #use statements
-    for key in vardict.keys():
-        if(vardict[key].name not in read_types): continue
-        mod = vardict[key].declaration
-        vname = vardict[key].name
-        c13c14 = bool('c13' in vname or 'c14' in vname)
-        if(c13c14): continue
-        ofile.write('use {}, only : {} \n'.format(mod,vname))
+    # use statements
+    for key in typedict.keys():
+        for var in typedict[key].instances:
+            if(var.name not in read_types): continue
+            mod = typedict[key].declaration
+            vname = var.name
+            c13c14 = bool('c13' in vname or 'c14' in vname)
+            if(c13c14): continue
+            ofile.write('use {}, only : {} \n'.format(mod,vname))
     ofile.write('use decompMod, only : bounds_type \n')
     ofile.write('use elm_varcon \n')
     ofile.write('use elm_varpar \n')
@@ -491,19 +494,18 @@ def create_read_vars(vardict,read_types):
     ofile.write(spaces+"if(mode == 1) then\n")
     ofile.write(spaces+"print *, 'reading in physical properties'\n")
     li = ['veg_pp','col_pp','lun_pp','grc_pp','top_pp']
-    for key in vardict.keys():
-        if(key in li):
-            vardict[key]._create_write_read_functions('r',ofile)
+    for dtype in typedict.values():
+        if(dtype.active):
+            dtype.create_write_read_functions('r',ofile, include_list=li)
     ofile.write(spaces+'call fio_read(18,"glc2lnd_vars%icemask_grc",glc2lnd_vars%icemask_grc,errcode=errcode)\n')
     ofile.write(spaces+'if(errcode .ne. 0) stop\n')
     ofile.write(spaces+"else\n")
-    for key in vardict.keys():
-        c13c14 = bool('c13' in key or 'c14' in key)
-        if(key not in li and not(c13c14)):
-            if(vardict[key].name not in read_types): continue
-            vardict[key]._create_write_read_functions('r',ofile)
-    ofile.write(spaces+"end if \n")
+
+    for dtype in typedict.values():
+        if(dtype.active):
+            dtype.create_write_read_functions('r',ofile,include_list=read_types)
     
+    ofile.write(spaces+"end if \n")
     ofile.write(spaces+"call fio_close(18) \n")
     ofile.write("end subroutine read_vars \n")
     ofile.write('end module \n')

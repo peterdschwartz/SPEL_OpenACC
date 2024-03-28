@@ -3,4 +3,3 @@
 #define masterproc .true. 
 #define var_desc_t integer
 #define is_active_betr_bgc .false.
-#define ispval -9999

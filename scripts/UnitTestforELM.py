@@ -1,6 +1,6 @@
 ## arrow and tab are strings for writing files or printing readable output
 arrow = '|--->'
-tab   = '    '
+tab   = ' '*2
 from mod_config import _bc
 
 def main():
@@ -10,11 +10,11 @@ def main():
     """
     import sys
     import os
-    from analyze_subroutines import Subroutine, replace_key
+    from analyze_subroutines import Subroutine
     from utilityFunctions import getLocalVariables, insert_header_for_unittest, Variable
     import write_routines as wr
-    from mod_config import default_mods, unittests_dir, scripts_dir,spel_mods_dir
-    from mod_config import ELM_SRC
+    from mod_config import default_mods, unittests_dir, scripts_dir, spel_mods_dir
+    from mod_config import ELM_SRC, spel_output_dir
     from edit_files import process_for_unit_test
     import subprocess as sp
     import csv 
@@ -192,11 +192,9 @@ def main():
         for x in subroutines[s].elmtypes:
             if(x in replace_inst): x = x.replace('_inst','_vars')
             aggregated_elmtypes_list.append(x)
-    
     #clean up:
     for l in list_pp:
         aggregated_elmtypes_list.append(l)
-
     aggregated_elmtypes_list = list(set(aggregated_elmtypes_list))
 
     instance_to_user_type = {}
@@ -335,16 +333,23 @@ def main():
             print(acc+el+'     , &'+endc)
     print(acc+'  )'+endc)
 
+    # Remove xxx_pp from read_types
+    for l in list_pp:
+        if l in read_types:
+            read_types.remove(l)
+
     wr.clean_main(aggregated_elmtypes_list,
                          files=needed_mods,casename=casename)
     
     wr.write_elminstMod(elm_inst_vars,casename)
     
     wr.duplicate_clumps(type_dict)
+    wr.create_read_vars(type_dict,read_types)
+    wr.create_write_vars(type_dict,read_types,case,use_isotopes=False)
 
     files_for_unittest = ' '.join(needed_mods) 
     os.system(f"cp {files_for_unittest} {casename}")
-    os.system(f"cp duplicateMod.F90 readMod.F90 writeMod.F90 {casename}")
+    os.system(f"cp {spel_output_dir}duplicateMod.F90 {spel_output_dir}readMod.F90 {spel_output_dir}writeMod.F90 {casename}")
     os.system(f"cp {spel_mods_dir}fileio_mod.F90 {casename}")
     os.system(f"cp {spel_mods_dir}unittest_defs.h {casename}")
 

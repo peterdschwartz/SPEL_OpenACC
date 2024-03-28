@@ -7,7 +7,7 @@ scripts_dir = os.path.dirname(__file__)
 home_dir = f"{scripts_dir}/../"
 unittests_dir = home_dir+"unit-tests/"
 spel_mods_dir = home_dir+"SourceFiles/"
-spel_output_dir = scripts_dir+"/output/"
+spel_output_dir = scripts_dir+"/script-output/"
 try: 
     HOME = os.environ['HOME']+"/"
 except KeyError:

@@ -5,7 +5,6 @@ contains
   subroutine read_constants(in_file,mode)
     use fileio_mod, only : fio_open, fio_read, fio_close
     use pftvarcon
-    use Tracer_varcon
     use soilorder_varcon
     use elm_varcon
     use elm_varpar
@@ -46,7 +45,6 @@ contains
    call fio_read(18,"spinup_state" ,spinup_state,errcode=errcode)
    call fio_read(18,"urban_hac",urban_hac,errcode=errcode)
    call fio_read(18,"urban_traffic",urban_traffic,errcode=errcode)
-   call fio_read(18,"is_active_betr_bgc",is_active_betr_bgc,errcode=errcode)
    call fio_read(18,"use_century_decomp",use_century_decomp,errcode=errcode)
    call fio_read(18,"use_cn" , use_cn,errcode=errcode)
    call fio_read(18,"use_crop" , use_crop,errcode=errcode) 
