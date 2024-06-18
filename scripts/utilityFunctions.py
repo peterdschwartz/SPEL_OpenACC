@@ -39,6 +39,7 @@ class Variable(object):
         self.subgrid = subgrid
         self.ln = ln 
         self.dim = dim
+        # These are used for Argument variables
         self.optional = optional
         self.keyword = keyword
         self.filter_used = ''
@@ -47,7 +48,15 @@ class Variable(object):
             self.declaration = declaration
         else:
             self.declaration = '' 
-            
+
+    # Define equality for comparison of two Variables
+    def __eq__(self,other):
+        if(self.name == other.name and self.type == other.type 
+            and self.dim == other.dim):
+            return True
+        else:
+            return False
+    # Define __contains__ for 'in' operation
 
     def printVariable(self,ofile=None): 
         if(ofile):
@@ -139,31 +148,33 @@ def removeBounds(line,verbose=False):
 
 def getArguments(l,verbose=False):
     """
-    Function that takes a subroutine call 
+    Function that takes a string of the subroutine call
     as an argument and returns the variables 
     passed as arguments. 
 
-    Will be used to compare with the subroutines 
+    Will be used to compare with the subroutine's 
     argument list.
     
-    This is neccessary to change variable allocations 
-    and resolve ambiguities from interfaces 
+    This is neccessary to change variable allocations,
+    resolve ambiguities from interfaces, and
+    track global variables passed as arguments.
     """
     if(verbose): print(_bc.WARNING+f"getArguments:: Processing {l}\n\n"+_bc.ENDC)
+    # Matches longest string between parentheses
     par = re.compile("(?<=\().+(?=\))")
     m = par.search(l)
     if(not m): 
         args = []
-        return args;
-    
+        return args
     args = m.group()
+    
+    # Remove bounds from arrays so that only argument names are comma separated
     newargs = removeBounds(args,verbose)
 
     args = newargs.split(',')
     args = [x.strip() for x in args]
-    
-    return args
 
+    return args
 
 def lineContinuationAdjustment(lines,ln,verbose=False): 
    """
@@ -195,11 +206,38 @@ def lineContinuationAdjustment(lines,ln,verbose=False):
 
    return l, lines_to_skip
 
+def find_end_subroutine(fn,startline):
+    """
+    Function that will find next "end subroutine" statement starting
+    from the subroutine starting line 'startline'.
+    
+    This may be needed in case the 'end subroutine <subroutine_name>'
+    convention is not used.
+    """
+    func_name = "find_end_subroutine"
+    ifile = open(fn,'r')
+    lines = ifile.readlines()
+    ifile.close()
+    regex_end_subroutine = re.compile(r'\s*(end)\s+(subroutine)',re.IGNORECASE)
+    for ln in range(startline,len(lines)):
+        line = lines[ln]
+        #get rid of comments
+        line = line.split('!')[0]
+        line = line.strip()
+        if(not line): continue
+        match = regex_end_subroutine.search(line)
+        if(match):
+            endline = ln
+            break
+    
+    return endline
+
 def find_file_for_subroutine(name,fn='',ignore_interface=False):
     """
     finds file, start and end line numbers for subroutines
     find file and start of interface block for interfaces
     """
+    func_name = "find_file_for_subroutine"
     if(not fn):
         search_file = f"{ELM_SRC}*"
     else:
@@ -226,21 +264,29 @@ def find_file_for_subroutine(name,fn='',ignore_interface=False):
         startline = int(output[1])
         if(cmd_end!=''):
             output = sp.getoutput(cmd_end)
-            endline = int(output.split(':')[1]) 
+            if(not output):
+                print(f"{func_name}::Didn't match end of subroutine\n output: {output}")
+                endline = find_end_subroutine(file,startline)
+                print(f"{func_name}::Endline found: {endline} for {name}")
+            else:
+                endline = int(output.split(':')[1]) 
         else:
             endline = 0
     else:
         file = fn
         output = output.split(':') 
         if(len(output) < 2):
-            sys.exit(f"find_file_for_subroutine::Didn't match subroutine\n cmd: {cmd}\n output: {output}")
+            sys.exit(f"{func_name}::Didn't match subroutine\n cmd: {cmd}\n output: {output}")
         startline = int(output[0])
         if(cmd_end!=''):
             output = sp.getoutput(cmd_end)
-            output = output.split(':')
-            if(len(output) < 2):
-                sys.exit(f"find_file_for_subroutine::Didn't match end of subroutine\n cmd: {cmd_end}\n output: {output}") 
-            endline = int(output[0])
+            if(not output):
+                print(f"{func_name}::Didn't match end of subroutine\n output: {output}") 
+                endline = find_end_subroutine(file,startline)
+                print(f"{func_name}::Endline found: {endline} for {name}")
+            else:
+                output = output.split(':')
+                endline = int(output[0])
         else:
             endline = 0
     
@@ -276,27 +322,36 @@ def getLocalVariables(sub,verbose=False,class_var=False ):
 
     Note: currently only looks at type declaration for class object
     """
+    func_name = "getLocalVariables"
+
     filename = sub.filepath
     subname = sub.name 
-    file = open(filename,'r');
+    file = open(filename,'r')
     lines = file.readlines()
     file.close()
-    startline = sub.startline; endline=sub.endline;
-    
+    startline = sub.startline 
+    endline = sub.endline
+
+    args_present = bool(sub.dummy_args_list)
     if(verbose): 
         print(f"getLocalVariables::{filename},{subname} at L{startline}-{endline}")
     cc = "." 
     # non-greedy capture
     ng_regex_array = re.compile(f'\w+?\s*\({cc}+?\)')
-    
-    find_arg = re.compile(r'(intent)',re.IGNORECASE)
+    if(args_present):
+        arg_string = '|'.join(sub.dummy_args_list)
+        arg_string =f"(intent|{arg_string})"
+        find_arg = re.compile(arg_string,re.IGNORECASE)
+
     find_type = re.compile(r'(?<=\()\w+(?=\))')
+    class_var = re.compile(r'^(class\s*\()',re.IGNORECASE)
     find_variables = re.compile('^(class\s*\(|type\s*\(|integer|real|logical|character)',re.IGNORECASE)
     regex_var = re.compile(r'\w+')
     regex_subgrid_index = re.compile('(?<=bounds\%beg)[a-z]',re.IGNORECASE)
     # test for intrinsic data types or user defined
     intrinsic_type = re.compile(r'^(integer|real|logical|character)', re.IGNORECASE)
     user_type = re.compile(r'^(class\s*\(|type\s*\()',re.IGNORECASE)
+
     #
     for ln in range(startline,endline):
         line = lines[ln].split("!")[0]
@@ -304,28 +359,57 @@ def getLocalVariables(sub,verbose=False,class_var=False ):
         line = line.strip("\n")
         if(not(line)): continue
         match_variable = find_variables.search(line)
+        match_class = class_var.search(line)
+        if(match_class):
+            sub.class_method = True
         if(match_variable):
-            # print("line:",line)
-            temp = line.split("::")
-            if(len(temp)<2):
-                print(f"getLocalVariables:: Error - No Variable declaration here in {sub.name}\n {ln+1} {line}")
-                sys.exit()
-            temp_decl = line.split("::")[0]
-            temp_vars = line.split("::")[1]
-            match_arg = find_arg.search(temp_decl)
-
-            # Get data type first 
-            m_type = intrinsic_type.search(temp_decl)
-            if(m_type):
-                data_type = m_type.group() 
-            else: #user-defined type 
-                m_type = user_type.search(temp_decl)
-                if(not m_type): 
-                    sys.exit(f"Error: Can't Identify Data Type for {line}")
-                data_type = find_type.search(temp_decl).group()
+            # Track variable declaration start / end 
+            if(sub.var_declaration_startl == 0):
+                sub.var_declaration_startl = ln
+            # store everytime we find a variable declaration
+            sub.var_declaration_endl = ln 
+            match_arg = None
+            if("::" not in line): 
+                # Repeated code here, could be simplified?
+                # Need to check if variable declarations w/o '::'
+                # have more syntax restrictions.
+                m_type = intrinsic_type.search(line)
+                if(m_type):
+                    data_type = m_type.group()
+                else: #user-defined type 
+                    m_type = user_type.search(line)
+                    if(not m_type): 
+                        print(f"{func_name}::Error Can't Identify Data Type for {line}") 
+                        sys.exit(1)
+                    data_type = find_type.search(line).group()
                 
+                temp_vars = intrinsic_type.sub('',line)
+                if(args_present): 
+                    match_arg = find_arg.search(temp_vars)
+            else:
+                # Could be a list of variables
+                temp_decl = line.split("::")[0]
+                temp_vars = line.split("::")[1]
+            
+                if(args_present): 
+                    # Is checking for 'intent' overkill when 
+                    # we already have the list of arguments?
+                    match_arg = find_arg.search(temp_decl)
+                    match_arg = find_arg.search(temp_vars)
+            
+                # Get data type first 
+                m_type = intrinsic_type.search(temp_decl)
+                if(m_type):
+                    data_type = m_type.group() 
+                else: #user-defined type 
+                    m_type = user_type.search(temp_decl)
+                    if(not m_type):
+                        print(f"{func_name}::Error: Can't Identify Data Type for {line}") 
+                        sys.exit(1)
+                    data_type = find_type.search(temp_decl).group()
             #
             # Go through and replace all arrays first
+            #
             match_arrays = ng_regex_array.findall(temp_vars)
             if(match_arrays): 
                 for arr in match_arrays:
@@ -338,7 +422,8 @@ def getLocalVariables(sub,verbose=False,class_var=False ):
                         subgrid = '?'
                     # Storing line number of declaration 
                     dim = arr.count(',')+1
-                    if(verbose): print(f"var = {varname}; subgrid = {subgrid}; {dim}-D array")
+                    if(verbose): 
+                        print(f"var = {varname}; subgrid = {subgrid}  {dim}-D array")
                     if(match_arg):
                         optional = False 
                         if('optional' in temp_decl):
@@ -349,6 +434,7 @@ def getLocalVariables(sub,verbose=False,class_var=False ):
                         sub.LocalVariables['arrays'][varname].declaration = line
                     # This removes the array from the list of variables
                     temp_vars = temp_vars.replace(arr,'')
+
             # Get the scalar arguments  
             temp_vars = temp_vars.split(',')
             temp_vars = [x.strip() for x in temp_vars if x.strip()]
@@ -371,8 +457,11 @@ def determine_class_instance(sub,verbose=False):
     Find out what the data structure 'this' corresponds to
     """
     import subprocess as sp 
+    func_name = "determine_class_instance"
     filename = sub.filepath
+    
     subname = sub.name 
+    # Open file and  loop through subroutine lines
     file = open(filename,'r');
     lines = file.readlines()
     file.close()
@@ -380,7 +469,7 @@ def determine_class_instance(sub,verbose=False):
 
     find_this = re.compile(r'^(type)',re.IGNORECASE)
     find_type = re.compile(r'(?<=\()\w+(?=\))')
-
+    print(f"{func_name}::Determining variable for {subname}")
     found_this = False
     for ln in range(startline,endline):
         line = lines[ln].split("!")[0]
@@ -393,31 +482,25 @@ def determine_class_instance(sub,verbose=False):
     
         if(m_this and m_type):
             # the derived type should always be 1st
-            if(verbose): print(f"found {m_type} for data type for this")
             var_type = m_type.group()
             found_this = True 
-            print(line, m_this.group(),m_type.group())
-            cmd = f'grep -E "^[[:space:]]+(type\({var_type}\))" {ELM_SRC}*.F90 | grep -v "intent"'
-            output = sp.getoutput(cmd)
-            output = output.split("\n")
-            for el in output:
-                print(el)
-            sys.exit()
-            output = output.split('::')
-            varname = output[1].strip()
+            if(verbose): 
+                print(f"{func_name}:: 'this' -> {var_type}")
+            break
             
     if(not found_this):
         print(f"Error: Couldn't find declaration for class variable in {sub.name} {sub.filepath}")
         sys.exit()
+    else:
+        return var_type
 
 
 def convertAssociateDict(associate_vars, varlist):
+    """
+    Need to eliminate this function and properly match arguments 
+    """
     dtypes = []
-    
-    replace_inst = ['soilstate_inst','waterflux_inst','canopystate_inst','atm2lnd_inst','surfalb_inst',
-                'solarabs_inst','photosyns_inst','soilhydrology_inst','urbanparams_inst']
-
-
+    replace_inst = []
     for vars in associate_vars.values():
         for v in vars: 
             _type, field = v.split("%")
@@ -425,12 +508,6 @@ def convertAssociateDict(associate_vars, varlist):
                 _type = _type.replace("_inst","vars")
             if(_type not in dtypes):
                 dtypes.append(_type)
-    
-    # Analyze derived type if not already
-    # for _type in dtypes:
-    #     for var in varlist: 
-    #         if(_type == var.name and not var.analyzed):
-    #             var.analyzeDerivedType(verbose=False) 
 
     return
 
@@ -815,16 +892,26 @@ def line_unwrapper(lines,ct,verbose=False):
     and returns it all on one line.
     """
     l = lines[ct].split('!')[0] # remove comments
-    full_line = l 
     # remove new line character 
-    l = l.rstrip('\n')
+    l = l.rstrip('\n').strip()
     continuation = bool(l.endswith('&'))
+    full_line = l    
     newct = ct
     while(continuation):
         newct += 1
         l = lines[newct].split('!')[0] # in case of inline comments
-        full_line = full_line[:-1] + l.strip().rstrip('\n')
+        l = l.rstrip('\n')
+        # Fortran allow empty lines in between line continuations
+        if(l.isspace() or not l):
+            continue
+        full_line = full_line[:-1] + l.strip()
         continuation = bool(full_line.endswith('&'))
+    
+    # Debug check:
+    if(verbose):
+        print("Original lines:\n",lines[ct:newct])
+        print("Single line\n:",full_line)
+
     return full_line, newct
 
 
@@ -864,7 +951,6 @@ def parse_line_for_variables(ifile,l,ln,verbose=False):
     match_var = find_variables.search(l)
     if(match_var):
         if("::" not in l):
-            print(f"{func_name}:: Single Var? '::' {ifile}L{ln+1} {l}")
             # regex to separate type from variable when there is no '::' separator 
             ng_type = re.compile(f'^\w+?\s*\(.+?\)')
             match_type = ng_type.search(l)

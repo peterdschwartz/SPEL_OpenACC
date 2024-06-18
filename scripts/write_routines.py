@@ -54,7 +54,7 @@ def get_delta_from_dim(dim,delta):
 
     return newdim
 
-def generate_makefile(files,casename):
+def generate_makefile(files,case_dir):
     """
     This function takes the list of needed files
     and generates a makefile and finally saves it in the case dir
@@ -76,7 +76,7 @@ def generate_makefile(files,casename):
     
     MODEL_FLAGS = MODEL_FLAGS+'\n'
 
-    ofile = open(f"{casename}/Makefile",'w')
+    ofile = open(f"{case_dir}/Makefile",'w')
     ofile.write("FC= "+FC+"\n")
     ofile.write("FC_FLAGS_ACC= "+ FC_FLAGS_ACC)
     ofile.write("FC_FLAGS_DEBUG = "+FC_FLAGS_DEBUG)
@@ -117,11 +117,11 @@ def generate_makefile(files,casename):
     ofile.write("\t"+"rm -f *.mod *.o *.exe"+"\n")
     ofile.close()
 
-def write_elminstMod(elm_inst_vars,casename):
+def write_elminstMod(elm_inst_vars,case_dir):
     """
     Writes elm_instMod since all variable declarations
     """
-    file = open(f"{casename}/elm_instMod.F90",'w')
+    file = open(f"{case_dir}/elm_instMod.F90",'w')
     spaces = " "*2
     file.write("module elm_instMod\n")
     # use statements
@@ -138,7 +138,7 @@ def write_elminstMod(elm_inst_vars,casename):
     file.close()
 
 
-def clean_use_statements(mod_list, file,casename):
+def clean_use_statements(mod_list, file,case_dir):
     from edit_files import comment_line
     """
      function that will clean both initializeParameters
@@ -171,22 +171,22 @@ def clean_use_statements(mod_list, file,casename):
             if(mod not in noF90):
                 lines, ct = comment_line(lines=lines,ct=ct,verbose=False)
         ct +=1
-    with open(f"{casename}/{file}.F90",'w') as ofile:
+    with open(f"{case_dir}/{file}.F90",'w') as ofile:
         ofile.writelines(lines)
 
-def clean_main(type_list,files,casename):
+def clean_main(type_list,files,case_dir):
     """
     This function will clean the use lists of main, initializeParameters,
     and readConstants.  It will also clean the variable initializations and
     declarations in main and elm_instMod
     """
-    clean_use_statements(mod_list=files, file="readConstants",casename=casename)
-    clean_use_statements(mod_list=files, file="initializeParameters",casename=casename)
-    clean_use_statements(mod_list=files, file="main",casename=casename)
-    clean_use_statements(mod_list=files, file="elm_initializeMod",casename=casename)
-    clean_use_statements(mod_list=files, file="update_accMod",casename=casename)
+    clean_use_statements(mod_list=files, file="readConstants",case_dir=case_dir)
+    clean_use_statements(mod_list=files, file="initializeParameters",case_dir=case_dir)
+    clean_use_statements(mod_list=files, file="main",case_dir=case_dir)
+    clean_use_statements(mod_list=files, file="elm_initializeMod",case_dir=case_dir)
+    clean_use_statements(mod_list=files, file="update_accMod",case_dir=case_dir)
 
-    ifile = open(f"{casename}/elm_initializeMod.F90",'r')
+    ifile = open(f"{case_dir}/elm_initializeMod.F90",'r')
     lines = ifile.readlines()
     ifile.close()
 
@@ -217,7 +217,7 @@ def clean_main(type_list,files,casename):
                     lines, ct = comment_line(lines=lines,ct=ct)
         ct += 1
     #write adjusted main to file in case dir
-    with open(f"{casename}/elm_initializeMod.F90","w") as of:
+    with open(f"{case_dir}/elm_initializeMod.F90","w") as of:
         of.writelines(lines)
 
     return
@@ -238,15 +238,15 @@ def duplicate_clumps(typedict):
     file.write(spaces+"implicit none\n")
     file.write(spaces+"integer, intent(in) :: unique_sites\n")
     file.write(spaces+"integer, intent(in) :: total_gridcells\n")
-    file.write(spaces+"integer :: g, dim2, l, gcopy\n")
-    file.write(spaces+"dim2 = size(wt_lunit,2)\n")
-    file.write(spaces+"print *, 'dim2 = ',dim2 \n")
+    file.write(spaces+"integer :: g, dim3, l, gcopy\n")
+    file.write(spaces+"dim3 = size(wt_lunit,3)\n")
+    file.write(spaces+"print *, 'dim3 = ',dim3 \n")
     file.write(spaces+"do g = unique_sites+1, total_gridcells\n") 
     file.write(spaces+spaces+"gcopy = mod(g-1,unique_sites)+1\n")
-    file.write(spaces+spaces+"do l=1,dim2\n")  
-    file.write(spaces*3+"wt_lunit(g,l) = wt_lunit(gcopy,l)\n")
+    file.write(spaces+spaces+"do l=1,dim3\n")  
+    file.write(spaces*3+"wt_lunit(g,1,l) = wt_lunit(gcopy,1,l)\n")
     file.write(spaces*2+"end do\n")  
-    file.write(spaces*2+"urban_valid(g) = urban_valid(gcopy)\n") 
+    file.write(spaces*2+"urban_valid(g,1) = urban_valid(gcopy,1)\n") 
     file.write(spaces+"end do\n") 
     file.write("end subroutine duplicate_weights\n")
 
@@ -378,7 +378,7 @@ def create_write_vars(typedict,read_types,subname,use_isotopes=False):
     for type_name, dtype in typedict.items():
         if(dtype.active):
             for var in dtype.instances:
-                if(var.name not in read_types): continue
+                if(var.name not in read_types and var.name not in li): continue
                 c13c14 = bool('c13' in var.name or 'c14' in var.name)
                 if(c13c14): continue
                 mod = var.declaration
@@ -394,8 +394,8 @@ def create_write_vars(typedict,read_types,subname,use_isotopes=False):
             dtype.create_write_read_functions('w',ofile,include_list=li,gpu=True)
     
     # glc2lnd_vars%icemask: 
-    ofile.write(spaces+"write(fid,'(A)') 'glc2lnd_vars%icemask_grc'\n")
-    ofile.write(spaces+'write(fid,*) glc2lnd_vars%icemask_grc')
+    # ofile.write(spaces+"write(fid,'(A)') 'glc2lnd_vars%icemask_grc'\n")
+    # ofile.write(spaces+'write(fid,*) glc2lnd_vars%icemask_grc')
 
     for dtype in typedict.values():
         if(dtype.active):
@@ -427,11 +427,18 @@ def create_read_vars(typedict,read_types):
     spaces = " "*2 
     ofile = open(f'{spel_output_dir}readMod.F90','w')
     ofile.write('module readMod \n')
+    
+    # List to hold physical property data types that are 
+    # necessary for domain decomposition, but may not be 
+    # used in computation routines (ignored by spel)
+    li = ['veg_pp','col_pp','lun_pp','grc_pp','top_pp']
+
     # use statements
     for key in typedict.keys():
         for var in typedict[key].instances:
-            if(var.name not in read_types): continue
-            mod = typedict[key].declaration
+            if(var.name not in read_types and var.name not in li): continue
+            # mod = typedict[key].declaration
+            mod = var.declaration
             vname = var.name
             c13c14 = bool('c13' in vname or 'c14' in vname)
             if(c13c14): continue
@@ -442,6 +449,7 @@ def create_read_vars(typedict,read_types):
     ofile.write('use elm_varctl \n')
     ofile.write('use landunit_varcon \n')
     ofile.write('use elm_instMod, only: glc2lnd_vars \n')
+
     ofile.write('contains \n')
 
     # read_weights
@@ -453,9 +461,9 @@ def create_read_vars(typedict,read_types):
     ofile.write(spaces+"integer, intent(in) :: numg\n")
     ofile.write(spaces+"integer :: errcode = 0\n\n")
     ofile.write(spaces+"call fio_open(18,in_file,1)\n") 
-    ofile.write(spaces+"call fio_read(18,'wt_lunit',wt_lunit(1:numg,:),errcode=errcode)\n")
+    ofile.write(spaces+"call fio_read(18,'wt_lunit',wt_lunit(1:numg,1,:),errcode=errcode)\n")
     ofile.write(spaces+"if(errcode .ne. 0) stop\n")
-    ofile.write(spaces+"call fio_read(18,'urban_valid',urban_valid(1:numg),errcode=errcode)\n")
+    ofile.write(spaces+"call fio_read(18,'urban_valid',urban_valid(1:numg,1),errcode=errcode)\n")
     ofile.write(spaces+"if(errcode .ne. 0) stop\n\n")
     ofile.write(spaces+"end subroutine read_weights\n\n")
 
@@ -493,12 +501,11 @@ def create_read_vars(typedict,read_types):
     ofile.write(spaces +"call fio_open(18,in_file, 1) \n")
     ofile.write(spaces+"if(mode == 1) then\n")
     ofile.write(spaces+"print *, 'reading in physical properties'\n")
-    li = ['veg_pp','col_pp','lun_pp','grc_pp','top_pp']
     for dtype in typedict.values():
         if(dtype.active):
             dtype.create_write_read_functions('r',ofile, include_list=li)
-    ofile.write(spaces+'call fio_read(18,"glc2lnd_vars%icemask_grc",glc2lnd_vars%icemask_grc,errcode=errcode)\n')
-    ofile.write(spaces+'if(errcode .ne. 0) stop\n')
+    # ofile.write(spaces+'call fio_read(18,"glc2lnd_vars%icemask_grc",glc2lnd_vars%icemask_grc,errcode=errcode)\n')
+    # ofile.write(spaces+'if(errcode .ne. 0) stop\n')
     ofile.write(spaces+"else\n")
 
     for dtype in typedict.values():

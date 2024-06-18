@@ -83,13 +83,13 @@ class FortranModule:
     order in which to compile the modules.
     """
     def __init__(self, name, fname,ln):
-        self.name = name      # name of the module
-        self.global_vars = [] # any variables declared in the module
-        self.subroutines = [] # any subroutines declared in the module
-        self.modules = []     # any modules used in the module
-        self.filepath = fname # the file path of the module
-        self.ln = ln          # line number of start module block
-        self.defined_types = {}
+        self.name = name        # name of the module
+        self.global_vars = []   # any variables declared in the module
+        self.subroutines = []   # any subroutines declared in the module
+        self.modules = []       # any modules used in the module
+        self.filepath = fname   # the file path of the module
+        self.ln = ln            # line number of start module block
+        self.defined_types = {} # user types defined in the module 
 
     def display_info(self,ofile=None):
         if(ofile):
@@ -98,7 +98,6 @@ class FortranModule:
         else:
             print(_bc.BOLD+_bc.HEADER+f"Module Name: {self.name}"+_bc.ENDC)
             print(_bc.BOLD+_bc.WARNING+f"Module Depedencies"+_bc.ENDC)
-
 
         for module in self.modules:
             if(ofile): 

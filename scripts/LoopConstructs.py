@@ -225,7 +225,31 @@ def create_latex_table(header,varsForAllLoops,doloops,subname):
 
 
 class Loop(object):
-    def __init__(self, start,index,ifile,sub):
+    """
+    Represents a loop construct in a program.
+
+    Attributes:
+        start (list): The starting line number of the loop.
+        end (list): The ending line number of the loop.
+        index (list): The loop indices.
+        nested (int): The number of times the loop is nested.
+        innerloops (list): The inner loops contained within this loop.
+        vars (dict): A dictionary that holds the array variables modified by this loop.
+        reduction (bool): Indicates if the loop contains reduction operations.
+        reduce_vars (list): The variables involved in reduction operations.
+        subcall [(Subroutines)]: The subroutine or function called within the loop.
+        scalar_vars (dict): A dictionary that holds the scalar variables used in the loop.
+        lines (list): The lines of code within the loop.
+        file (str): The file path of the script containing the loop.
+        filter (list): A list of filters applied to the loop -- Currently ELM specific.
+
+    Methods:
+        printLoop(substartline=0, long=True): Prints information about the loop.
+        removeArraysAsIndices(vdict, line, arrays, verbose): Removes arrays used as indices and sets them as read-only.
+        parseVariablesinLoop(verbose=False): Parses the variables modified by the loop.
+        addOpenACCFlags(lines_adjusted, subline_adjust, id, verbose=False): Adds OpenACC directives to the loop.
+    """
+    def __init__(self, start, index, ifile, sub):
         self.start = [start]
         self.end = [0]
         self.index = [index]

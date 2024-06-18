@@ -3,7 +3,7 @@ import sys
 import write_routines as wr
 import subprocess as sp 
 from mod_config import ELM_SRC
-from utilityFunctions import parse_line_for_variables
+from utilityFunctions import parse_line_for_variables, Variable
 ## arrow and tab are strings for writing files or printing readable output
 arrow = '|--->'
 tab   = ' '*2
@@ -14,7 +14,7 @@ def get_derived_type_definition(ifile, modname, lines,
     """
     type_start_line = ln
     type_end_line = 0
-    user_derived_type = derived_type(type_name,vmod=modname,fpath=ifile)
+    user_derived_type = DerivedType(type_name,vmod=modname,fpath=ifile)
     
     for ct in range(ln,len(lines)):
         line = lines[ct]
@@ -48,10 +48,32 @@ def get_derived_type_definition(ifile, modname, lines,
         print(f"File: {ifile}, start line {ln}")
         sys.exit(1)
     
+    # Find all instances of the derived type:
+    grep='grep -rin --exclude-dir=external_models/'
+    cmd = f'{grep} "type\s*(\s*{type_name}\s*)" {ELM_SRC}* | grep "::" | grep -v "intent"'
+    output = sp.getoutput(cmd)
+    output = output.split("\n")
+    # Each element in output has the format:
+    # <filepath> : <ln> : type(<type_name>) :: <instance_name>
+    instance_list = []
+    for el in output:
+        inst_name = el.split("::")[-1]
+        inst_name = inst_name.split('!')[0].strip().lower()
+        filepath = el.split(":")[0].strip()
+        ln = int(el.split(":")[1].strip())
+        
+        dim = inst_name.count(':')
+        inst_var = Variable(type=type_name,name=inst_name,
+                                subgrid="?",ln=ln,dim=dim)
+        if(inst_var not in instance_list):
+            instance_list.append(inst_var)
+
+    user_derived_type.instances = instance_list[:]
+
     return user_derived_type, ct
 
 
-class derived_type(object):
+class DerivedType(object):
     def __init__(self, type_name, vmod   # name of type and module name
                 , fpath = None       # path to mod file
                 , components = None  # list of type and component name
@@ -83,7 +105,10 @@ class derived_type(object):
         self.active = False 
 
     def _add_components(self,var_inst, lines,ln,verbose=False):
-        #
+        """
+        Function to add components to the derived type.
+        If it's an array, the function looks for allocation statements
+        """
         name = var_inst.name
         if(var_inst.dim > 0):
             array = True
@@ -137,18 +162,22 @@ class derived_type(object):
         """
         Function to print info on the user derived type
         """
-        instance_list = [x.name for x in self.instances]
         if(ofile):
             ofile.write("Derived Type:"+self.type_name+'\n')
             ofile.write("from Mod:"+self.mod+'\n')
-            ofile.write(f"Instances: {instance_list}\n")
-            ofile.write("w/ components:")
+            for v in self.instances:
+                ofile.write(f"{v.type} {v.name} {v.declaration}\n")
         else:
             print("Derived Type:",self.type_name)
             print("from Mod:",self.mod)
-            print(f"Instances: {instance_list}")
-            print("w/ components:")
+            for v in self.instances:
+                print(f"{v.type} {v.name} {v.declaration}")
         if(long):
+            if(ofile): 
+                ofile.write("w/ components:")
+            else:
+                print("w/ components:")
+
             for c in self.components:
                 status = c['active']
                 var = c['var']
