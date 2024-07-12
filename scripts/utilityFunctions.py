@@ -56,7 +56,10 @@ class Variable(object):
             return True
         else:
             return False
-    # Define __contains__ for 'in' operation
+    
+    # Override __str__ for easy printing
+    def __str__(self):
+        return f"{self.type} {self.name} {self.dim}"
 
     def printVariable(self,ofile=None): 
         if(ofile):
@@ -334,14 +337,17 @@ def getLocalVariables(sub,verbose=False,class_var=False ):
 
     args_present = bool(sub.dummy_args_list)
     if(verbose): 
-        print(f"getLocalVariables::{filename},{subname} at L{startline}-{endline}")
+        print(f"{func_name}::{filename},{subname} at L{startline}-{endline}")
     cc = "." 
     # non-greedy capture
     ng_regex_array = re.compile(f'\w+?\s*\({cc}+?\)')
     if(args_present):
         arg_string = '|'.join(sub.dummy_args_list)
-        arg_string =f"(intent|{arg_string})"
-        find_arg = re.compile(arg_string,re.IGNORECASE)
+        find_arg = re.compile(r'\b({})\b'.format(arg_string),re.IGNORECASE)
+        if(verbose): 
+            print(f"{func_name}::arg_string\n{arg_string}")
+    else:
+        match_arg = None
 
     find_type = re.compile(r'(?<=\()\w+(?=\))')
     class_var = re.compile(r'^(class\s*\()',re.IGNORECASE)
@@ -359,16 +365,13 @@ def getLocalVariables(sub,verbose=False,class_var=False ):
         line = line.strip("\n")
         if(not(line)): continue
         match_variable = find_variables.search(line)
-        match_class = class_var.search(line)
-        if(match_class):
-            sub.class_method = True
+        
         if(match_variable):
             # Track variable declaration start / end 
             if(sub.var_declaration_startl == 0):
                 sub.var_declaration_startl = ln
             # store everytime we find a variable declaration
             sub.var_declaration_endl = ln 
-            match_arg = None
             if("::" not in line): 
                 # Repeated code here, could be simplified?
                 # Need to check if variable declarations w/o '::'
@@ -384,18 +387,10 @@ def getLocalVariables(sub,verbose=False,class_var=False ):
                     data_type = find_type.search(line).group()
                 
                 temp_vars = intrinsic_type.sub('',line)
-                if(args_present): 
-                    match_arg = find_arg.search(temp_vars)
             else:
                 # Could be a list of variables
                 temp_decl = line.split("::")[0]
                 temp_vars = line.split("::")[1]
-            
-                if(args_present): 
-                    # Is checking for 'intent' overkill when 
-                    # we already have the list of arguments?
-                    match_arg = find_arg.search(temp_decl)
-                    match_arg = find_arg.search(temp_vars)
             
                 # Get data type first 
                 m_type = intrinsic_type.search(temp_decl)
@@ -407,6 +402,10 @@ def getLocalVariables(sub,verbose=False,class_var=False ):
                         print(f"{func_name}::Error: Can't Identify Data Type for {line}") 
                         sys.exit(1)
                     data_type = find_type.search(temp_decl).group()
+            match_class = class_var.search(line)
+            if(match_class):
+                sub.class_method = True
+                sub.class_type = data_type
             #
             # Go through and replace all arrays first
             #
@@ -418,17 +417,18 @@ def getLocalVariables(sub,verbose=False,class_var=False ):
                     if(index):
                         subgrid = index.group() 
                     else:
-                        if(verbose): print(f"{arr} Not allocated by bounds")
                         subgrid = '?'
                     # Storing line number of declaration 
                     dim = arr.count(',')+1
-                    if(verbose): 
-                        print(f"var = {varname}; subgrid = {subgrid}  {dim}-D array")
+                    # Test if variable is same as a dummy argument
+                    if(args_present):
+                        match_arg = find_arg.search(varname)
                     if(match_arg):
-                        optional = False 
                         if('optional' in temp_decl):
                             optional = True
-                        sub.Arguments[varname] = Variable(data_type,varname,subgrid,ln,dim,optional)
+                        else:
+                            optional = False
+                        sub.Arguments[varname] = Variable(data_type,varname,subgrid,ln,dim,optional=optional)
                     else: 
                         sub.LocalVariables['arrays'][varname] = Variable(data_type,varname,subgrid,ln,dim)
                         sub.LocalVariables['arrays'][varname].declaration = line
@@ -439,17 +439,19 @@ def getLocalVariables(sub,verbose=False,class_var=False ):
             temp_vars = temp_vars.split(',')
             temp_vars = [x.strip() for x in temp_vars if x.strip()]
             for var in temp_vars:
+                if(args_present):
+                    match_arg = find_arg.search(var)
                 if(match_arg):
-                    optional = False 
                     if('optional' in temp_decl):
                         optional = True
+                    else:
+                        optional = False
                     sub.Arguments[var] = Variable(data_type,var,'',ln,dim=0,optional=optional)
                 else:
                     parameter = bool("parameter" in temp_decl.lower())
                     if(parameter): continue
                     if("=" in var): var = var.split("=")[0]
-                    sub.LocalVariables['scalars'].append(Variable(data_type,var,'',ln,dim=0))
-                    
+                    sub.LocalVariables['scalars'][var] = Variable(data_type,var,'',ln,dim=0)
     return
 
 def determine_class_instance(sub,verbose=False):
@@ -532,7 +534,7 @@ def adjust_array_access_and_allocation(local_arrs,sub,dargs=False,verbose=False)
 
     track_changes = []
     arg_list = [v for v in sub.Arguments] 
-    scalar_list = [v.name for v in sub.LocalVariables['scalars'] ]
+    scalar_list = [v.name for v in sub.LocalVariables['scalars'].values()]
 
     print(_bc.BOLD+_bc.FAIL+f"arguments for {sub.name} are",arg_list,_bc.ENDC)
     print(_bc.BOLD+_bc.FAIL+f"scalars for {sub.name} are",scalar_list,_bc.ENDC)
@@ -914,7 +916,6 @@ def line_unwrapper(lines,ct,verbose=False):
 
     return full_line, newct
 
-
 def insert_header_for_unittest(file_list,mod_dict):
     """
     Function that will insert the header file into files needed for unit test
@@ -983,7 +984,8 @@ def parse_line_for_variables(ifile,l,ln,verbose=False):
                 print(f"decl: {temp_decl}")
                 sys.exit(1)
             data_type = find_type.search(temp_decl).group()
-            if(verbose): print("matched user data type: ",data_type)
+            if(verbose): 
+                print("matched user data type: ",data_type)
         
         # Go through and replace all arrays first
         # match_arrays = ng_regex_array.findall(temp_vars)

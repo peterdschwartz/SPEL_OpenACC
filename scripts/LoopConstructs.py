@@ -336,7 +336,7 @@ class Loop(object):
         # since SPEL already has the loop indices, no need to hardcode this?
         indices = ['i','j','k','g','l','t','c','p','fc','fp','fl','ci','pi','n','m','s'] 
         if(self.subcall.LocalVariables['scalars']):
-            list_of_scalars = [v.name for v in self.subcall.LocalVariables['scalars'] if v.name not in indices]
+            list_of_scalars = [vname for vname in self.subcall.LocalVariables['scalars'].keys() if vname not in indices]
             # print(_bc.OKBLUE+f"list of scalars for {self.subcall.name}\n {list_of_scalars}"+_bc.ENDC)
             str_ = "|".join(list_of_scalars)
             regex_scalars = re.compile(f"(?<!\w)({str_})(?!\w)",re.IGNORECASE)
@@ -547,7 +547,8 @@ class Loop(object):
 
                 # variable appears on both sides and is missing at least one loop index 
                 # Need to ask if the variable is being reduced
-                if(verbose): print(indices,self.index)
+                if(verbose): 
+                    print(indices,self.index)
 
                 # Since inner loops may not be tightly nested, we need to 
                 # find out how many loops this line of code is inside. 
@@ -600,7 +601,7 @@ class Loop(object):
                         lhs_var = ng_regex_array.search(lhs).group() 
                         lhs_indx = regex_indices.search(lhs_var).group()
                         lhs_indx = [m.replace(' ','').lower() for m in lhs_indx]
-                        # get indices for all rhs instances:
+                        # Get indices for all rhs instances:
                         rhs_vars = ng_regex_array.findall(rhs) 
                         for rv in rhs_vars:
                             rvname = regex_var.search(rv).group() 

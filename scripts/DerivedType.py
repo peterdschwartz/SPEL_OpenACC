@@ -32,8 +32,6 @@ def get_derived_type_definition(ifile, modname, lines,
                 lprime = re.sub(r'(\s*=>\s*null\(\))','',lprime)
                 variable_list = parse_line_for_variables(ifile=ifile,l=lprime,ln=ct)
                 if(verbose):
-                   print(f"l : {l}")
-                   print(f"lprime : {lprime}")
                    print(f"vars : {[x.name for x in variable_list]}")
                 for var in variable_list:
                     user_derived_type._add_components(var_inst=var,lines=lines,

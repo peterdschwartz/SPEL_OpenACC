@@ -66,7 +66,6 @@ def print_spel_module_dependencies(mod_dict,subs,depth=0):
         linenumber, module_name = get_module_name_from_file(sub.filepath)
         sub_module = mod_dict[module_name]
         modtree.append({'module':module_name,'depth':depth})
-        print(f"1st module {module_name}")
         depth += 1
         for mod in sub_module.modules:
             modtree.append({'module':mod,'depth':depth})
@@ -74,7 +73,8 @@ def print_spel_module_dependencies(mod_dict,subs,depth=0):
             if(dep_mod.modules):
                 modtree = unravel_module_dependencies(modtree=modtree,
                                                       mod_dict=mod_dict,
-                                                      mod=dep_mod,depth=depth)             
+                                                      mod=dep_mod,depth=depth)  
+    return modtree           
 class FortranModule:
     """
     A class to represent a Fortran module. 

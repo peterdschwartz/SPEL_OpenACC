@@ -1,15 +1,22 @@
-def resolve_interface(sub,iname,args,varlist,verbose=False):
+import subprocess as sp 
+import re 
+import sys 
+from mod_config import _bc,ELM_SRC
+from utilityFunctions import Variable
+def resolve_interface(sub,iname,args,dtype_dict,sub_dict,verbose=False):
     """
     Determines which subroutine in an interface is being called.
+    Argument details:
+        sub: Subroutine object of parent subroutine
+        iname : name of interface
+        args : list of arguments passed to interface
+        dtype_dict : dictionary of derived types with instances as keys
+        sub_dict : dictionary of subroutines -- used to match child subroutines
     """
-    import subprocess as sp 
-    import re 
-    import sys 
-    from utilityFunctions import Variable,getLocalVariables
-    from analyze_subroutines import find_file_for_subroutine, Subroutine
-    from mod_config import _bc,ELM_SRC
-
-    if(verbose): print(_bc.FAIL+f"Resolving interface for {iname}\n with args: {args}")
+    func_name = "resolve_interface"
+    verbose = True
+    if(verbose): 
+        print(_bc.FAIL+f"Resolving interface for {iname}\n with args: {args}")
     cmd = f'grep -rin --exclude-dir={ELM_SRC}external_models/ -E "^[[:space:]]+(interface {iname})" {ELM_SRC}*'
     output = sp.getoutput(cmd)
 
@@ -20,7 +27,9 @@ def resolve_interface(sub,iname,args,varlist,verbose=False):
         sys.exit(f"resolve_interface:: Couldn't find file with interface {iname}\n"
                  f"cmd: {cmd}\noutput: {output}")
     fn, ln, pattern = output 
-    if(verbose): print(fn,ln,pattern+_bc.ENDC)
+    
+    if(verbose): 
+        print(fn,ln,pattern+_bc.ENDC)
     ln = int(ln) 
 
     # Read file:
@@ -38,7 +47,7 @@ def resolve_interface(sub,iname,args,varlist,verbose=False):
     regex_end = re.compile(f"^\s*(end)\s+(interface)",re.IGNORECASE)
     regex_procedure = re.compile(r'^\s*(module)\s+(procedure)\s+',re.IGNORECASE)
     
-    subroutines = [] # list of subroutine names in the interface 
+    interface_sub_names = [] # list of subroutine names in the interface 
     ct = ln-1
     in_interface = True
     while(in_interface):
@@ -49,110 +58,90 @@ def resolve_interface(sub,iname,args,varlist,verbose=False):
             m_proc = regex_procedure.search(lines[ct])
             if(m_proc):
                 subname = lines[ct].replace(m_proc.group(),'').strip()
-                subroutines.append(subname) 
+                interface_sub_names.append(subname.lower()) 
         ct += 1 
     
-    l_args = [] # list to hold arguments as Variables
-    special = "xx" # Special data type used for arguments that are math expressions so either int or real
-
-    # Go through each argument and create an appropiate Variable instance for it
+    # Go through each argument passed to interface and create an appropiate Variable instance for it
     # to be compared to the dummy arguments of each subroutine in the list above.
+    special = "xx" # Special data type used for arguments that are math expressions so either int or real
+    l_args = []    # list to hold arguments as Variables
+
     for arg in args:
-
-        found = False # Flag to quickly go to next argument 
-
+        found = False
         # Check global associate variables
         # if arg is an associated global variable 
         # then the type is already known 
         if(arg in sub.associate_vars):
-            vname, comp = sub.associate_vars[arg][0].split("%")
-            for dtype in varlist:
-                if(vname in dtype.instances):
-                # if(vname == v.name):
-                    for c in dtype.components:
-                        status = c['active']
-                        field_var = c['var'] 
-                        if(comp == field_var.name):
-                            bounds = c['bounds'] 
-                            # m = re.search(f"(?<=beg)[a-z]",bounds)
-                            dim = field_var.dim #bounds.count(',')+1
-                            subgrid = field_var.subgrid
-                            var_type = field_var.type
-                            newvar = Variable(type=var_type,name=arg,subgrid=subgird,ln=0,dim=dim)
-                            l_args.append(newvar)
-                            found = True
-                            break 
-        
-        if(found): continue
+            vname, compname = sub.associate_vars[arg].split("%")
+            for field in dtype_dict[vname].components:
+                fieldname = field['var'].name 
+                if(compname == fieldname):
+                    l_args.append(field['var'])
+                    found = True
+                    break
+            continue 
         # Check for keyword argument -- will be matched below
         if('=' in arg):
-            l_args.append(Variable(type="?",name=arg,subgrid="?",ln="?",dim="?"))
+            l_args.append(Variable(type="?",name=arg,subgrid="?",ln="?",dim="?",keyword=True))
+            found = True
             continue 
-        # Check arguments first:
-        for vname,var in sub.Arguments.items():
-            if(arg.lower() == var.name.lower()):
-                print(f"Matched {arg} to {var.name}")
-                l_args.append(var)
-                found = True
-                break
-        if(found): continue
-
+        # Check arguments of parent subroutine:
+        if(arg in sub.Arguments):
+            l_args.append(sub.Arguments[arg])
+            found = True
+            continue
         # Check local variables, arrays :
-        for vname, var in sub.LocalVariables['arrays'].items(): 
-            if(arg.lower() == var.name.lower()):
-                print(f"Matched {arg} to {var.name}")
-                l_args.append(var)
-                found = True 
-                break
-        if(found): continue 
-
+        if(arg in sub.LocalVariables['arrays'].keys()):
+            l_args.append(sub.LocalVariables['arrays'][arg])
+            found = True
+            continue
         # Check local variables, scalars:
-        for var in sub.LocalVariables['scalars']:
-            if(arg.lower() == var.name.lower()):
-                print(f"Match {arg} to {var.name}")
-                l_args.append(var)
-                found = True
-                break 
-        if(found): continue 
+        scalar_dict = sub.LocalVariables['scalars'].copy()
+        if(arg in scalar_dict.keys()):
+            l_args.append(scalar_dict[arg])
+            found = True
+            continue
         
         if(not found):
             # Couldn't match so arg is assumed to be a math expression
             # Assuming it's equivalent to an integer or real then
             l_args.append(Variable(type=special,name=arg,subgrid='',ln=0,dim=0))
+            if(verbose): 
+                print(f"Couldn't match {arg} to any known variable -- assuming {special} type")
     
     num_input_args = len(l_args)
-    
     resolved_sub_name = '' # subroutine name that is returned by this function.
-
     # Instantiate subroutines for interface procedures
-    for s in subroutines:
-        fn1,startline,endline = find_file_for_subroutine(name=s,fn=fn,ignore_interface=True)
-        testsub = Subroutine(s,fn1,calltree=sub.calltree,start=startline,end=endline,ignore_interface=True)
-        x = getLocalVariables(testsub,verbose=False)
+    for s in interface_sub_names:
+        isub = sub_dict[s]
         child_sub = ''
         # Go through each argument and check if 
         # it can be matched to this subroutine's allowed args
-        matched = match_input_arguments(l_args,testsub,special,verbose=verbose)
+        matched = match_input_arguments(l_args,isub,special,verbose=verbose)
         
         # Check if this subroutine is a match or not 
         if(sum(matched) == num_input_args):
-            if(verbose): print(f"Subroutine is {s}"+_bc.ENDC)
+            if(verbose): 
+                print(f"{func_name}::Subroutine is {s}"+_bc.ENDC)
             resolved_sub_name = s
-            child_sub = testsub
-
+            child_sub = isub
             break
+    if(not resolved_sub_name):
+        print(_bc.FAIL+f"{func_name}::Couldn't resolve interface for {iname}"+_bc.ENDC)
+        sys.exit(1)
     return resolved_sub_name, child_sub
 
 def match_input_arguments(l_args, sub,special,verbose=False):
     """
     function that matches the args to the corresponding dummy args
     of the subroutine.
+    Arguments:
+        l_args : list of arguments passed to child subroutine
+        sub : subroutine object of candidate child subroutine
+        special : special data type used for math expressions
     """
-    import sys 
+    func_name = "match_input_arguments"
 
-    if(not sub.Arguments): 
-        sys.exit(f"match_input_arguments:: Error - must first parse variables for {sub.name}")
-    
     test_args = [v for v in sub.Arguments.values()]
     
     num_input_args = len(l_args)
@@ -160,8 +149,10 @@ def match_input_arguments(l_args, sub,special,verbose=False):
     # Get number of optional arguments
     num_optional_args = 0 
     for arg in test_args:
-        if(arg.optional): num_optional_args += 1
-    if(verbose): print(f"\n{sub.name}:: {num_optional_args} Optional arguments found")
+        if(arg.optional): 
+            num_optional_args += 1
+    if(verbose): 
+        print(f"{sub.name}:: {num_optional_args} Optional arguments found")
     
      # Keep track of which args can be matched.
     matched = [False]*num_input_args
@@ -170,8 +161,12 @@ def match_input_arguments(l_args, sub,special,verbose=False):
     # Simple check regarding number of arguments first:
     num_dummy_args = len(test_args)
     if(num_input_args > num_dummy_args): 
+        if(verbose): print(f"Too many arguments for {sub.name}")
         return matched  # Too many arguments 
     if(num_input_args < num_dummy_args - num_optional_args): 
+        if(verbose): 
+            print(f"Not enough arguments for {sub.name}")
+            print(f"Num input args: {num_input_args} / Num dummy args: {num_dummy_args}")
         return matched # not enough arguments 
     
     # get list of arg names for keyword comparsions
