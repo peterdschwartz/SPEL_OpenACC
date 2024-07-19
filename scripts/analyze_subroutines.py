@@ -166,6 +166,7 @@ class Subroutine(object):
     from utilityFunctions import  find_file_for_subroutine, getLocalVariables
     
     def __init__(self, name,file='',calltree=[],start=0,end=0,
+                 cpp_start=None,cpp_end=None,cpp_fn=None,
                  ignore_interface=False,verbose=False):
         """
         Initalizes the subroutine object:
@@ -191,7 +192,9 @@ class Subroutine(object):
         if(self.endline == 0 or self.startline == 0 or not self.filepath):
             print(f"Error in finding subroutine {self.name} {self.filepath} {self.startline} {self.endline}")
             sys.exit()
-                
+        self.cpp_filepath = cpp_fn
+
+        # Initialize call tree
         self.calltree = list(calltree)
         self.calltree.append(name)
 
@@ -214,6 +217,10 @@ class Subroutine(object):
         # Store when the arguments/local variable declarations start and end
         self.var_declaration_startl = 0
         self.var_declaration_endl = 0
+        self.cpp_startline = cpp_start
+        self.cpp_endline = cpp_end
+        if(name == 'soilthermprop'):
+            verbose = True 
         getLocalVariables(self,verbose=verbose)
 
         self.elmtype_r = {}
@@ -226,6 +233,8 @@ class Subroutine(object):
         self.elmtypes  = []
         self.DoLoops   = []
         self.status = False
+
+
         
 
     def printSubroutineInfo(self,long=False):
@@ -277,6 +286,7 @@ class Subroutine(object):
         ifile = open(self.filepath,'r')
         lines = ifile.readlines()
         ifile.close() 
+        
         ln = self.startline
         l = lines[ln].strip('\n')
         l = l.strip()
@@ -326,15 +336,25 @@ class Subroutine(object):
         from utilityFunctions import getArguments
         from interfaces import resolve_interface 
         func_name = '_preprocess_file'
+
         # Logical that tracks if subroutine file needs to be overwritten.
         rewrite = False
         
         self._check_acc_status()
         m_skip = regex_skip_string.search(self.name)
-             
-        file = open(self.filepath,'r')
+        
+        if(self.cpp_filepath):
+            print("Opening cpp filepath:",self.cpp_filepath)
+            fn = self.cpp_filepath
+            print(f"subroutine {self.name} at L{self.cpp_startline}-{self.cpp_endline}")
+            self.printSubroutineInfo()
+        else:
+            fn = self.filepath
+        
+        file = open(fn,'r')
         lines = file.readlines()
         file.close()
+
         # Set up dictionary of derived type instances
         global_vars = {} 
         for argname, arg in self.Arguments.items():
@@ -347,15 +367,23 @@ class Subroutine(object):
                     global_vars[inst.name] = dtype
 
         # Loop through subroutine and find any child subroutines
-        ct = self.startline
-        while(ct < self.endline):
+        if(self.cpp_startline):
+            ct = self.cpp_startline
+            endline = self.cpp_endline
+        else:
+            ct = self.startline
+            endline = self.endline 
+
+        while(ct < endline):
             line = lines[ct]
             # get rid of comments
             line = line.split('!')[0].strip()
             if(not line): 
                 ct+=1
                 continue
-
+            if(self.name == 'soilthermprop'):
+                print(ct, line.rstrip('\n'))
+            
             match_call = re.search(r'^call ',line.strip())
             if(match_call) :
                 x = line.strip().replace('(',' ').replace(')',' ').split()
@@ -364,7 +392,9 @@ class Subroutine(object):
                               or 'update_vars' in child_sub_name 
                               or "_oacc" in child_sub_name)
                 if(ignore): 
+                    ct += 1
                     continue 
+
                 # Get the arguments passed to the subroutine
                 l = lines[ct].strip('\n')
                 l = l.strip()
@@ -398,7 +428,11 @@ class Subroutine(object):
                                 break
                     print(f"{func_name}::Class method is {child_sub_name}")
                 else:
-                    childsub = main_sub_dict[child_sub_name]
+                    if(child_sub_name not in main_sub_dict):
+                        print(_bc.WARNING+f"Warning: {child_sub_name} not in main_sub_dict."
+                              +"\nCould be library function?"+_bc.ENDC)
+                    else:
+                        childsub = main_sub_dict[child_sub_name]
                 # Store the subroutine call information (name of parent and the arguments passed)
                 subcall = SubroutineCall(self.name,args)
                 if(subcall not in childsub.subroutine_call):
@@ -407,9 +441,11 @@ class Subroutine(object):
                 child_sub_names = [ s for s in self.child_Subroutine.keys() ]
                 if(child_sub_name not in child_sub_names):
                     childsub.calltree = self.calltree.copy()
+                    childsub.calltree.append(child_sub_name)
                     self.child_Subroutine[child_sub_name] = childsub
             ct+=1
-
+        print(f"{func_name}::Finished analyzing for {self.name}")
+        
         return None
 
     def _check_acc_status(self):
@@ -446,15 +482,27 @@ class Subroutine(object):
             - Part 3, check rw status of global vars (not derived types?)
         """
         func_name = "_analyze_variables"
-        file = open(self.filepath,'r')
+        
+        if(self.cpp_filepath):
+            fn = self.cpp_filepath
+        else:
+            fn = self.filepath
+        
+        file = open(fn,'r')
         lines = file.readlines()
         file.close()
         if(self.associate_end == 0):
-            # would it be better to store where arguments end?
-            startline = self.startline 
+            if(self.cpp_startline):
+                startline = self.cpp_startline
+            else:
+                startline = self.startline 
         else:
             startline = self.associate_end
         
+        if(self.cpp_endline):
+            endline = self.cpp_endline
+        else:
+            endline = self.endline
         # Create regex to match any variable in the associate clause:
         if(not self.associate_vars):
             no_associate = True
@@ -481,7 +529,7 @@ class Subroutine(object):
 
         # Loop through subroutine line by line starting after the associate clause
         ct = startline
-        while (ct < self.endline):
+        while (ct < endline):
 
             # Take into account Fortran line continuations
             line, ct = line_unwrapper(lines,ct)
@@ -556,6 +604,7 @@ class Subroutine(object):
         self._preprocess_file(main_sub_dict=main_sub_dict,
                               dtype_dict=dtype_dict,
                               interface_list=interface_list,verbose=verbose)
+        
         # Create list that holds the names of the derived types only
         elm_var_names = [] 
         for dtype in elmvar:
@@ -600,7 +649,7 @@ class Subroutine(object):
 
         # child_subroutine_list is a list of Subroutine instances 
         for child_sub in self.child_Subroutine.values():
-            
+            print("Analyzing child subroutine:",child_sub.name)
             if(child_sub.name in interface_list):
                 print(f"{func_name}::Error: need to resolve interface for {child_sub.name}")
                 sys.exit(1)
@@ -668,7 +717,7 @@ class Subroutine(object):
             ofile.write(level*"|---->"+sub+'\n')
         ofile.close()
 
-    def generate_update_directives(self, elmvars_dict):
+    def generate_update_directives(self, elmvars_dict,verify_vars):
         """
         This function will create .F90 routine to execute the
         update directives to check the results of the subroutine
@@ -681,12 +730,9 @@ class Subroutine(object):
         replace_inst = ['soilstate_inst','waterflux_inst','canopystate_inst','atm2lnd_inst','surfalb_inst',
                         'solarabs_inst','photosyns_inst','soilhydrology_inst','urbanparams_inst']
 
-        for v in self.elmtype_w.keys():
-            if(v in replace_inst): 
-                v = v.replace('_inst','_vars')
-            mod = elmvars_dict[v].declaration
-            
-            ofile.write(spaces + f"use {mod}, only : {v} \n")
+        for dtype in verify_vars.keys():
+            mod = elmvars_dict[dtype].declaration
+            ofile.write(spaces + f"use {mod}, only : {dtype} \n")
 
         ofile.write(spaces+"implicit none \n")
         ofile.write(spaces+"integer, intent(in) :: gpu\n")
@@ -707,8 +753,7 @@ class Subroutine(object):
         ofile.write(spaces+"if(gpu) then\n")
         acc = "!$acc "
 
-        for v,comp_list in self.elmtype_w.items():
-            if(v in replace_inst):  v = v.replace('_inst','_vars')
+        for v,comp_list in verify_vars.items():
             ofile.write(spaces+acc+"update self(& \n")
             i = 0
             for c in comp_list:
@@ -723,14 +768,14 @@ class Subroutine(object):
                 else:
                     name = f"{v}%{c}"
                     c13c14 = bool('c13' in name or 'c14' in name)
-                    if(c13c14): continue
+                    if(c13c14): 
+                        continue
                     ofile.write(spaces+acc+f"{name}, & \n")
 
         ofile.write(spaces+"end if \n")
         ofile.write(spaces+"!! CPU print statements !! \n")
-        ## generate cpu print statements
-        for v,comp_list in self.elmtype_w.items():
-            if(v in replace_inst): v = v.replace('_inst','_vars')
+        # generate cpu print statements
+        for v,comp_list in verify_vars.items():
             for c in comp_list:
                 name = f"{v}%{c}"
                 c13c14 = bool('c13' in name or 'c14' in name)

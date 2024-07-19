@@ -100,7 +100,7 @@ class DerivedType(object):
         self.instances = []      
         # Flag to see if Derived Type has been analyzed
         self.analyzed = False
-        self.active = False 
+        self.active = False
 
     def _add_components(self,var_inst, lines,ln,verbose=False):
         """

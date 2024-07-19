@@ -102,8 +102,10 @@ program main()
   integer :: clump_input,pproc_input, fc, c, l, fp,g,j
   logical :: found_thawlayer
   integer :: k_frz
+  integer :: begg, endg 
   real(r8) :: declin, declinp1
   real :: startt, stopt
+  real(r8),allocatable :: icemask_dummy_arr(:)
   !========================== Initialize/Allocate variables =======================!
   !First, make sure the right number of inputs have been provided
   IF(COMMAND_ARGUMENT_COUNT() == 1) THEN
@@ -260,7 +262,9 @@ program main()
      call get_proc_bounds(bounds_proc)
      !$acc enter data copyin(filter(:),gpu_clumps(:), gpu_procinfo, proc_filter, bounds_proc )
      ! Calculate filters on device
-     call setProcFilters(bounds_proc, proc_filter, .false.)
+     allocate(icemask_dummy_arr(begg:endg))
+     icemask_dummy_arr(:) = 0.d0
+     call setProcFilters(bounds_proc, proc_filter, .false., icemask_dummy_arr)
 
 #if _CUDA
     ! Heap Limit may need to be increased for certain routines
@@ -319,7 +323,7 @@ program main()
       istat = cudaMemGetInfo(free1, total)
       print *, "free after kernel:",free1/1.E+9
     #endif
-
+    deallocate(icemask_dummy_arr)
     print *, "done with unit-test execution"
 
 end Program main

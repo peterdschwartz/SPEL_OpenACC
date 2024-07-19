@@ -23,7 +23,7 @@ def main():
     casename = "LakeTemp"
     case_dir = unittests_dir + casename
     # List of subroutines to be analyzed
-    sub_name_list = ["LakeTemperature"]
+    sub_name_list = ["SoilTemperature"]
 
     # Determines if SPEL should run to make optimizations 
     opt = False
@@ -73,7 +73,8 @@ def main():
                                     mods=needed_mods,required_mods=default_mods, 
                                     main_sub_dict=main_sub_dict,
                                     overwrite=False,verbose=False)
-    
+            
+            subroutines[s] = main_sub_dict[s]
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
     # examineLoops performs adjustments that go beyond the "naive"                  #
     # reliance on the "!$acc routine" directive.                                    #
@@ -92,7 +93,6 @@ def main():
             subroutines[s].examineLoops(global_vars=[],varlist=var_list,main_sub_dict=main_sub_dict,verbose=False,
                            add_acc=add_acc,adjust_allocation=adjust_allocation)
         print("Done running in Optimization Mode")
-        sys.exit(0)
     
     # print_spel_module_dependencies(mod_dict=mod_dict,subs=subroutines)
     ofile = open(f"{case_dir}/module_dependencies.txt",'w')
@@ -116,6 +116,8 @@ def main():
         #
         subroutines[s].parse_subroutine(dtype_dict=type_dict,
                                         main_sub_dict=main_sub_dict,verbose=True)
+        
+        print(_bc.OKGREEN+f"Variable Analysis for {subroutines[s].name}"+_bc.ENDC)
         
         subroutines[s].child_subroutines_analysis(dtype_dict=type_dict,
                                         main_sub_dict=main_sub_dict,verbose=True)
@@ -166,9 +168,7 @@ def main():
 
     # Make sure physical properties types are read/written:
     list_pp = ['veg_pp','lun_pp','col_pp','grc_pp','top_pp']
-    # for l in list_pp:
-    #     read_types.append(l)
-
+    
     print("read_types:",read_types)
     print("write_types:",write_types)
 
@@ -185,12 +185,13 @@ def main():
     # for l in list_pp:
     #     aggregated_elmtypes_list.append(l)
     print("list of global vars:",aggregated_elmtypes_list)
-    sys.exit(0)
     instance_to_user_type = {}
     elm_inst_vars = {}
     for type_name, dtype in type_dict.items():
-        if('bounds' in type_name): continue
+        if('bounds' in type_name): 
+            continue
         if(not dtype.instances):
+            print(f"Warning: no instances found for {type_name}")
             cmd = f'grep -rin -E "^[[:space:]]*(type)[[:space:]]*\({type_name}" {ELM_SRC}/main/elm_instMod.F90'
             output = sp.getoutput(cmd)
             print(f"output: {output}")
@@ -216,38 +217,17 @@ def main():
             instance_to_user_type[instance.name] = type_name
 
     dtype_info_list = []
-    # Update the active status of user defined types:
+        
     for s in sub_name_list:
-        for dtype, components in subroutines[s].elmtype_r.items():
-            if(dtype in replace_inst): dtype = dtype.replace('_inst','_vars')
-            if(dtype == 'col_cf_input'): dtype = 'col_cf'
-            c13c14 = bool('c13' in dtype or 'c14' in dtype)
-            if(c13c14): continue
-            type_name = instance_to_user_type[dtype]
-            type_dict[type_name].active = True 
-            for c in type_dict[type_name].components:
-                field_var = c['var']
-                if field_var.name in components:
-                    c['active'] = True
-                    datatype = field_var.type
-                    dim = field_var.dim 
-                    dtype_info_list.append([dtype,field_var.name,datatype,f"{dim}D"])
-    
-    for s in sub_name_list:
-        for dtype, components in subroutines[s].elmtype_w.items():
-            if(dtype in replace_inst): dtype = dtype.replace('_inst','_vars')
-            if(dtype == 'col_cf_input'): dtype = 'col_cf'
-            c13c14 = bool('c13' in dtype or 'c14' in dtype)
-            type_name = instance_to_user_type[dtype]
-            type_dict[type_name].active = True 
-            for c in type_dict[type_name].components:
-                field_var = c['var']
-                if field_var.name in components:
-                    c['active'] = True
-                    datatype = field_var.type
-                    dim = field_var.dim 
-                    dtype_info_list.append([dtype,field_var.name,datatype,f"{dim}D"])
-    
+        set_active_variables(type_dict,instance_to_user_type,
+                             subroutines[s].elmtype_r,dtype_info_list)
+        set_active_variables(type_dict,instance_to_user_type,
+                             subroutines[s].elmtype_w,dtype_info_list)
+        set_active_variables(type_dict,instance_to_user_type,
+                             subroutines[s].elmtype_rw,dtype_info_list)
+        
+    print(dtype_info_list)
+
     # Will need to read in physical properties type
     # so set all components to True
     for type_name, dtype in type_dict.items():
@@ -276,18 +256,32 @@ def main():
     for sub in subroutines.values():
         tree = sub.calltree[2:]
         sub.analyze_calltree(tree,case_dir)
-    #
+    
     # This generates verificationMod to test the results of
     # the subroutines.  
     # Call the relevant update_vars_{sub} after the parallel region.
-    #
+    
     elmvars_dict = {}
     for dtype in type_dict.values():
         for inst in dtype.instances:
             elmvars_dict[inst.name] = inst
-    print(f"elmvars_dict: {elmvars_dict['soilstate_vars']}")
+    # 
     for sub in subroutines.values():
-        sub.generate_update_directives(elmvars_dict)
+        # create list of variables that should be used for verification.
+        # Will go ahead and use all variables for now but can limit to just w,rw 
+        # to save memory if needed.
+        verify_vars = {}
+        total_vars = [] 
+        total_vars.extend(sub.elmtype_r.keys()) 
+        total_vars.extend(sub.elmtype_w.keys())
+        total_vars.extend(sub.elmtype_rw.keys())
+        for var in total_vars:
+            if('bounds' in var):
+                continue
+            dtype, component = var.split('%')
+            verify_vars.setdefault(dtype,[]).append(component)
+
+        sub.generate_update_directives(elmvars_dict,verify_vars)
 
     with open(f'{scripts_dir}/script-output/concat.F90','w') as outfile:
         outfile.write("module verificationMod \n")
@@ -335,8 +329,8 @@ def main():
     
     wr.duplicate_clumps(type_dict)
     wr.create_read_vars(type_dict,read_types)
-    wr.create_write_vars(type_dict,read_types,case,use_isotopes=False)
-
+    wr.create_write_vars(type_dict,read_types,casename,use_isotopes=False)
+    sys.exit(0)
     files_for_unittest = ' '.join(needed_mods) 
     os.system(f"cp {files_for_unittest} {case_dir}")
     os.system(f"cp {spel_output_dir}duplicateMod.F90 {spel_output_dir}readMod.F90 {spel_output_dir}writeMod.F90 {case_dir}")
@@ -344,5 +338,29 @@ def main():
     os.system(f"cp {spel_mods_dir}unittest_defs.h {case_dir}")
     os.system(f"cp {spel_mods_dir}decompInitMod.F90 {case_dir}")
 
+def set_active_variables(type_dict,type_lookup,variable_list,dtype_info_list):
+    """
+    This function sets the active status of the user defined types
+    based on variable list
+        * type_dict -- dictionary of all user-defined types found in the code
+        * type_lookup -- dictionary that maps an variable to it's user-defined type
+        * variable_list -- list of variables that are used (eg. elmtype_r, elmtype_w)
+    """
+    for var in variable_list:
+        dtype, component = var.split('%')
+        if('bounds' in dtype): 
+            continue
+        type_name = type_lookup[dtype]
+        type_dict[type_name].active = True 
+        for c in type_dict[type_name].components:
+            field_var = c['var']
+            if(field_var.name == component):
+                c['active'] = True
+                datatype = field_var.type
+                dim = field_var.dim 
+                dtype_info_list.append([dtype,field_var.name,datatype,f"{dim}D"])
+    
+    return None 
+    
 if __name__ == '__main__':
     main()

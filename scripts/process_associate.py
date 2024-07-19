@@ -4,11 +4,9 @@ from utilityFunctions import line_unwrapper
 def getAssociateClauseVars(sub, verbose=False):
     """
     Funtion to extract the associated variables in a subroutine 
-
-    NOTE: Move to Subroutine Class?
     """
-   
     func_name = "getAssociateClauseVars"
+
     iofile = open(sub.filepath, 'r')
     # status intitialized to False -- routine needs analysis
     lines = iofile.readlines()

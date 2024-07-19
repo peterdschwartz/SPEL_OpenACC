@@ -54,17 +54,19 @@ module elm_initializeMod
     integer :: nc
     integer :: begp, endp, begc, endc, begg, endg, begl, endl, begt,endt
     integer :: i,j
-    character(len=256) :: in_file_vars = 'output_LakeTemperature_vars.txt'
+    character(len=256) :: in_file_vars = 'LakeTemperature_vars.txt'
     character(len=256) :: in_file_constants = "E3SM_constants.txt"
     type(bounds_type)  :: bounds_proc
     type(bounds_type)  :: bounds_clump
     integer,parameter :: number_of_sites = 42
+    integer,parameter :: maxtunits = 1  ! max_topounits = 1 -- multiple topounits/gridcell not supported yet
     integer :: ni, nj=1
     integer :: c, l, g, t
     integer, allocatable :: amask(:)
     real*8 , allocatable  :: icemask_grc(:)
     real(r8), allocatable :: h2osno_col(:)
     real(r8), allocatable :: snow_depth_col(:)
+    real(r8), allocatable :: dummy_2d_arr(:,:)
     
     ! convert number use input of sets of sites to total number of sites 
     ni = clump_input*number_of_sites 
@@ -96,10 +98,10 @@ module elm_initializeMod
     !NOTE: wt_lunit, urban_valid need to be updated to support
     !  multiple topounits if desired
     call get_proc_bounds(begg=begg, endg=endg)
-    allocate (wt_lunit (begg:endg, max_lunit)); wt_lunit(:,:) = 0d0
+    allocate (wt_lunit (begg:endg,maxtunits,max_lunit)); wt_lunit(:,1,:) = 0d0
     
-    allocate (urban_valid  (begg:endg));  urban_valid(:) = .true.
-    allocate(wt_glc_mec(1,1)); wt_glc_mec = reshape((/0D0/),shape(wt_glc_mec)) !reshape((/1.6127168011336070D-312/),shape(wt_glc_mec))
+    allocate (urban_valid  (begg:endg,maxtunits));  urban_valid(:,1) = .true.
+    allocate(wt_glc_mec(1,maxtunits,1)); wt_glc_mec = reshape((/0D0/),shape(wt_glc_mec)) !reshape((/1.6127168011336070D-312/),shape(wt_glc_mec))
     call read_weights(in_file_vars, numg=number_of_sites)
     !! Duplicate weights 
     if(clump_input > 1) then 
@@ -115,7 +117,7 @@ module elm_initializeMod
     ! No ghost cells
     procinfo%ncells_ghost    = 0
     !--------------------------------------------------------------------------------
-    procinfo%ntopounits_ghost   = 0
+    procinfo%ntunits_ghost   = 0
     procinfo%nlunits_ghost   = 0
     procinfo%ncols_ghost     = 0
     procinfo%npfts_ghost     = 0
@@ -136,7 +138,7 @@ module elm_initializeMod
     
     ! All = local (as no ghost cells)
     procinfo%ncells_all      = procinfo%ncells
-    procinfo%ntopounits_all  = procinfo%ntopounits
+    procinfo%ntunits_all  = procinfo%ntunits
     procinfo%nlunits_all     = procinfo%nlunits
     procinfo%ncols_all       = procinfo%ncols
     procinfo%npfts_all       = procinfo%npfts
@@ -212,11 +214,11 @@ module elm_initializeMod
     call grc_ef%Init(begg, endg)
     
     call lun_ws%Init(begl, endl)
-    
+    allocate(dummy_2d_arr(begc:endc,1:nlevgrnd))
+
     call col_ws%Init(bounds_proc%begc_all, bounds_proc%endc_all, &
-    h2osno_col(begc:endc),                    &
-    snow_depth_col(begc:endc))
-    
+          h2osno_col(begc:endc),  snow_depth_col(begc:endc), &
+          dummy_2d_arr(begc:endc,1:nlevgrnd))
     
     call top_as%Init(begt, endt)
     call top_af%Init(begt, endt)
@@ -290,7 +292,7 @@ module elm_initializeMod
     call canopystate_vars%Init(bounds_proc)
     call dust_vars%Init(bounds_proc)
     call aerosol_vars%Init    (bounds_proc)
-    call ch4_vars%Init        (bounds_proc)
+    call ch4_vars%Init        (bounds_proc,cellorg_col=dummy_2d_arr(begc:endc,1:nlevgrnd))
     call solarabs_vars%Init(bounds_proc)
     call surfalb_vars%Init(bounds_proc)
     call surfrad_vars%Init(bounds_proc)
@@ -347,6 +349,7 @@ module elm_initializeMod
     deallocate(h2osno_col)
     deallocate(snow_depth_col)
     deallocate(amask)
+    deallocate(dummy_2d_arr)
     
   end subroutine elm_init
   

@@ -441,7 +441,7 @@ contains
     #endif
 
     !!! DecompCascadeBGCMod
-    if((.not. is_active_betr_bgc) .and. use_century_decomp) then
+    if(use_century_decomp) then
     #ifdef DECOMPCASCADEBGCMOD
     call fio_read(18,"DecompBGCParamsInst%cn_s1_bgc    ",DecompBGCParamsInst%cn_s1_bgc    ,errcode=errcode)
     call fio_read(18,"DecompBGCParamsInst%cn_s2_bgc    ",DecompBGCParamsInst%cn_s2_bgc    ,errcode=errcode)

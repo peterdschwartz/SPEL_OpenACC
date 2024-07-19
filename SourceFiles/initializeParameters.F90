@@ -1,8 +1,8 @@
 module initializeParameters
-#define nan spval
+
+#include "unittest_defs.h"
   use elm_varcon
   use elm_varpar
-  use Tracer_varcon
   use soilorder_varcon
   use pftvarcon
   !#USE_START
