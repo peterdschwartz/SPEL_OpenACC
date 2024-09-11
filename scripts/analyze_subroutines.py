@@ -1,12 +1,15 @@
+import os.path
 import re
 import sys
-import os.path
-from process_associate import getAssociateClauseVars
-from mod_config import home_dir,_bc
-from LoopConstructs import Loop, exportVariableDependency
-from utilityFunctions import  find_file_for_subroutine,getLocalVariables,line_unwrapper
 from collections import namedtuple
-from utilityFunctions import get_interface_list # just make this a global variable? 
+
+from LoopConstructs import Loop, exportVariableDependency
+from mod_config import _bc, home_dir
+from process_associate import getAssociateClauseVars
+from utilityFunctions import \
+    get_interface_list  # just make this a global variable?
+from utilityFunctions import (find_file_for_subroutine, getLocalVariables,
+                              line_unwrapper)
 
 # Declare namedtuple for readwrite status of variables:
 ReadWrite = namedtuple('ReadWrite',['status','ln'])
@@ -163,11 +166,11 @@ class Subroutine(object):
         * update_arg_tree -> maps dummy args to real args 
         * generate_unstructured_data_regions -> inserts OpenACC data regions for local variables 
     """
-    from utilityFunctions import  find_file_for_subroutine, getLocalVariables
+    from utilityFunctions import find_file_for_subroutine, getLocalVariables
     
     def __init__(self, name,file='',calltree=[],start=0,end=0,
                  cpp_start=None,cpp_end=None,cpp_fn=None,
-                 ignore_interface=False,verbose=False):
+                 ignore_interface=False,verbose=False, lib_func=False):
         """
         Initalizes the subroutine object:
             1) file for the subroutine is found if not given 
@@ -177,7 +180,9 @@ class Subroutine(object):
         """
         
         self.name = name
-        
+        self.library = lib_func
+        if(lib_func):
+            print(f"Creating Subroutine {self.name} in {file} L{start}-{end}")
         # Find subroutine
         if(not ignore_interface):
             if( not file and start == 0 and end == 0):
@@ -200,9 +205,10 @@ class Subroutine(object):
 
         # Process the Associate Clause 
         self.associate_vars = {}
-        self.associate_vars, jstart, jend = getAssociateClauseVars(self)
-        self.associate_start = jstart
-        self.associate_end = jend
+        if(not lib_func):
+            self.associate_vars, jstart, jend = getAssociateClauseVars(self)
+            self.associate_start = jstart
+            self.associate_end = jend
         
         # Initialize arguments and local variables 
         self.Arguments = {} # Order is important here 
@@ -211,17 +217,17 @@ class Subroutine(object):
         self.LocalVariables['scalars'] = {}
         self.class_method = False
         self.class_type = None
-        # Retrieve dummy arguments 
-        self.dummy_args_list = self._get_dummy_args()
 
         # Store when the arguments/local variable declarations start and end
         self.var_declaration_startl = 0
         self.var_declaration_endl = 0
         self.cpp_startline = cpp_start
         self.cpp_endline = cpp_end
-        if(name == 'soilthermprop'):
-            verbose = True 
-        getLocalVariables(self,verbose=verbose)
+        
+        # Retrieve dummy arguments and parse variables
+        if(not lib_func):
+            self.dummy_args_list = self._get_dummy_args()
+            getLocalVariables(self,verbose=verbose)
 
         self.elmtype_r = {}
         self.elmtype_w = {}
@@ -233,9 +239,6 @@ class Subroutine(object):
         self.elmtypes  = []
         self.DoLoops   = []
         self.status = False
-
-
-        
 
     def printSubroutineInfo(self,long=False):
         """
@@ -270,7 +273,7 @@ class Subroutine(object):
         # Print Child Subroutines
         if(self.child_Subroutine):
             print(f"Child Subroutines:")
-            for s in self.child_Subroutine.keys():
+            for s in self.child_Subroutine.values():
                 print(f"{tab}{s.name}")
         print(_bc.ENDC)
         return None 
@@ -332,29 +335,25 @@ class Subroutine(object):
         This function will find child subroutines and variables used
         in the associate clause to be used for parsing for ro and wr derived types
         """
-        from mod_config import _bc,regex_skip_string
-        from utilityFunctions import getArguments
-        from interfaces import resolve_interface 
+        from interfaces import resolve_interface
+        from mod_config import _bc, regex_skip_string
+        from utilityFunctions import getArguments 
         func_name = '_preprocess_file'
-
-        # Logical that tracks if subroutine file needs to be overwritten.
-        rewrite = False
         
+        # Note: no longer serves a purpose here
         self._check_acc_status()
+        
         m_skip = regex_skip_string.search(self.name)
         
         if(self.cpp_filepath):
-            print("Opening cpp filepath:",self.cpp_filepath)
             fn = self.cpp_filepath
-            print(f"subroutine {self.name} at L{self.cpp_startline}-{self.cpp_endline}")
-            self.printSubroutineInfo()
         else:
             fn = self.filepath
         
         file = open(fn,'r')
         lines = file.readlines()
         file.close()
-
+        regex_ptr = re.compile(r'\w+\s*(=>)\s*\w+(%)\w+')
         # Set up dictionary of derived type instances
         global_vars = {} 
         for argname, arg in self.Arguments.items():
@@ -368,12 +367,21 @@ class Subroutine(object):
 
         # Loop through subroutine and find any child subroutines
         if(self.cpp_startline):
-            ct = self.cpp_startline
+            if(self.associate_end == 0):
+                ct = self.cpp_startline
+            else:
+                # Note: currently don't differentiate between cpp files and regular files
+                #       for location of the associate clause.
+                ct = self.associate_end 
             endline = self.cpp_endline
         else:
-            ct = self.startline
+            if(self.associate_end == 0):
+                ct = self.startline
+            else:
+                ct = self.associate_end
             endline = self.endline 
 
+        # Loop through the routine and find any child subroutines
         while(ct < endline):
             line = lines[ct]
             # get rid of comments
@@ -381,9 +389,9 @@ class Subroutine(object):
             if(not line): 
                 ct+=1
                 continue
-            if(self.name == 'soilthermprop'):
-                print(ct, line.rstrip('\n'))
-            
+            match_ptr = regex_ptr.search(line)
+            if(match_ptr):
+                print(f"{func_name}::Found pointer assignment at line {ct}\n{line}")
             match_call = re.search(r'^call ',line.strip())
             if(match_call) :
                 x = line.strip().replace('(',' ').replace(')',' ').split()
@@ -402,23 +410,30 @@ class Subroutine(object):
                     ct += 1
                     l = l[:-1] + lines[ct].strip('\n').strip()
                 l = l.strip()
+
                 # args is a list of arguments passed to subroutine
                 args = getArguments(l)
+
                 # If child sub name is an interface, then 
                 # find the actual subroutine name corresponding
                 # to the main subroutine dictionary
                 if(child_sub_name in interface_list):
                     child_sub_name, childsub = resolve_interface(self,iname=child_sub_name,
-                                                                    args=args,dtype_dict=global_vars,
-                                                                    sub_dict=main_sub_dict,
-                                                                    verbose=verbose)
+                                                                args=args,dtype_dict=global_vars,
+                                                                sub_dict=main_sub_dict,
+                                                                verbose=verbose)
                     if(not child_sub_name): 
                         print(f"{func_name}::Error couldn't resolve interface for {x[1]}")
                         self.printSubroutineInfo()
                         sys.exit(1)
                     print(f"{func_name}::New child sub name is:", child_sub_name)
                 elif('%' in child_sub_name):
-                    print(f"WARNING CALLING CLASS METHOD at LINE {ct}!")
+                    # TODO: in DerivedType module, add logic to capture any `Alias` => 'function`
+                    #       statements to more easily resolve class methods called with 
+                    #       `call <var>%<alias>()` syntax.
+                    print(_bc.WARNING
+                        +f"{func_name}::WARNING CALLING CLASS METHOD at {self.name}:L{ct}!\n{l}"
+                        +_bc.ENDC)
                     var_name, method_name = child_sub_name.split('%')
                     class_type = global_vars[var_name].type_name
                     for test_sub in main_sub_dict.values():
@@ -431,6 +446,8 @@ class Subroutine(object):
                     if(child_sub_name not in main_sub_dict):
                         print(_bc.WARNING+f"Warning: {child_sub_name} not in main_sub_dict."
                               +"\nCould be library function?"+_bc.ENDC)
+                        childsub = Subroutine(name=child_sub_name,calltree=[],file='lib.F90', start=-999,
+                                              end=-999, lib_func=True)
                     else:
                         childsub = main_sub_dict[child_sub_name]
                 # Store the subroutine call information (name of parent and the arguments passed)
@@ -507,6 +524,7 @@ class Subroutine(object):
         if(not self.associate_vars):
             no_associate = True
         else:
+            # associate_vars is a dictionary { ptrname : variable}
             no_associate = False
             ptrname_list = [key for key in self.associate_vars.keys()]
             ptrname_str = '|'.join(ptrname_list)
@@ -580,8 +598,6 @@ class Subroutine(object):
             else:
                 # read-write
                 self.elmtype_rw[varname] = 'rw'
-
-        
         
         return None 
 
@@ -649,6 +665,9 @@ class Subroutine(object):
 
         # child_subroutine_list is a list of Subroutine instances 
         for child_sub in self.child_Subroutine.values():
+            if(child_sub.library):
+                print(f"{func_name}:: {child_sub.name} is a library function -- Skipping.")
+                continue
             print("Analyzing child subroutine:",child_sub.name)
             if(child_sub.name in interface_list):
                 print(f"{func_name}::Error: need to resolve interface for {child_sub.name}")
@@ -794,11 +813,13 @@ class Subroutine(object):
         Function that will parse the loop structure of a subroutine
         Add loop parallel directives if desired
         """
-        from mod_config import _bc
-        from utilityFunctions import lineContinuationAdjustment,getLocalVariables
-        from utilityFunctions import find_file_for_subroutine, getArguments, get_interface_list
-        from utilityFunctions import determine_filter_access
         from interfaces import resolve_interface
+        from mod_config import _bc
+        from utilityFunctions import (determine_filter_access,
+                                      find_file_for_subroutine,
+                                      get_interface_list, getArguments,
+                                      getLocalVariables,
+                                      lineContinuationAdjustment)
 
         interface_list = get_interface_list() # move this to a global variable in mod_config?
         if(not subcall):

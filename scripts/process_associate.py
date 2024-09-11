@@ -45,6 +45,8 @@ def getAssociateClauseVars(sub, verbose=False):
             find_ex = parsed[0].strip()
             repl_ex = parsed[1].strip()
             repl_ex = regex_remove_index.sub('',repl_ex)
+            find_ex = find_ex.lower() 
+            repl_ex = repl_ex.lower()
             if(find_ex in associate_vars):
                 print(f"{func_name}::Error! Multiple associations for {find_ex} in {subroutine_name}")
                 sys.exit(1)
