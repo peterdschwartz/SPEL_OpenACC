@@ -33,14 +33,30 @@ class Variable(object):
     """
     Class to hold information on the variable
     declarations in a subroutine
-        * self.type -> data type of variable
-        * self.name -> name of variable
-        * self.subgrid -> subgrid level used for allocation
-        * self.ln -> line number of declaration
+        * self.type : data type of variable
+        * self.name : name of variable
+        * self.subgrid : subgrid level used for allocation
+        * self.ln : line number of declaration
+        * self.dim : dimension of variable
+        * self.declaration : module var is declared in
+        * self.keyword  : argument alias
+        * self.optional : optional arguments
+        * self.subs : list of subroutines that use variable (not implemented)
     """
 
+    # NOTE: several fields rely on default values in most cases.
+    # Could delete from base class and create subclasses (i.e., GlobalVar, Argument)
     def __init__(
-        self, type, name, subgrid, ln, dim, declaration="", optional=False, keyword=""
+        self,
+        type,
+        name,
+        subgrid,
+        ln,
+        dim,
+        declaration="",
+        optional=False,
+        keyword="",
+        active=False,
     ):
         self.type = type
         self.name = name
@@ -52,10 +68,12 @@ class Variable(object):
         self.keyword = keyword
         self.filter_used = ""
         self.subs = []
+        # Mostly used for global derived-type variables
         if declaration:
             self.declaration = declaration
         else:
             self.declaration = ""
+        self.active = active
 
     # Define equality for comparison of two Variables
     def __eq__(self, other):
@@ -1027,25 +1045,26 @@ def line_unwrapper(lines, ct, verbose=False):
     return full_line, newct
 
 
-def insert_header_for_unittest(file_list,casedir,mod_dict):
+def insert_header_for_unittest(file_list, casedir, mod_dict):
     """
     Function that will insert the header file into files needed for unit test
     The header file contains definitions to aid in compilation (e.g, override pio types)
     """
     from fortran_modules import get_module_name_from_file
+
     func_name = "insert_header_for_unittest"
-    
+
     # Loop through files, insert header, and save them to the Unit Test dir
     for f in file_list:
 
         # Retrieve module name for the file and the linenumber it starts at.
-        # Note that `linenumber` is 1-indexed from grep. So that if we insert, 
+        # Note that `linenumber` is 1-indexed from grep. So that if we insert,
         # at that loc here, it will be just after the "module" statement.
         linenumber, mod_name = get_module_name_from_file(f)
 
         # Change path to unit test case directory
-        base_fn = f.split('/')[-1]
-        new_fpath = casedir+'/'+base_fn
+        base_fn = f.split("/")[-1]
+        new_fpath = casedir + "/" + base_fn
         # NOTE: removed this check since the current SPEL will only ever
         #       insert headers into files within the case directory.
         # First check if the header is already included

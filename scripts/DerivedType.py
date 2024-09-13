@@ -3,6 +3,7 @@ import subprocess as sp
 import sys
 
 import write_routines as wr
+from fortran_modules import get_module_name_from_file
 from mod_config import ELM_SRC
 from utilityFunctions import Variable, parse_line_for_variables
 
@@ -60,18 +61,23 @@ def get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=Fa
     instance_list = []
     if output:
         output = output.split("\n")
-        if verbose:
-            print("Found these instances of ", type_name)
-            print(output)
         for el in output:
             inst_name = el.split("::")[-1]
             inst_name = inst_name.split("!")[0].strip().lower()
+
             filepath = el.split(":")[0].strip()
             ln = int(el.split(":")[1].strip())
+            # Get module name
+            mod_ln, module_name = get_module_name_from_file(filepath)
 
             dim = inst_name.count(":")
             inst_var = Variable(
-                type=type_name, name=inst_name, subgrid="?", ln=ln, dim=dim
+                type=type_name,
+                name=inst_name,
+                subgrid="?",
+                ln=ln,
+                dim=dim,
+                declaration=module_name,
             )
             if inst_var not in instance_list:
                 instance_list.append(inst_var)
@@ -304,7 +310,7 @@ class DerivedType(object):
             sys.exit()
         self.analyzed = True
 
-    def create_write_read_functions(self, rw, ofile, include_list, gpu=False):
+    def create_write_read_functions(self, rw, ofile, gpu=False):
         #
         # This function will write two .F90 functions
         # that write read and write statements for all
@@ -314,7 +320,7 @@ class DerivedType(object):
         #
         fates_list = ["veg_pp%is_veg", "veg_pp%is_bareground", "veg_pp%wt_ed"]
         for var in self.instances:
-            if var.name not in include_list:
+            if not var.active:
                 continue
             if rw.lower() == "write" or rw.lower() == "w":
                 ofile.write(tab + "\n")
@@ -327,13 +333,19 @@ class DerivedType(object):
                 ofile.write(tab + "\n")
                 if gpu:
                     ofile.write(tab + "!$acc update self(& \n")
-                    vars = []
+
+                # Any component of the derived type accessed by the Unit Test
+                # should have been toggled active at this point.
+                # Go through the instance of this derived type and write I/O
+                # for any active components.
+                vars = []
                 for n, component in enumerate(self.components):
                     active = component["active"]
                     field_var = component["var"]
                     if not active:
                         continue
 
+                    # Filter out C13/C14 duplicates and fates only variables.
                     c13c14 = bool("c13" in field_var.name or "c14" in field_var.name)
                     if c13c14:
                         continue
@@ -362,6 +374,11 @@ class DerivedType(object):
                     )
                 )
                 ofile.write(tab + "\n")
+
+                # Any component of the derived type accessed by the Unit Test
+                # should have been toggled active at this point.
+                # Go through the instance of this derived type and write I/O
+                # for any active components.
                 for component in self.components:
                     active = component["active"]
                     field_var = component["var"]

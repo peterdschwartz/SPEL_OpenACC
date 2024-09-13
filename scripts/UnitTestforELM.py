@@ -1,4 +1,4 @@
-def main():
+def main() -> None:
     """
     Edit case_dir and sub_name_list to create a Functional Unit Test
     in a directory called {case_dir} for the subroutines in sub_name_list.
@@ -127,6 +127,7 @@ def main():
     #             adjust_allocation=adjust_allocation,
     #         )
     #     print("Done running in Optimization Mode")
+
     if not mod_dict:
         print(f"{func_name}::Error didn't find any modules related to subroutines")
         sys.exit(1)
@@ -163,17 +164,17 @@ def main():
             dtype_dict=type_dict, main_sub_dict=main_sub_dict, verbose=True
         )
 
-        # print(_bc.OKGREEN + f"Derived Type Analysis for {subroutines[s].name}")
-        # print(f"{func_name}::Read-Only")
-        # for key in subroutines[s].elmtype_r.keys():
-        #     print(key, subroutines[s].elmtype_r[key])
-        # print(f"{func_name}::Write-Only")
-        # for key in subroutines[s].elmtype_w.keys():
-        #     print(key, subroutines[s].elmtype_w[key])
-        # print(f"{func_name}::Read-Write")
-        # for key in subroutines[s].elmtype_rw.keys():
-        #     print(key, subroutines[s].elmtype_rw[key])
-        # print(_bc.ENDC)
+        print(_bc.OKGREEN + f"Derived Type Analysis for {subroutines[s].name}")
+        print(f"{func_name}::Read-Only")
+        for key in subroutines[s].elmtype_r.keys():
+            print(key, subroutines[s].elmtype_r[key])
+        print(f"{func_name}::Write-Only")
+        for key in subroutines[s].elmtype_w.keys():
+            print(key, subroutines[s].elmtype_w[key])
+        print(f"{func_name}::Read-Write")
+        for key in subroutines[s].elmtype_rw.keys():
+            print(key, subroutines[s].elmtype_rw[key])
+        print(_bc.ENDC)
 
         for key in subroutines[s].elmtype_r.keys():
             c13c14 = bool("c13" in key or "c14" in key)
@@ -219,34 +220,13 @@ def main():
             aggregated_elmtypes_list.append(dtype_inst)
 
     instance_to_user_type = {}
-    elm_inst_vars = {}
     for type_name, dtype in type_dict.items():
         if "bounds" in type_name:
             continue
+        # All instances should have been found so throw an error
         if not dtype.instances:
             print(f"Warning: no instances found for {type_name}")
-            cmd = f'grep -rin -E "^[[:space:]]*(type)[[:space:]]*\({type_name}" {ELM_SRC}/main/elm_instMod.F90'
-            output = sp.getoutput(cmd)
-            if output:
-                output = output.split("\n")
-                if len(output) > 1:
-                    print(f"Warning: multiple instances found for {type_name}")
-                    print(output)
-                    sys.exit(1)
-                line = output[0]
-                line = line.replace("::", "")
-                line = line.split(":")
-
-                decl = line[1].strip()
-                decl = decl.split()
-                var = decl[1]
-                new_inst = Variable(
-                    type_name, var, subgrid="?", ln=0, dim=0, declaration="elm_instMod"
-                )
-                dtype.instances.append(new_inst)
-                elm_inst_vars[var] = dtype
-            else:
-                print(f"Warning: no instances found for {type_name}")
+            sys.exit(1)
         for instance in dtype.instances:
             instance_to_user_type[instance.name] = type_name
 
@@ -302,11 +282,11 @@ def main():
     for dtype in type_dict.values():
         for inst in dtype.instances:
             elmvars_dict[inst.name] = inst
-    #
+
+    # create list of variables that should be used for verification.
+    # Will go ahead and use all variables for now but can limit to just w,rw
+    # to save memory if needed.
     for sub in subroutines.values():
-        # create list of variables that should be used for verification.
-        # Will go ahead and use all variables for now but can limit to just w,rw
-        # to save memory if needed.
         verify_vars = {}
         total_vars = []
         total_vars.extend(sub.elmtype_r.keys())
@@ -333,11 +313,8 @@ def main():
     cmd = f"cp {scripts_dir}/script-output/concat.F90 {case_dir}/verificationMod.F90"
     os.system(cmd)
 
-    #
-    # print and write stencil for acc directives to screen to be c/p'ed in main.F90
+    # Print and Write stencil for acc directives to screen to be c/p'ed in main.F90
     # may be worth editing main.F90 directly.
-    #
-
     aggregated_elmtypes_list.sort(key=lambda v: v.upper())
     acc = _bc.BOLD + _bc.HEADER + "!$acc "
     endc = _bc.ENDC
@@ -359,32 +336,42 @@ def main():
         if var in read_types:
             read_types.remove(var)
 
-    # Fill out directory for Unit Test
+    # Generate/modify FORTRAN files needed to initialize and run Unit Test
+    # main.F90
     wr.clean_main(aggregated_elmtypes_list, files=needed_mods, case_dir=case_dir)
-
-    wr.write_elminstMod(elm_inst_vars, case_dir)
-
+    # elm_instMod.F90
+    wr.write_elminstMod(type_dict, case_dir)
+    # duplicateMod.F90
     wr.duplicate_clumps(type_dict)
-    wr.create_read_vars(type_dict, read_types)
-    wr.create_write_vars(type_dict, read_types, casename, use_isotopes=False)
+    # readMod.F90
+    wr.create_read_vars(type_dict)
+    # writeMod.F90
+    wr.create_write_vars(type_dict, casename, use_isotopes=False)
+
+    # Go through all needed files and include a header that defines some constants
     insert_header_for_unittest(
         file_list=needed_mods, casedir=case_dir, mod_dict=mod_dict
     )
-    os.system(
-        f"cp {spel_output_dir}duplicateMod.F90 {spel_output_dir}readMod.F90 {spel_output_dir}writeMod.F90 {case_dir}"
+    cmd = (
+        f"cp {spel_output_dir}duplicateMod.F90 "
+        + f"{spel_output_dir}readMod.F90 {spel_output_dir}writeMod.F90 {case_dir}"
     )
+    os.system(cmd)
     os.system(f"cp {spel_mods_dir}fileio_mod.F90 {case_dir}")
     os.system(f"cp {spel_mods_dir}unittest_defs.h {case_dir}")
     os.system(f"cp {spel_mods_dir}decompInitMod.F90 {case_dir}")
+
+    return None
 
 
 def set_active_variables(type_dict, type_lookup, variable_list, dtype_info_list):
     """
     This function sets the active status of the user defined types
     based on variable list
-        * type_dict -- dictionary of all user-defined types found in the code
-        * type_lookup -- dictionary that maps an variable to it's user-defined type
-        * variable_list -- list of variables that are used (eg. elmtype_r, elmtype_w)
+        * type_dict   : dictionary of all user-defined types found in the code
+        * type_lookup : dictionary that maps an variable to it's user-defined type
+        * variable_list   : list of variables that are used (eg. elmtype_r, elmtype_w)
+        * dtype_info_list : list for saving to file (redundant?)
     """
     for var in variable_list:
         dtype, component = var.split("%")
@@ -392,13 +379,26 @@ def set_active_variables(type_dict, type_lookup, variable_list, dtype_info_list)
             continue
         type_name = type_lookup[dtype]
         type_dict[type_name].active = True
+        # Set which components of derived type are active
         for c in type_dict[type_name].components:
             field_var = c["var"]
-            if field_var.name == component:
+            if field_var.name == component and not c["active"]:
                 c["active"] = True
                 datatype = field_var.type
                 dim = field_var.dim
                 dtype_info_list.append([dtype, field_var.name, datatype, f"{dim}D"])
+
+    # Set which instances of derived types are actually used.
+    global_vars = [v.split("%")[0] for v in variable_list]
+    global_vars = list(set(global_vars))
+    for var in global_vars:
+        if "bounds" == var:
+            continue
+        type_name = type_lookup[var]
+        # Set which instances of the derived type are active
+        for inst in type_dict[type_name].instances:
+            if inst.name == var and not inst.active:
+                inst.active = True
 
     return None
 
