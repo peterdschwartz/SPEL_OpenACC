@@ -1,125 +1,216 @@
-from numpy import require
+from collections import namedtuple
+
+import numpy as np
+from tabulate import tabulate
+
+# namedtuple for summary of errors
+Tally = namedtuple("Tally", ["name", "total", "rmse", "max"])
 
 
-def loadData(file):
-   """
-   This function loads the data from a verfication 
-   module generated file
-   """
-   import re 
-   var_name_regex = re.compile('\w+(%)\w+')
-   varnames = []
-   vardict = {}
-   for line in file:
-      match_varname = var_name_regex.search(line)
-      if(match_varname):
-         var = match_varname.group()
-         varnames.append(var) 
-         continue 
-      data = line.strip().split()
-      ##########################
-      for x in data:
-         vardict.setdefault(var,[]).append(float(x))
+def loadData_input(file, verbose):
+    """
+    This function loads the data from a verfication
+    module generated file.
 
-   return vardict 
-   
+    Data in the text files are assummed to have the format:
+       <variable name>  <shape(var)>
+    """
+    import re
 
-def errorVerification(cpufn,gpufn):
-   """
-   This function performs BFB statistical analysis on 
-   a cpu and gpu run.  
-   """
-   import numpy as np 
-   import sys
-   
-   # Flag to control if only average diffs should be recorded:
-   average = True 
-   if(average):
-      num = 4
-   else:
-      num = 100
+    dtype_name_regex = re.compile(r"^\w+(%)\w+")
+    var_name = re.compile(r"^\w+")
+    varnames = []
+    vardict = {}
+    var_dims = {}
+    # Go through data file by reading in variable name / dimension
+    # and filling then read the it's values
+    EOF = len(file)
+    ln = 0
+    while ln < EOF:
+        line = file[ln]
+        line = line.strip()
+        # match current variable name and shape
+        match_dtypename = dtype_name_regex.search(line)
+        match_varname = var_name.search(line)
+        var = ""
+        if match_dtypename:
+            var = match_dtypename.group()
+        elif match_varname:
+            var = match_varname.group()
+        varnames.append(var)
+        # substitute varname out of line, so only the shape remains
+        line = line.replace(var, "").strip()
+        dims = line.split()
+        dims = [int(d) for d in dims]
+        var_dims[var] = dims
+        # Get total number of elements to be read:
+        size = 1
+        for dim in dims:
+            size *= dim
+        # Now read in 'size' elements:
+        current_el = 0
+        while current_el < size:
+            ln += 1
+            line = file[ln].strip()
+            data = line.split()
+            # Temporarily store data as a list. Use var_dims to reshape to numpy array
+            for x in data:
+                if x == "T":
+                    x = 1
+                elif x == "F":
+                    x = 0
+                vardict.setdefault(var, []).append(float(x))
+                current_el += 1
+        ln += 1
+        if verbose and ln < EOF:
+            print(f"finished reading in data for {var} {dims}. next line:\n{file[ln]}")
 
-   # Read files to compare 
-   print(f"CPU file {cpufn} ::: : ::: GPU file {gpufn}")
-   file = open(cpufn, 'r')
-   cpufile = file.readlines()
-   file.close() 
-   #
-   file = open(gpufn,'r') 
-   gpufile = file.readlines() 
-   file.close() 
-   
-   cpudata = loadData(cpufile)
-   gpudata = loadData(gpufile)
+    # Go through each var in vardict and convert to numpy array.
+    for var, vals in vardict.items():
+        vardict[var] = np.reshape(vals, tuple(var_dims[var]))
 
-   for var in cpudata.keys():
-      info = [] 
-      cpu_arr = np.array(cpudata[var])
-      gpu_arr = np.array(gpudata[var]) 
-      if(len(cpu_arr) != len(gpu_arr)): 
-         print("Error: gpu and cpu arrays aren't same length ")
-         sys.exit()
-      compare =  cpu_arr - gpu_arr
-      compare = np.abs(compare)
-      # compute squared error:
-      sqred = compare**2
-      # reference total 
-      rmse = np.sqrt(np.sum(sqred)/len(cpu_arr)) 
-      if(rmse > 1.E-10):
-         print(f"{var}  rmse:  {rmse}")
-
-      for i in range(0,len(cpu_arr)):
-         if(cpu_arr[i] > 0.0):
-            norm = np.abs(compare[i]/cpu_arr[i]) 
-         else:
-            norm = compare[i] 
-
-         if(norm > 1.E-10):
-            info.append([i+1,cpu_arr[i],gpu_arr[i],compare[i],norm])
-      if(info):
-         count = 1
-         for el in info:
-            if(count < num) :
-               print(el)
-               count += 1 
-            else:
-               break
-
-            
-      
-def findDataFiles(unittest): 
-   import subprocess as sp
-
-   #get the cpu files:
-   output = sp.getoutput(f"ls -t cpu_{unittest}*.txt")
-   temp = output.split()
-   temp.reverse() 
-   cpu_files = temp.copy()
-
-   #get the gpu files :
-   output = sp.getoutput(f'ls -t gpu_{unittest}*.txt')
-   temp = output.split()
-   temp.reverse() 
-   gpu_files = temp.copy()
-   return cpu_files, gpu_files
-
-if (__name__ == '__main__'):
-   import argparse
-   import sys 
-   parser = argparse.ArgumentParser(prog='errorAnalysis',description="BFB analysis for cpu vs gpu")
-   parser.add_argument('-c',action='store',required=False,dest='cpufn',help='cpu data filename',default='')
-   parser.add_argument('-g',action='store',required=False,dest='gpufn',help='gpu data filename',default='')
-   parser.add_argument('-b',action='store',required=False,dest='unittest',help="Analyze all files found for this unit-test",default='')
-   args = parser.parse_args()
-   if(args.cpufn and args.gpufn):
-      errorVerification(cpufn=args.cpufn, gpufn=args.gpufn)
-   elif(args.unittest):
-      print(f"performing batch for UnitTest {args.unittest}")
-      cpu_files, gpu_files = findDataFiles(args.unittest)
-      if(len(cpu_files) != len(gpu_files)):
-         sys.exit("CPU and GPU data files do not match!")
-      for n in range(0,len(cpu_files)):
-         errorVerification(cpufn=cpu_files[n],gpufn=gpu_files[n])
+    return vardict
 
 
+def compute_error(var, refdata, testdata, diff_log, verbose=False):
+    """
+    var : variable name
+    refdata : data from reference file
+    testdata : data from test file
+    """
 
+    # Set parameters and initialize diff log
+    EPSILON = 1.0e-50
+    ERROR = 1.0e-16  # Threshold to report
+    NUMLOGS = 8  # total number of examples to report
+    diff_vals = refdata - testdata
+    diff_vals = np.abs(diff_vals)
+    # Find ref values that are non-zero
+    nonzero_elements = np.full(diff_vals.shape, True)
+
+    nonzero_elements[np.abs(refdata) == 0.0] = False
+    zero_elements = np.invert(nonzero_elements)
+
+    # Calculated relative error at each position:
+    relerror = np.zeros(diff_vals.shape, dtype=np.float64)
+    relerror[nonzero_elements] = diff_vals[nonzero_elements] / np.abs(
+        refdata[nonzero_elements]
+    )
+    relerror[zero_elements] = diff_vals[zero_elements] / EPSILON
+
+    # Generate mask for significant errors greater than threshold ERROR.
+    # Then use mask to retrieve corresponding elements from data arrays
+    sig_elements = np.full(diff_vals.shape, False)
+    sig_elements[relerror > ERROR] = True
+
+    indices = np.argwhere(relerror > ERROR)
+    sig_diffs = relerror[sig_elements]
+    og_vals = refdata[sig_elements]
+    test_vals = testdata[sig_elements]
+    if len(sig_diffs) > 0:
+        newvar_header = [f"{var}", "**", "**", "**"]
+        # Calculate RMSE:
+        rmse = np.sqrt(((og_vals - test_vals) ** 2).mean()) / np.sqrt(len(og_vals))
+        summary = Tally(
+            "Summary",
+            f"# diffs: {len(sig_diffs)}",
+            f"rmse: {rmse}",
+            f"max: {np.max(sig_diffs)}",
+        )
+        diff_log.append(tuple(newvar_header))
+        for i, diff in enumerate(sig_diffs):
+            indices[i] += 1
+            coords = tuple(indices[i])
+            og_val = og_vals[i]
+            t_val = test_vals[i]
+            if i <= NUMLOGS:
+                diff_log.append(tuple([coords, og_val, t_val, diff]))
+        diff_log.append(summary)
+    else:
+        summary = None
+    return diff_log
+
+
+def errorVerification(reffn, testfn):
+    """
+    This function performs BFB statistical analysis on
+    a ref and test run.
+    """
+
+    # Read files to compare
+    print(f"ref file {reffn} ::: : ::: test file {testfn}")
+    file = open(reffn, "r")
+    reffile = file.readlines()
+    file.close()
+    file = open(testfn, "r")
+    testfile = file.readlines()
+    file.close()
+    # Retrieve and store data as a dictionary of numpy arrays
+    refdata = loadData_input(reffile, verbose=False)
+    testdata = loadData_input(testfile, verbose=False)
+
+    report = []
+    for var in refdata:
+        report = compute_error(var, refdata[var], testdata[var], report, verbose=True)
+    print(tabulate(report, tablefmt="psql"))
+
+
+def findDataFiles(unittest):
+    import subprocess as sp
+
+    # get the ref files:
+    output = sp.getoutput(f"ls -t ref_{unittest}*.txt")
+    temp = output.split()
+    temp.reverse()
+    ref_files = temp.copy()
+
+    # get the test files :
+    output = sp.getoutput(f"ls -t test_{unittest}*.txt")
+    temp = output.split()
+    temp.reverse()
+    test_files = temp.copy()
+    return ref_files, test_files
+
+
+if __name__ == "__main__":
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        prog="errorAnalysis", description="BFB analysis for ref vs test"
+    )
+    parser.add_argument(
+        "--ref",
+        action="store",
+        required=False,
+        dest="reffn",
+        help="ref data filename",
+        default="",
+    )
+    parser.add_argument(
+        "--test",
+        action="store",
+        required=False,
+        dest="testfn",
+        help="test data filename",
+        default="",
+    )
+    parser.add_argument(
+        "-b",
+        action="store",
+        required=False,
+        dest="unittest",
+        help="Analyze all files found for this unit-test",
+        default="",
+    )
+    args = parser.parse_args()
+
+    if args.reffn and args.testfn:
+        errorVerification(reffn=args.reffn, testfn=args.testfn)
+    elif args.unittest:
+        print(f"performing batch for UnitTest {args.unittest}")
+        ref_files, test_files = findDataFiles(args.unittest)
+        if len(ref_files) != len(test_files):
+            sys.exit("ref and test data files do not match!")
+        for n in range(0, len(ref_files)):
+            errorVerification(reffn=ref_files[n], testfn=test_files[n])

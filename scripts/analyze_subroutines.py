@@ -129,7 +129,7 @@ def add_acc_routine_info(sub):
 
         ct+=1
     print(f'first_use = {first_use}')
-    lines.insert(first_use,'      !$acc routine seq \n')
+    lines.insert(first_use,'      !$acc routine seq\n')
     print(f"Added !$acc to {sub.name} in {filename}")
     with open(filename,'w') as ofile:
         ofile.writelines(lines)
@@ -751,9 +751,9 @@ class Subroutine(object):
 
         for dtype in verify_vars.keys():
             mod = elmvars_dict[dtype].declaration
-            ofile.write(spaces + f"use {mod}, only : {dtype} \n")
+            ofile.write(spaces + f"use {mod}, only : {dtype}\n")
 
-        ofile.write(spaces+"implicit none \n")
+        ofile.write(spaces+"implicit none\n")
         ofile.write(spaces+"integer, intent(in) :: gpu\n")
         ofile.write(spaces+"character(len=*), optional, intent(in) :: desc\n")
         ofile.write(spaces+"character(len=256) :: fn\n")
@@ -768,12 +768,13 @@ class Subroutine(object):
         ofile.write(spaces+'fn = trim(fn) // ".txt"\n')
         ofile.write(spaces+'print *, "Verfication File is :",fn\n')
         ofile.write(spaces+"open(UNIT=10, STATUS='REPLACE', FILE=fn)\n")
-
+        
+        # First insert OpenACC update directives to transfer results from GPU-CPU
         ofile.write(spaces+"if(gpu) then\n")
         acc = "!$acc "
 
         for v,comp_list in verify_vars.items():
-            ofile.write(spaces+acc+"update self(& \n")
+            ofile.write(spaces+acc+"update self(&\n")
             i = 0
             for c in comp_list:
                 i +=1
@@ -781,7 +782,7 @@ class Subroutine(object):
                     name = f"{v}%{c}"
                     c13c14 = bool('c13' in name or 'c14' in name)
                     if(c13c14):
-                        ofile.write(spaces+acc+f")\n")
+                        ofile.write(spaces+acc+")\n")
                     else:
                         ofile.write(spaces+acc+f"{name} )\n")
                 else:
@@ -789,17 +790,18 @@ class Subroutine(object):
                     c13c14 = bool('c13' in name or 'c14' in name)
                     if(c13c14): 
                         continue
-                    ofile.write(spaces+acc+f"{name}, & \n")
+                    ofile.write(spaces+acc+f"{name}, &\n")
 
-        ofile.write(spaces+"end if \n")
-        ofile.write(spaces+"!! CPU print statements !! \n")
+        ofile.write(spaces+"end if\n")
+        ofile.write(spaces+"!! CPU print statements !!\n")
         # generate cpu print statements
         for v,comp_list in verify_vars.items():
             for c in comp_list:
                 name = f"{v}%{c}"
                 c13c14 = bool('c13' in name or 'c14' in name)
-                if(c13c14): continue
-                ofile.write(spaces+f"write(10,*) '{name}' \n")
+                if(c13c14):
+                    continue
+                ofile.write(spaces+f"write(10,*) '{name}',shape({name})\n")
                 ofile.write(spaces+f"write(10,*) {name}\n")
 
         ofile.write(spaces+"close(10)\n")
@@ -838,7 +840,7 @@ class Subroutine(object):
             # where 'arg' is a local array, and 'sub' is child subroutine that uses it.
             passed_to_sub = {} 
             local_array_list = [v for v in self.LocalVariables['arrays']]
-            print(f"local_array for {self.name} \n",local_array_list)
+            print(f"local_array for {self.name}\n",local_array_list)
 
         if(verbose): print(f"Opening file {self.filepath} ")
         ifile = open(self.filepath,'r')
