@@ -5,12 +5,20 @@ from collections import namedtuple
 
 from analyze_subroutines import Subroutine
 from DerivedType import get_derived_type_definition
-from fortran_modules import (FortranModule, get_filename_from_module,
-                             get_module_name_from_file)
+from fortran_modules import (
+    FortranModule,
+    get_filename_from_module,
+    get_module_name_from_file,
+)
 from mod_config import E3SM_SRCROOT, spel_output_dir
-from utilityFunctions import (comment_line, find_file_for_subroutine,
-                              find_variables, get_interface_list,
-                              line_unwrapper, parse_line_for_variables)
+from utilityFunctions import (
+    comment_line,
+    find_file_for_subroutine,
+    find_variables,
+    get_interface_list,
+    line_unwrapper,
+    parse_line_for_variables,
+)
 
 # Compile list of lower-case module names to remove
 # SPEL expects these all to be lower-case currently
@@ -267,16 +275,22 @@ def get_used_mods(ifile, mods, singlefile, mod_dict, verbose=False):
     Checks to see what mods are needed to compile the file
     """
     func_name = "get_used_mods"
-    fn = ifile
-    file = open(fn, "r")
-    lines = file.readlines()
-    file.close()
 
     # Keep track of nested level
     linenumber, module_name = get_module_name_from_file(fpath=ifile)
     fort_mod = FortranModule(fname=ifile, name=module_name, ln=linenumber)
+
+    # Return if this module was aleady added for another subroutine
+    if fort_mod.name in mod_dict:
+        return mods, mod_dict
+
+    # Read file
     needed_mods = []
     ct = 0
+    fn = ifile
+    file = open(fn, "r")
+    lines = file.readlines()
+    file.close()
 
     # Define regular expressions for catching variables declared in the module
     regex_contains = re.compile(r"^(contains)", re.IGNORECASE)
@@ -358,7 +372,7 @@ def get_used_mods(ifile, mods, singlefile, mod_dict, verbose=False):
         if m.lower() in bad_modules:
             continue
         needed_modfile = get_filename_from_module(m, verbose=verbose)
-        if needed_modfile == None:
+        if needed_modfile is None:
             if verbose:
                 print(
                     f"Couldn't find {m} in ELM or shared source -- adding to removal list"
@@ -382,6 +396,8 @@ def get_used_mods(ifile, mods, singlefile, mod_dict, verbose=False):
 
     fort_mod.defined_types = user_defined_types
     mod_dict[fort_mod.name] = fort_mod
+    if ifile not in mods:
+        mods.append(ifile)
 
     # Recursive call to the mods that need to be processed
     if files_to_parse and not singlefile:
@@ -438,6 +454,7 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
     regex_if = re.compile(r"^(if)[\s]*(?=\()", re.IGNORECASE)
     regex_endif = re.compile(r"^(end\s*if)", re.IGNORECASE)
     regex_ifthen = re.compile(r"^(if)(.+)(then)$", re.IGNORECASE)
+    regex_include_assert = re.compile(r"^(#include)\s+[\"\'](shr_assert.h)[\'\"]")
 
     subs_removed = []
 
@@ -492,11 +509,17 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
             if verbose:
                 print(f"cpp Ln: {ct} Original Ln: {linenum}")
 
+        # Check for '#include "shr_assert.h"' lines. Note that they are removed for cpp files.
+        match_include_assert = regex_include_assert.search(l)
+        if match_include_assert:
+            lines, newct = comment_line(lines=lines, ct=linenum, verbose=verbose)
+            ct = AdjustLine(ct, newct, linenum)
+            linenum = newct
+
         # Match use statements
         bad_mod_string = "|".join(bad_modules)
         bad_mod_string = f"({bad_mod_string})"
         match_use = re.search(f"\s*(use)[\s]+{bad_mod_string}", l, re.IGNORECASE)
-
         if match_use:
             if verbose:
                 print(f"{func_name}::Matched modules to remove: {l}")
@@ -758,6 +781,7 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
 def process_for_unit_test(
     fname,
     case_dir,
+    mod_dict,
     mods=[],
     required_mods=[],
     main_sub_dict={},
@@ -782,9 +806,8 @@ def process_for_unit_test(
         singlefile -> flag that disables recursive processing.
     """
     sub_dict = main_sub_dict.copy()
-    initial_mods = mods[:]
-    mod_dict = {}
 
+    initial_mods = mods.copy()
     # First, get complete list of module to be processed and removed.
     # and then add processed file to list of mods:
     if not mods:
@@ -803,6 +826,8 @@ def process_for_unit_test(
             singlefile=singlefile,
             mod_dict=mod_dict,
         )
+
+    new_mods = [m.split("/")[-1] for m in mods if m not in initial_mods]
 
     # Next process required modules if they are not already in the list
     # save current processed mods:
@@ -828,8 +853,9 @@ def process_for_unit_test(
     # Next, each needed module is parsed for subroutines and removal of
     # any dependencies that are not needed for an ELM unit test (eg., I/O libs,...)
     for mod_file in mods:
+        ln, mod_name = get_module_name_from_file(mod_file)
         # Avoid preprocessing files over and over
-        if mod_file in initial_mods:
+        if mod_dict[mod_name].modified:
             continue
         file = open(mod_file, "r")
         lines = file.readlines()
@@ -837,6 +863,7 @@ def process_for_unit_test(
         sub_dict = modify_file(
             lines, mod_file, sub_dict, verbose=verbose, overwrite=overwrite
         )
+        mod_dict[mod_name].modified = True
         if overwrite:
             out_fn = mod_file
             if verbose:
@@ -862,7 +889,7 @@ def process_for_unit_test(
         for f in file_list:
             print(f)
 
-    return mod_dict, file_list
+    return mod_dict, file_list, main_sub_dict
 
 
 def remove_reference_to_subroutine(lines, subnames):

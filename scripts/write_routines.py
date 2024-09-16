@@ -69,6 +69,8 @@ def generate_makefile(files, case_dir):
     This function takes the list of needed files
     and generates a makefile and finally saves it in the case dir
     """
+    from edit_files import macros
+
     noF90 = [elm_dir_regex.sub("", f) for f in files]
     noF90 = [shr_dir_regex.sub("", f) for f in noF90]
     object_list = [f.replace(".F90", ".o") for f in noF90]
@@ -76,7 +78,8 @@ def generate_makefile(files, case_dir):
     FC = "nvfortran"
     FC_FLAGS_ACC = " -gpu=deepcopy -Minfo=accel -acc -cuda\n"
     FC_FLAGS_DEBUG = " -g -O0 -Mbounds -Mchkptr -Mchkstk\n"
-    MODEL_FLAGS = " -DMODAL_AER -DCPL_BYPASS"
+    # MODEL_FLAGS = " -DMODAL_AER "
+    MODEL_FLAGS = "-D" + " -D".join(macros)
 
     # Get complete preproccesor flags:
     for f in noF90:
@@ -278,9 +281,10 @@ def duplicate_clumps(typedict):
     for type_name, dtype in typedict.items():
         if dtype.active:
             for var in dtype.instances:
-                mod = var.declaration
-                vname = var.name
-                file.write(spaces + "use {}, only : {}\n".format(mod, vname))
+                if var.active:
+                    mod = var.declaration
+                    vname = var.name
+                    file.write(spaces + "use {}, only : {}\n".format(mod, vname))
 
     file.write(
         spaces + "use decompMod, only : bounds_type, get_clump_bounds, procinfo\n"
@@ -323,25 +327,24 @@ def duplicate_clumps(typedict):
     for type_name, dtype in typedict.items():
         if dtype.active and type_name in PHYSICAL_PROP_TYPE_LIST:
             for var in dtype.instances:
-                if not var.active:
-                    continue
-                for c in dtype.components:
-                    active = c["active"]
-                    field_var = c["var"]
-                    bounds = c["bounds"]
-                    if not active:
-                        continue
-                    if field_var.name in ignore_list:
-                        continue
-                    fname = var.name + "%" + field_var.name
-                    dim = bounds
-                    newdim = get_delta_from_dim(dim, "y")
-                    dim1 = get_delta_from_dim(dim, "n")
-                    dim1 = dim1.replace("_all", "")
-                    if newdim == "(:)" or newdim == "":
-                        continue
-                    file.write(spaces * 3 + fname + newdim + " &" + "\n")
-                    file.write(spaces * 4 + "= " + fname + dim1 + "\n")
+                if var.active:
+                    for c in dtype.components:
+                        active = c["active"]
+                        field_var = c["var"]
+                        bounds = c["bounds"]
+                        if not active:
+                            continue
+                        if field_var.name in ignore_list:
+                            continue
+                        fname = var.name + "%" + field_var.name
+                        dim = bounds
+                        newdim = get_delta_from_dim(dim, "y")
+                        dim1 = get_delta_from_dim(dim, "n")
+                        dim1 = dim1.replace("_all", "")
+                        if newdim == "(:)" or newdim == "":
+                            continue
+                        file.write(spaces * 3 + fname + newdim + " &" + "\n")
+                        file.write(spaces * 4 + "= " + fname + dim1 + "\n")
 
     file.write(spaces * 2 + "end do\n")
 

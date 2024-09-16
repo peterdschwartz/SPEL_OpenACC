@@ -120,7 +120,7 @@ def comment_line(lines, ct, mode="normal", verbose=False):
 
     newline = newline.replace(str_, comment_ + str_, 1)
     lines[ct] = newline
-    continuation = bool(newline.strip("\n").endswith("&"))
+    continuation = bool(newline.strip("\n").strip().endswith("&"))
     if verbose:
         print(lines[ct].rstrip("\n"))
     while continuation:
@@ -131,7 +131,7 @@ def comment_line(lines, ct, mode="normal", verbose=False):
         lines[ct] = newline
         if verbose:
             print(lines[ct].rstrip("\n"))
-        continuation = bool(newline.strip("\n").endswith("&"))
+        continuation = bool(newline.strip("\n").strip().endswith("&"))
     return lines, ct
 
 
@@ -226,8 +226,8 @@ def lineContinuationAdjustment(lines, ln, verbose=False):
     """
     l = lines[ln]
     l = l.split("!")[0]
-    l = l.strip().lower()
     l = l.rstrip("\n")
+    l = l.strip().lower()
 
     lines_to_skip = 0
     while l.endswith("&"):
@@ -790,7 +790,7 @@ def adjust_array_access_and_allocation(local_arrs, sub, dargs=False, verbose=Fal
                         replaced = True
                         track_changes.append(lnew)
 
-                    while l.rstrip("\n").endswith("&") and not replaced:
+                    while l.rstrip("\n").strip().endswith("&") and not replaced:
                         ln += 1
                         l = lines[ln]
                         m_var = regex_array_arg.search(l)

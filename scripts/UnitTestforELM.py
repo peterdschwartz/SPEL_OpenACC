@@ -6,14 +6,13 @@ def main() -> None:
     import argparse
     import csv
     import os
-    import subprocess as sp
     import sys
 
     import write_routines as wr
     from analyze_subroutines import Subroutine
     from edit_files import process_for_unit_test
+    from export_objects import pickle_unit_test
     from mod_config import (
-        ELM_SRC,
         _bc,
         default_mods,
         scripts_dir,
@@ -21,7 +20,7 @@ def main() -> None:
         spel_output_dir,
         unittests_dir,
     )
-    from utilityFunctions import Variable, insert_header_for_unittest
+    from utilityFunctions import insert_header_for_unittest
 
     # Set up Argument Parser
     desc = (
@@ -37,11 +36,11 @@ def main() -> None:
     func_name = "main"
 
     # Note unittests_dir is a location to make unit tests directories named {casename}
-    casename = "Albedo"
+    casename = "Combined"
     case_dir = unittests_dir + casename
 
     # List of subroutines to be analyzed
-    sub_name_list = ["SurfaceAlbedo"]
+    sub_name_list = ["SurfaceAlbedo", "LakeTemperature"]
 
     # Determines if SPEL should run to make optimizations
     opt = False
@@ -81,6 +80,7 @@ def main() -> None:
 
     # List to hold all the modules needed for the unit test
     needed_mods = []
+    mod_dict = {}
     for s in sub_name_list:
         # Get general info of the subroutine
         subroutines[s] = Subroutine(s, calltree=["elm_drv"])
@@ -89,10 +89,12 @@ def main() -> None:
         # so that a standalone unit test can be compiled.
         # All file information will be stored in `mod_dict` and `main_sub_dict`
         if preprocess and not opt:
+            print(f"Processing for {s}")
             fn = subroutines[s].filepath
-            mod_dict, file_list = process_for_unit_test(
+            mod_dict, file_list, main_sub_dict = process_for_unit_test(
                 fname=fn,
                 case_dir=case_dir,
+                mod_dict=mod_dict,
                 mods=needed_mods,
                 required_mods=default_mods,
                 main_sub_dict=main_sub_dict,
@@ -100,6 +102,8 @@ def main() -> None:
                 verbose=False,
             )
             # Update initial subroutine with data collected by `process_for_unit_test`
+            # NOTE: direct assignment here means that changes to subroutines[s] object
+            #       below will be reflected immediately in main_sub_dict. Make explicit instead?
             subroutines[s] = main_sub_dict[s]
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
@@ -360,6 +364,8 @@ def main() -> None:
     os.system(f"cp {spel_mods_dir}fileio_mod.F90 {case_dir}")
     os.system(f"cp {spel_mods_dir}unittest_defs.h {case_dir}")
     os.system(f"cp {spel_mods_dir}decompInitMod.F90 {case_dir}")
+
+    pickle_unit_test(mod_dict, main_sub_dict, type_dict)
 
     return None
 
