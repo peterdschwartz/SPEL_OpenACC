@@ -36,11 +36,11 @@ def main() -> None:
     func_name = "main"
 
     # Note unittests_dir is a location to make unit tests directories named {casename}
-    casename = "Combined"
+    casename = "SoilLittVertTransp"
     case_dir = unittests_dir + casename
 
     # List of subroutines to be analyzed
-    sub_name_list = ["SurfaceAlbedo", "LakeTemperature"]
+    sub_name_list = ["SoilLittVertTransp"]
 
     # Determines if SPEL should run to make optimizations
     opt = False
@@ -180,7 +180,7 @@ def main() -> None:
             print(key, subroutines[s].elmtype_rw[key])
         print(_bc.ENDC)
 
-        for key in subroutines[s].elmtype_r.keys():
+        for key in list(subroutines[s].elmtype_r.keys()):
             c13c14 = bool("c13" in key or "c14" in key)
             if c13c14:
                 del subroutines[s].elmtype_r[key]
@@ -190,7 +190,7 @@ def main() -> None:
                 sys.exit(1)
             read_types.append(key)
 
-        for key in subroutines[s].elmtype_w.keys():
+        for key in list(subroutines[s].elmtype_w.keys()):
             c13c14 = bool("c13" in key or "c14" in key)
             if c13c14:
                 del subroutines[s].elmtype_w[key]
@@ -200,10 +200,10 @@ def main() -> None:
                 sys.exit(1)
             write_types.append(key)
 
-        for key in subroutines[s].elmtype_rw.keys():
+        for key in list(subroutines[s].elmtype_rw.keys()):
             c13c14 = bool("c13" in key or "c14" in key)
             if c13c14:
-                del subroutines[s].elmtype_w[key]
+                del subroutines[s].elmtype_rw[key]
                 continue
             write_types.append(key)
 

@@ -53,6 +53,7 @@ class Variable(object):
         subgrid,
         ln,
         dim,
+        parameter=False,
         declaration="",
         optional=False,
         keyword="",
@@ -63,6 +64,7 @@ class Variable(object):
         self.subgrid = subgrid
         self.ln = ln
         self.dim = dim
+        self.parameter = parameter
         # These are used for Argument variables
         self.optional = optional
         self.keyword = keyword
@@ -456,6 +458,8 @@ def getLocalVariables(sub, verbose=False, class_var=False):
             if match_class:
                 sub.class_method = True
                 sub.class_type = data_type
+
+            parameter = bool("parameter" in temp_decl.lower())
             #
             # Go through and replace all arrays first
             #
@@ -478,12 +482,21 @@ def getLocalVariables(sub, verbose=False, class_var=False):
                             optional = True
                         else:
                             optional = False
+                        if parameter:
+                            print("ERROR:Arguments can't be parameters")
+                            sys.exit(1)
                         sub.Arguments[varname] = Variable(
-                            data_type, varname, subgrid, ln, dim, optional=optional
+                            data_type,
+                            varname,
+                            subgrid,
+                            ln,
+                            dim,
+                            parameter=parameter,
+                            optional=optional,
                         )
                     else:
                         sub.LocalVariables["arrays"][varname] = Variable(
-                            data_type, varname, subgrid, ln, dim
+                            data_type, varname, subgrid, ln, dim, parameter
                         )
                         sub.LocalVariables["arrays"][varname].declaration = line
                     # This removes the array from the list of variables
@@ -501,16 +514,19 @@ def getLocalVariables(sub, verbose=False, class_var=False):
                     else:
                         optional = False
                     sub.Arguments[var] = Variable(
-                        data_type, var, "", ln, dim=0, optional=optional
+                        data_type,
+                        var,
+                        "",
+                        ln,
+                        dim=0,
+                        parameter=parameter,
+                        optional=optional,
                     )
                 else:
-                    parameter = bool("parameter" in temp_decl.lower())
-                    if parameter:
-                        continue
                     if "=" in var:
                         var = var.split("=")[0]
                     sub.LocalVariables["scalars"][var] = Variable(
-                        data_type, var, "", ln, dim=0
+                        data_type, var, "", ln, dim=0, parameter=parameter
                     )
     return
 
@@ -1093,7 +1109,7 @@ def parse_line_for_variables(ifile, l, ln, verbose=False):
     if match_var:
         if "::" not in l:
             # regex to separate type from variable when there is no '::' separator
-            ng_type = re.compile(f"^\w+?\s*\(.+?\)")
+            ng_type = re.compile(r"^\w+?\s*\(.+?\)")
             match_type = ng_type.search(l)
             if (
                 match_type
@@ -1155,7 +1171,7 @@ def parse_line_for_variables(ifile, l, ln, verbose=False):
             if "=" in var:
                 var = var.split("=")[0].strip()
             # Check if current variable is an array
-            ng_var_array = re.compile(f"{var}?\s*\(.+?\)", re.IGNORECASE)
+            ng_var_array = re.compile(r"{}?\s*\(.+?\)".format(var), re.IGNORECASE)
             match_array = ng_var_array.search(temp_vars)
             if match_array:
                 arr = match_array.group()
@@ -1171,9 +1187,11 @@ def parse_line_for_variables(ifile, l, ln, verbose=False):
                 if verbose:
                     print(f"var = {var}; subgrid = {subgrid}; {dim}-D")
             else:
-                parameter = bool("parameter" in temp_decl.lower())
                 subgrid = ""
                 dim = 0
-            variable_list.append(Variable(data_type, var, subgrid, ln, dim))
+            parameter = bool("parameter" in temp_decl.lower())
+            variable_list.append(
+                Variable(data_type, var, subgrid, ln, dim, parameter=parameter)
+            )
 
     return variable_list

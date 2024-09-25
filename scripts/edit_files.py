@@ -182,11 +182,12 @@ def check_cpp_line(base_fn, og_lines, cpp_lines, cpp_ln, og_ln, verbose=False):
     # Store current lines to check
     cpp_line = cpp_lines[cpp_ln]
     line = og_lines[og_ln]
+    line = line.split("!")[0].strip()
 
     # Comment out include statements
     # (NOTE: this is unnecessary and overly specific to elm use case?)
-    regex_assert = re.compile(r"(shr_assert.h)", re.IGNORECASE)
-    if regex_assert.search(line):
+    regex_include_assert = re.compile(r"^(#include)\s+[\"\'](shr_assert.h)[\'\"]")
+    if regex_include_assert.search(line):
         if verbose:
             print(f"{func_name}:: Found include statement to comment out:\n{line}")
             print(f"cpp line: {cpp_line}")
