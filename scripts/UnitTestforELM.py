@@ -21,6 +21,7 @@ def main() -> None:
         unittests_dir,
     )
     from utilityFunctions import insert_header_for_unittest
+    from variable_analysis import determine_global_variable_status
 
     # Set up Argument Parser
     desc = (
@@ -339,6 +340,8 @@ def main() -> None:
     for var in list_pp:
         if var in read_types:
             read_types.remove(var)
+
+    determine_global_variable_status(mod_dict, subroutines)
 
     # Generate/modify FORTRAN files needed to initialize and run Unit Test
     # main.F90

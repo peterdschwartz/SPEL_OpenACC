@@ -1,172 +1,89 @@
-"""
-This python file is setup to parse global variable information of ELM code.
-"""
-public = 1
-private = 0
+import re
 
-class GlobalVariable(object):
-    def __init__ (self,
-                  var,       #variable name
-                  type,      #variable type
-                  dim,       #dimension (scalar = 0)
-                  parameter, #bool for if it is parameter
-                  access,    #public or private (1,0)
-                  file       #file variable is declared in
-                  ):
-        self.var = var
-        self.type = type
-        self.dim  = dim
-        self.parameter = parameter
-        self.access = access
-        self.file = file
-    def _print_var(self):
-        if(self.parameter):
-            print(f"{self.file}::{self.type} parameter {self.var}")
+from fortran_modules import get_module_name_from_file
+
+
+def check_global_vars(regex_variables, sub):
+    """ """
+    if sub.cpp_filepath:
+        fn = sub.cpp_filepath
+    else:
+        fn = sub.filepath
+    file = open(fn, "r")
+    lines = file.readlines()
+    file.close()
+    if sub.associate_end == 0:
+        if sub.cpp_startline:
+            startline = sub.cpp_startline
         else:
-            if(self.dim>0):
-                print(f"{self.file}::{self.type} {self.var} {self.dim}-D")
-            else:
-                print(f"{self.file}::{self.type} {self.var}")
+            startline = sub.startline
+    else:
+        startline = sub.associate_end
 
+    if sub.cpp_endline:
+        endline = sub.cpp_endline
+    else:
+        endline = sub.endline
 
-def find_global_variables(file, vars_d ):
-    import re
-    from mod_config import elm_files
-    #open and read in file:
-    ifile = open(elm_files+file,'r')
-    lines = ifile.readlines()
-    print(f"find_global_variables::Opening File {elm_files+file}")
-    type_start = False
-    for l in lines:
-        line = l.split('!')[0] #don't regex Comments
-        line = line.strip() #remove leading/trailing whitespace
-        line = line.lower()
-        match_contains = re.search(r'(^contains)',line)
-        if(match_contains): break
-        match_type = re.search(r'(^type)', line)
-        if(match_type):
-            type_start = True
+    # Loop through subroutine line by line starting after the associate clause
+    active_vars = []
+    ct = startline
+    while ct < endline:
+        line = lines[ct]
+        line = line.split("!")[0].strip().lower()
+        if not line:
+            ct += 1
             continue
-        if(type_start):
-            match_end_type = re.search(r'(^end type)',line)
-            if(match_end_type):
-                type_start = False
-                continue
-            continue
-        if(not type_start):
-            data_type = re.compile(r'^(real|integer|logical|character)')
-            match_var = data_type.search(line)
-            if(match_var):
-                type = match_var.group()
-                #split variable declaration
-                temp = line.split('::')
-                decl = temp[0] #declaration info
-                vars  = temp[1] #variable(s) and initilization
-                #check if public/private; assume public is default
-                if('private' in decl):
-                    access = private
+        match_var = regex_variables.findall(line)
+        for var in match_var:
+            if var not in active_vars:
+                active_vars.append(var)
+        ct += 1
+    return active_vars
+
+
+def determine_global_variable_status(mod_dict, subroutines):
+    """ """
+    func_name = "determine_global_variables_status"
+    all_subs = {}
+    for sub in subroutines.values():
+        all_subs[sub.name] = sub
+        for child_sub in sub.child_Subroutine.values():
+            if child_sub.name not in all_subs:
+                all_subs[child_sub.name] = child_sub
+
+    # Retrive all global (instrinsic type) variables
+    modules = {}
+    for sub in all_subs.values():
+        modln, modname = get_module_name_from_file(sub.filepath)
+        sub_mod = mod_dict[modname]
+        for m in sub_mod.modules:
+            modules[m] = mod_dict[m]
+
+    # Create dict of all variables to look for
+    variables = {}
+    intrinsic_types = ["real", "integer", "logical", "character"]
+    for mod in modules.values():
+        for var in mod.global_vars:
+            if var.type in intrinsic_types and not var.parameter:
+                if var.name not in variables:
+                    variables[var.name] = var
+                    print(f"{var.name} from {mod.name}")
                 else:
-                    access = public
-                #check if parameter
-                if('parameter' in decl):
-                    parameter = True
-                else:
-                    parameter = False
+                    print(
+                        f"{func_name}::WARNING: Attempted to add variable multiple times"
+                    )
 
-                #check for arrays
-                var_array = re.compile(r'\w+\s*\((.*?)\)')
-                check_vars = re.compile(r'[a-zA-Z0-9_]+')
-                m = var_array.search(vars)
-                if(m):
-                    #there is at least one array present
-                    while(m):
-                        #v is the new variable, need to get dimension info
-                        v_with_dims = m.group()
-                        dim = v_with_dims.count(':')
-                        if(dim == 0):
-                            dim = v_with_dims.count(',')+1
-                        v = check_vars.search(v_with_dims).group()
-                        v = v.strip()
-                        if ('null' != v):
-                            vars_d[v] = GlobalVariable(
-                                      var=v,type=type,
-                                      dim=dim, parameter=parameter,
-                                      access=access,file=file
-                                      )
-                        vars = vars.replace(v_with_dims,'')
-                        m = var_array.search(vars)
+    # Create regex
+    var_string = "|".join(variables.keys())
+    regex_variables = re.compile(r"({})".format(var_string), re.IGNORECASE)
 
-                    m_var = check_vars.findall(vars)
-                    if(m_var):
-                        #still some variables to collect
-                        for v in m_var:
-                            if(v in vars_d):
-                                print(line)
-                                raise NameError(f"ERROR: {v} already exists in dictionary")
+    # Loop through the subroutines and check for variables used:
+    for sub in all_subs.values():
+        active_vars = check_global_vars(regex_variables, sub)
+        if active_vars:
+            for var in active_vars:
+                print(f"setting {var} active", variables[var])
+                variables[var].active = True
 
-                            vars_d[v] = GlobalVariable(
-                                          var=v,type=type,
-                                          dim=0,parameter=parameter,
-                                          access=access,file=file
-                                          )
-
-                #end of array if statement
-                # get scalar variables
-                alnum = '[a-zA-Z0-9_]'
-                dec   = '[a-zA-Z0-9._\(\)\s/*+-]'
-                assignments = re.compile(f'{alnum}+[\s]*(=)[\s]*{dec}+')
-                m_vars = check_vars.search(vars)
-                while(m_vars):
-                    print(vars)
-                    if('=' in vars):
-                        # This matches an initialization
-                        if(type == 'character'):
-                            v = vars.split('=')[0]
-                            vars = ''
-                            v = v.strip()
-                        else:
-                            initialization = assignments.search(vars).group()
-                            vars = vars.replace(initialization,'')
-                            v = initialization.split('=')[0]
-                            v = v.strip()
-                        if(v in vars_d):
-                            print(line)
-                            raise NameError(f"ERROR: {v} already exists in dictionary")
-                        vars_d[v] = GlobalVariable(
-                                  var=v,type=type,dim=0,
-                                  parameter=parameter,
-                                  access=access,file=file
-                                  )
-                        m_vars =  check_vars.search(vars)
-                    else:
-                        # No initialization present
-                        v = m_vars.group()
-                        if(v in vars_d):
-                            print(line)
-                            raise NameError(f"ERROR: {v} already exists in dictionary")
-                        vars_d[v] = GlobalVariable(
-                                  var=v,
-                                  type=type,
-                                  dim=0,
-                                  parameter=parameter,
-                                  access=access,
-                                  file=file
-                                  )
-                        vars = vars.replace(v,'')
-                        m_vars = check_vars.search(vars)
-
-def find_elm_global_variables():
-    """
-    This subroutine will go through elm files and
-    get the global variables.
-    Provides info needed for GPU declarations an generation
-    of update routines.
-    """
-    file = "LakeTemperatureMod"+".F90"
-    global_variables = {}
-    find_global_variables(file=file,vars_d=global_variables)
-    for v in global_variables.values():
-        v._print_var()
-
-if __name__ == '__main__':
-    find_elm_global_variables()
+    return None

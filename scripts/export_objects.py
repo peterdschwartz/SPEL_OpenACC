@@ -64,9 +64,8 @@ def global_var_dataframe(mod_dict):
             # if v.type in ["real", "integer", "logical", "character"] and not v.parameter
             if v.type == "logical" and not v.parameter
         ]
-        if variables:
-            print(f"MOD {mod.name}")
-            print(variables)
+        print(mod.name)
+        print(mod.modules)
 
 
 if __name__ == "__main__":
