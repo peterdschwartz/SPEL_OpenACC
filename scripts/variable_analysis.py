@@ -1,10 +1,16 @@
 import re
+import sys
 
 from fortran_modules import get_module_name_from_file
+from utilityFunctions import Variable
 
 
-def check_global_vars(regex_variables, sub):
-    """ """
+def check_global_vars(regex_variables, sub) -> list:
+    """
+    Function that checks sub for usage of any variables matched by
+    regex_variables.
+    """
+    func_name = "check_global_vars"
     if sub.cpp_filepath:
         fn = sub.cpp_filepath
     else:
@@ -42,7 +48,7 @@ def check_global_vars(regex_variables, sub):
     return active_vars
 
 
-def determine_global_variable_status(mod_dict, subroutines):
+def determine_global_variable_status(mod_dict, subroutines) -> None:
     """ """
     func_name = "determine_global_variables_status"
     all_subs = {}
@@ -52,38 +58,58 @@ def determine_global_variable_status(mod_dict, subroutines):
             if child_sub.name not in all_subs:
                 all_subs[child_sub.name] = child_sub
 
-    # Retrive all global (instrinsic type) variables
-    modules = {}
+    # Create dict of modules containing unit-test subroutines
+    test_modules = {}
     for sub in all_subs.values():
         modln, modname = get_module_name_from_file(sub.filepath)
         sub_mod = mod_dict[modname]
-        for m in sub_mod.modules:
-            modules[m] = mod_dict[m]
+        for m in sub_mod.modules.keys():
+            if m not in test_modules:
+                test_modules[m] = mod_dict[m]
+                test_modules[m].sort_used_variables(mod_dict)
 
-    # Create dict of all variables to look for
+    # Create dict of all variables to look for. For each of the Test modules,
+    # Look at the used modules and add the variables used by those modules.
     variables = {}
     intrinsic_types = ["real", "integer", "logical", "character"]
-    for mod in modules.values():
-        for var in mod.global_vars:
-            if var.type in intrinsic_types and not var.parameter:
-                if var.name not in variables:
-                    variables[var.name] = var
-                    print(f"{var.name} from {mod.name}")
-                else:
-                    print(
-                        f"{func_name}::WARNING: Attempted to add variable multiple times"
-                    )
+    for mod in test_modules.values():
+        # Loop through used_mods and their only clause
+        for used_modname, only_clause in mod.modules.items():
+            # Check if only certain objects are specified
+            if only_clause != "all":
+                for ptrobj in only_clause:
+                    if isinstance(ptrobj.obj, Variable):
+                        # This is a variable, need to check if used in
+                        # our specific subroutines
+                        var = ptrobj.obj
+                        if var.type in intrinsic_types:
+                            if ptrobj.ptr:
+                                variables[ptrobj.ptr] = var
+                            else:
+                                variables[var.name] = var
+            else:
+                # Get full information of used modules
+                used_mod = mod_dict[used_modname]
+                for gv in used_mod.global_vars:
+                    if gv.type in intrinsic_types:
+                        variables[gv.name] = gv
 
-    # Create regex
+    # Create regex from the possible variables
+    # NOTE: Further "simplification" would be to have variables be
+    # a dict depending on modules?
     var_string = "|".join(variables.keys())
-    regex_variables = re.compile(r"({})".format(var_string), re.IGNORECASE)
+    regex_variables = re.compile(r"\b({})\b".format(var_string), re.IGNORECASE)
 
-    # Loop through the subroutines and check for variables used:
+    # Loop through the subroutines and check for variables used within.
+    # `check_global_vars` loops through each sub and looks for any matches
     for sub in all_subs.values():
+        print(f"{ func_name } :: For subroutine { sub.name }")
         active_vars = check_global_vars(regex_variables, sub)
         if active_vars:
             for var in active_vars:
-                print(f"setting {var} active", variables[var])
+                print(
+                    f"setting {var} active", variables[var], variables[var].declaration
+                )
                 variables[var].active = True
 
     return None

@@ -58,6 +58,7 @@ class Variable(object):
         optional=False,
         keyword="",
         active=False,
+        private=False,
     ):
         self.type = type
         self.name = name
@@ -76,6 +77,7 @@ class Variable(object):
         else:
             self.declaration = ""
         self.active = active
+        self.private = private
 
     # Define equality for comparison of two Variables
     def __eq__(self, other):
@@ -1190,8 +1192,17 @@ def parse_line_for_variables(ifile, l, ln, verbose=False):
                 subgrid = ""
                 dim = 0
             parameter = bool("parameter" in temp_decl.lower())
+            private = bool("private" in temp_decl.lower())
             variable_list.append(
-                Variable(data_type, var, subgrid, ln, dim, parameter=parameter)
+                Variable(
+                    data_type,
+                    var,
+                    subgrid,
+                    ln,
+                    dim,
+                    parameter=parameter,
+                    private=private,
+                )
             )
 
     return variable_list

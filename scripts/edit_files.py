@@ -9,6 +9,7 @@ from fortran_modules import (
     FortranModule,
     get_filename_from_module,
     get_module_name_from_file,
+    parse_only_clause,
 )
 from mod_config import E3SM_SRCROOT, spel_output_dir
 from utilityFunctions import (
@@ -97,7 +98,7 @@ macros = ["MODAL_AER"]
 # The preprocessed file will have a '# <line_number>' indicating
 # the line number immediately after the #endif in the original file.
 
-# Name tuple used to conveniently store line numbers
+# Named tuple used to store line numbers
 # for preprocessed and original files
 PreProcTuple = namedtuple("PreProcTuple", ["cpp_ln", "ln"])
 
@@ -348,18 +349,34 @@ def get_used_mods(ifile, mods, singlefile, mod_dict, verbose=False):
         match_use = re.search(r"^(use)[\s]+", l)
         if match_use:
             # Get rid of comma if no space
-            l = l.replace(",", " ")
-            mod = l.split()[1]
+            templ = l.replace(",", " ")
+            mod = templ.split()[1]
             mod = mod.strip()
             mod = mod.lower()
-            if mod not in fort_mod.modules and mod not in bad_modules:
-                fort_mod.modules.append(mod)
+            if mod in bad_modules:
+                break
+            if mod not in fort_mod.modules.keys():
+                fort_mod.modules.setdefault(mod, [])
+
+            # Check if there is an only statement AND that the entire module isn't used.
+            if "only" in l and (fort_mod.modules[mod] != "all"):
+                obj_list = parse_only_clause(l)
+                for ptrobj in obj_list:
+                    if ptrobj not in fort_mod.modules[mod]:
+                        fort_mod.modules[mod].append(ptrobj)
+            else:
+                # Even if only clause was previously used, overwrite
+                # and assume it's all used.
+                fort_mod.modules[mod] = "all"
+
             # Needed since FORTRAN is not case-sensitive!
+            # NOTE: the below doesn't make sense if the file and module names
+            #   do not match. Should use `get_module_from_filename` function?
             lower_mods = [m.lower().replace(".F90", "") for m in mods]
             if (
                 mod not in needed_mods
-                and mod.lower() not in lower_mods
-                and mod.lower() not in ["elm_instmod", "cudafor", "verificationmod"]
+                and mod not in lower_mods
+                and mod not in ["elm_instmod", "cudafor", "verificationmod"]
             ):
                 needed_mods.append(mod)
         ct += 1
@@ -380,7 +397,7 @@ def get_used_mods(ifile, mods, singlefile, mod_dict, verbose=False):
                 )
             bad_modules.append(m.lower())
             if m.lower() in fort_mod.modules:
-                fort_mod.modules.remove(m.lower())
+                fort_mod.modules.pop(m.lower())
         elif needed_modfile not in mods:
             files_to_parse.append(needed_modfile)
             mods.append(needed_modfile)
@@ -925,7 +942,7 @@ def sort_file_dependency(mod_dict, unittest_module, file_list=[], verbose=False)
     # Start with the module that we want to test
     main_fort_mod = mod_dict[unittest_module]
 
-    for mod in main_fort_mod.modules:
+    for mod in main_fort_mod.modules.keys():
         if mod in bad_modules:
             continue
 
