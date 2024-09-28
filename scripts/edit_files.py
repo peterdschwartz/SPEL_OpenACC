@@ -300,7 +300,6 @@ def get_used_mods(ifile, mods, singlefile, mod_dict, verbose=False):
 
     module_head = True
     while ct < len(lines):
-        line = lines[ct]
         l, ct = line_unwrapper(lines=lines, ct=ct)
         l = l.strip().lower()
         match_contains = regex_contains.search(l)
@@ -353,32 +352,31 @@ def get_used_mods(ifile, mods, singlefile, mod_dict, verbose=False):
             mod = templ.split()[1]
             mod = mod.strip()
             mod = mod.lower()
-            if mod in bad_modules:
-                break
-            if mod not in fort_mod.modules.keys():
-                fort_mod.modules.setdefault(mod, [])
+            if mod not in bad_modules:
+                if mod not in fort_mod.modules.keys():
+                    fort_mod.modules.setdefault(mod, [])
 
-            # Check if there is an only statement AND that the entire module isn't used.
-            if "only" in l and (fort_mod.modules[mod] != "all"):
-                obj_list = parse_only_clause(l)
-                for ptrobj in obj_list:
-                    if ptrobj not in fort_mod.modules[mod]:
-                        fort_mod.modules[mod].append(ptrobj)
-            else:
-                # Even if only clause was previously used, overwrite
-                # and assume it's all used.
-                fort_mod.modules[mod] = "all"
+                # Check if there is an only statement AND that the entire module isn't used.
+                if "only" in l and (fort_mod.modules[mod] != "all"):
+                    obj_list = parse_only_clause(l)
+                    for ptrobj in obj_list:
+                        if ptrobj not in fort_mod.modules[mod]:
+                            fort_mod.modules[mod].append(ptrobj)
+                else:
+                    # Even if only clause was previously used, overwrite
+                    # and assume it's all used.
+                    fort_mod.modules[mod] = "all"
 
-            # Needed since FORTRAN is not case-sensitive!
-            # NOTE: the below doesn't make sense if the file and module names
-            #   do not match. Should use `get_module_from_filename` function?
-            lower_mods = [m.lower().replace(".F90", "") for m in mods]
-            if (
-                mod not in needed_mods
-                and mod not in lower_mods
-                and mod not in ["elm_instmod", "cudafor", "verificationmod"]
-            ):
-                needed_mods.append(mod)
+                # Needed since FORTRAN is not case-sensitive!
+                # NOTE: the below doesn't make sense if the file and module names
+                #   do not match. Should use `get_module_from_filename` function?
+                lower_mods = [m.lower().replace(".F90", "") for m in mods]
+                if (
+                    mod not in needed_mods
+                    and mod not in lower_mods
+                    and mod not in ["elm_instmod", "cudafor", "verificationmod"]
+                ):
+                    needed_mods.append(mod)
         ct += 1
 
     # Done with first pass through the file.
@@ -823,6 +821,7 @@ def process_for_unit_test(
         verbose  -> Print more info
         singlefile -> flag that disables recursive processing.
     """
+    func_name = "process_for_unit_test"
     sub_dict = main_sub_dict.copy()
 
     initial_mods = mods.copy()
@@ -846,6 +845,7 @@ def process_for_unit_test(
         )
 
     new_mods = [m.split("/")[-1] for m in mods if m not in initial_mods]
+    print(f"{func_name}::new mods found {new_mods}")
 
     # Next process required modules if they are not already in the list
     # save current processed mods:
