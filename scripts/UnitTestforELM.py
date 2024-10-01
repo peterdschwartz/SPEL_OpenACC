@@ -37,11 +37,11 @@ def main() -> None:
     func_name = "main"
 
     # Note unittests_dir is a location to make unit tests directories named {casename}
-    casename = "SoilLittVertTransp"
+    casename = "dyn_cs"
     case_dir = unittests_dir + casename
 
     # List of subroutines to be analyzed
-    sub_name_list = ["SoilLittVertTransp"]
+    sub_name_list = ["dyn_veg_cs_adjustments"]
 
     # Determines if SPEL should run to make optimizations
     opt = False
@@ -150,7 +150,6 @@ def main() -> None:
     for mod in mod_dict.values():
         for utype, dtype in mod.defined_types.items():
             type_dict[utype] = dtype
-    print(type_dict)
     #
     # 'main_sub_dict' contains Subroutine instances for all subroutines
     # in any needed modules. Next, each subroutine within the call trees of the user

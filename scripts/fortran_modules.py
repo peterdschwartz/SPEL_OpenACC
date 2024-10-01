@@ -22,6 +22,9 @@ class PointerAlias:
         else:
             return f"{ self.obj }"
 
+    def __repr__(self):
+        return f"PointerAlias({self.ptr} => {self.obj})"
+
 
 def get_module_name_from_file(fpath) -> tuple[int, str]:
     """

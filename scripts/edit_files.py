@@ -14,7 +14,6 @@ from fortran_modules import (
 from mod_config import E3SM_SRCROOT, spel_output_dir
 from utilityFunctions import (
     comment_line,
-    find_file_for_subroutine,
     find_variables,
     get_interface_list,
     line_unwrapper,

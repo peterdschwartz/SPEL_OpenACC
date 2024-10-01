@@ -92,7 +92,10 @@ class Variable(object):
 
     # Override __str__ for easy printing
     def __str__(self):
-        return f"{self.type} {self.name} {self.dim}"
+        return f"{self.declaration}::{self.type} {self.name} {self.dim}"
+
+    def __repr__(self):
+        return f"Variable({self.declaration}::{self.type} {self.name} {self.dim})"
 
     def printVariable(self, ofile=None):
         if ofile:

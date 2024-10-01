@@ -1,147 +1,24 @@
 import os.path
 import re
 import sys
-from collections import namedtuple
 
+from helper_functions import (
+    SubroutineCall,
+    determine_argvar_status,
+    determine_level_in_tree,
+    determine_variable_status,
+)
+from interfaces import determine_arg_name
 from LoopConstructs import Loop, exportVariableDependency
 from mod_config import _bc, home_dir
 from process_associate import getAssociateClauseVars
-from utilityFunctions import get_interface_list  # just make this a global variable?
-from utilityFunctions import find_file_for_subroutine, getLocalVariables, line_unwrapper
-
-# Declare namedtuple for readwrite status of variables:
-ReadWrite = namedtuple("ReadWrite", ["status", "ln"])
-
-
-# namedtuple to log the subroutines called and their arguments
-# to properly match read/write status of variables.
-# SubroutineCall = namedtuple('SubroutineCall',['subname','args'])
-# subclass namedtuple to allow overriding equality.
-class SubroutineCall(namedtuple("SubroutineCall", ["subname", "args"])):
-    def __eq__(self, other):
-        return (self.subname == other.subname) and (self.args == other.args)
-
-
-def determine_variable_status(
-    matched_variables, line, ct, dtype_accessed, verbose=False
-):
-    """
-    Function that loops through each var in match_variables and
-    determines the ReadWrite status.
-
-    Move to utilityFunctions.py?  Use for loop variable analysis as well?
-    """
-    func_name = "determine_variable_status"
-    # match assignment
-    match_assignment = re.search(r"(?<![><=/])=(?![><=])", line)
-    # match do and if statements
-    match_doif = re.search(r"[\s]*(do |if[\s]*\(|else[\s]*if[\s]*\()", line)
-    regex_indices = re.compile(r"(?<=\()(.+)(?=\))")
-
-    # Loop through each derived type and determine rw status.
-    for dtype in matched_variables:
-        # if the variables are in an if or do statement, they are read
-        if match_doif:
-            rw_status = ReadWrite("r", ct)
-            dtype_accessed.setdefault(dtype, []).append(rw_status)
-        # Split line into rhs and lhs of assignment.
-        # What if there is no assignment:
-        #   1) subroutine call, 2) i/o statement
-        # which I think we can safely skip over here
-        elif match_assignment:
-            m_start = match_assignment.start()
-            m_end = match_assignment.end()
-            lhs = line[:m_start]
-            rhs = line[m_end:]
-            # Check if variable is on lhs or rhs of assignment
-            # Note: don't use f-strings as they will not work with regex
-            regex_var = re.compile(r"\b({})\b".format(dtype), re.IGNORECASE)
-            match_rhs = regex_var.search(rhs)
-            # For LHS, remove any indices and check if variable is still present
-            # if present in indices, store as read-only
-            indices = regex_indices.search(lhs)
-            if indices:
-                match_index = regex_var.search(indices.group())
-            else:
-                match_index = None
-            match_lhs = regex_var.search(lhs)
-
-            # May be overkill to check each combination,
-            # but better to capture all information and
-            # simplify in a separate function based on use case.
-            if match_lhs and not match_rhs:
-                if match_index:
-                    rw_status = ReadWrite("r", ct)
-                else:
-                    rw_status = ReadWrite("w", ct)
-                dtype_accessed.setdefault(dtype, []).append(rw_status)
-            elif match_rhs and not match_lhs:
-                rw_status = ReadWrite("r", ct)
-                dtype_accessed.setdefault(dtype, []).append(rw_status)
-            elif match_lhs and match_rhs:
-                rw_status = ReadWrite("rw", ct)
-                dtype_accessed.setdefault(dtype, []).append(rw_status)
-
-    return dtype_accessed
-
-
-def determine_level_in_tree(branch, tree_to_write):
-    """
-    Will be called recursively
-    branch is a list containing names of subroutines
-    ordered by level in call_tree
-    """
-    for j in range(0, len(branch)):
-        sub_el = branch[j]
-        islist = bool(type(sub_el) is list)
-        if not islist:
-            if j + 1 == len(branch):
-                tree_to_write.append([sub_el, j - 1])
-            elif type(branch[j + 1]) is list:
-                tree_to_write.append([sub_el, j - 1])
-        if islist:
-            tree_to_write = determine_level_in_tree(sub_el, tree_to_write)
-    return tree_to_write
-
-
-def add_acc_routine_info(sub):
-    """
-    This function will add the !$acc routine directive to subroutine
-    """
-    filename = sub.filepath
-
-    file = open(filename, "r")
-    lines = file.readlines()  # read entire file
-    file.close()
-
-    first_use = 0
-    ct = sub.startline
-    while ct < sub.endline:
-        line = lines[ct]
-        l = line.split("!")[0]
-        if not l.strip():
-            ct += 1
-            continue
-            # line is just a commment
-
-        if first_use == 0:
-            m = re.search(f"[\s]+(use)", line)
-            if m:
-                first_use = ct
-
-            match_implicit_none = re.search(r"[\s]+(implicit none)", line)
-            if match_implicit_none:
-                first_use = ct
-            match_type = re.search(r"[\s]+(type|real|integer|logical|character)", line)
-            if match_type:
-                first_use = ct
-
-        ct += 1
-    print(f"first_use = {first_use}")
-    lines.insert(first_use, "      !$acc routine seq\n")
-    print(f"Added !$acc to {sub.name} in {filename}")
-    with open(filename, "w") as ofile:
-        ofile.writelines(lines)
+from utilityFunctions import (
+    find_file_for_subroutine,
+    get_interface_list,
+    getArguments,
+    getLocalVariables,
+    line_unwrapper,
+)
 
 
 class Subroutine(object):
@@ -263,6 +140,9 @@ class Subroutine(object):
         self.elmtypes = []
         self.DoLoops = []
         self.status = False
+
+    def __repr__(self) -> str:
+        return f"Subroutine({self.name})"
 
     def printSubroutineInfo(self, long=False):
         """
@@ -430,7 +310,6 @@ class Subroutine(object):
                 # A pointer may be mapped to multiple difference global variables (i.e., a case switch)
                 # So, each gv is stored as a list instead. This requires extra care when extracting
                 # the read/write status.
-                print(f"{func_name}::Found pointer assignment at line {ct}\n{line}")
                 ptrname, gv = match_ptr.group().split("=>")
                 ptrname = ptrname.strip()
                 gv = gv.strip()
@@ -551,7 +430,7 @@ class Subroutine(object):
                 self.acc_status = True
                 return None
 
-    def _analyze_variables(self, dtype_dict, verbose=False):
+    def _analyze_variables(self, dtype_dict, sub_dict, verbose=False):
         """
         Function used to determine read and write variables
         If var is written to first, then rest of use is ignored.
@@ -612,9 +491,13 @@ class Subroutine(object):
 
         # dictonary to keep track of any derived types accessed
         # in the subroutine.
-        # {'inst%component : [ReadWrite] }
+        # {'inst%component' : [ list of ReadWrite ] }
         #  where ReadWrite = namedtuple('ReadWrite',['status','ln'])
         dtype_accessed = {}
+
+        # Dictionary that holds the global variables passed in as arguments
+        #       { 'child_sub_name' : [list of vars] }
+        vars_as_arguments = {}
 
         # Loop through subroutine line by line starting after the associate clause
         ct = startline
@@ -626,15 +509,14 @@ class Subroutine(object):
 
             # match subroutine call
             match_call = re.search(r"^\s*(call) ", line)
-            match_var = None
+            # Get list of all global variables used in this line
+            match_var = re.findall(r"\w+%\w+", line)
             if not match_call:
-                # Get list of all global variables used in this line
-                match_var = re.findall(r"\w+%\w+", line)
                 # There are derived types to analyze!
                 if match_var:
                     match_var = list(set(match_var))
                     dtype_accessed = determine_variable_status(
-                        match_var, line, ct, dtype_accessed, verbose=True
+                        match_var, line, ct, dtype_accessed, verbose=verbose
                     )
                 # Do the same for any variables in the associate clause
                 if not no_associate:
@@ -643,7 +525,38 @@ class Subroutine(object):
                         dtype_accessed = determine_variable_status(
                             match_ptrs, line, ct, dtype_accessed
                         )
+            else:
+                subname = line.split()[1].split("(")[0]
+                if match_var:
+                    # Remove duplicates and make regex string for all matched variables
+                    match_var = list(set(match_var))
+                    # args is a list of values passed to subroutine.
+                    args = getArguments(line)
+
+                    # Get subroutine of call
+                    child_sub = sub_dict[subname]
+                    arg_to_dtype = determine_arg_name(match_var, child_sub, args)
+                    for el in arg_to_dtype:
+                        vars_as_arguments.setdefault(subname, []).append(el)
+
+                # Do the same for any variables in the associate clause
+                if not no_associate:
+                    match_ptrs = regex_associated_ptr.findall(line)
+                    if match_ptrs:
+                        match_ptrs = list(set(match_ptrs))
+                        args = getArguments(line)
+                        child_sub = sub_dict[subname]
+                        arg_to_dtype = determine_arg_name(match_ptrs, child_sub, args)
+                        for el in arg_to_dtype:
+                            vars_as_arguments.setdefault(subname, []).append(el)
             ct += 1
+
+        for sub, m in vars_as_arguments.items():
+            print(_bc.WARNING + sub + _bc.ENDC, m)
+            print("=== === === === ===")
+
+        determine_argvar_status(vars_as_arguments, sub_dict)
+        sys.exit(1)
 
         # Sort the variables based on complete read/write status
         # So ignoring line numbers
@@ -727,7 +640,9 @@ class Subroutine(object):
                         varg_dict[arg] = parent_sub.LocalVariables["scalars"][arg]
 
         # Determine read/write status of variables
-        self._analyze_variables(dtype_dict=dtype_dict, verbose=verbose)
+        self._analyze_variables(
+            dtype_dict=dtype_dict, sub_dict=main_sub_dict, verbose=verbose
+        )
         # Update main_sub_dict with new parsing information?
         main_sub_dict[self.name] = self
 
