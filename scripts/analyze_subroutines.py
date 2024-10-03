@@ -119,6 +119,9 @@ class Subroutine(object):
         self.class_method = False
         self.class_type = None
 
+        # Create another argument dict that stores the read,write status of them:
+        self.arguments_read_write = {}
+
         # Store when the arguments/local variable declarations start and end
         self.var_declaration_startl = 0
         self.var_declaration_endl = 0
@@ -139,7 +142,7 @@ class Subroutine(object):
         self.acc_status = False
         self.elmtypes = []
         self.DoLoops = []
-        self.status = False
+        self.analyzed_child_subroutines = False
 
     def __repr__(self) -> str:
         return f"Subroutine({self.name})"
@@ -478,7 +481,9 @@ class Subroutine(object):
             no_associate = False
             ptrname_list = [key for key in self.associate_vars.keys()]
             ptrname_str = "|".join(ptrname_list)
-            regex_associated_ptr = re.compile(f"({ptrname_str})", re.IGNORECASE)
+            regex_associated_ptr = re.compile(
+                r"\b({})\b".format(ptrname_str), re.IGNORECASE
+            )
 
         # character class for regex needed to ignore '%'
         # c = "[^a-zA-Z0-9_%]"
@@ -489,9 +494,8 @@ class Subroutine(object):
             for inst in dtype.instances:
                 dtype_instance_dict[inst.name] = dtype
 
-        # dictonary to keep track of any derived types accessed
-        # in the subroutine.
-        # {'inst%component' : [ list of ReadWrite ] }
+        # dictonary to keep track of any derived types accessed in the subroutine.
+        #        {'inst%component' : [ list of ReadWrite ] }
         #  where ReadWrite = namedtuple('ReadWrite',['status','ln'])
         dtype_accessed = {}
 
@@ -722,7 +726,7 @@ class Subroutine(object):
             self.calltree.append(s.calltree)
             if child_sub in interface_list:
                 continue
-        self.status = True
+        self.analyzed_child_subroutines = True
 
         return None
 
@@ -1244,7 +1248,7 @@ class Subroutine(object):
                     self.LocalVariables["arrays"][var]
                 )
 
-    def generate_unstructured_data_regions(self, remove=True):
+    def generate_unstructured_data_regions(self, remove=True) -> None:
         """
         Function generates appropriate enter and exit data
         directives for the local variables of this Subroutine.
@@ -1457,3 +1461,117 @@ class Subroutine(object):
             ofile.close()
         else:
             print(_bc.BOLD + _bc.WARNING + "NO CHANGE" + _bc.ENDC)
+        return None
+
+    def parse_arguments(self, sub_dict, verbose=False):
+        """
+        Function that will analyze the variable status for only the arguments
+            'sub.arguments_read_write' : { `arg` : `list of ReadWrite status`}
+        where,
+            ReadWrite = namedtuple("ReadWrite", ["status", "ln"])
+        """
+        func_name = "parse_args"
+
+        # Create regex to check,
+        # NOTE: Only want to analyze intrinsic arguments as the user derived-types will be analyzed elsewhere.
+        intrinsic_types = ["real", "integer", "character", "logical"]
+        args_to_match = [
+            arg for arg, var in self.Arguments.items() if var.type in intrinsic_types
+        ]
+        arg_match_string = "|".join(args_to_match)
+        regex_args = re.compile(r"\b({})\b".format(arg_match_string), re.IGNORECASE)
+        print(f"{func_name}::args to match {args_to_match}")
+
+        arg_line_numbers = [var.ln for var in self.Arguments.values()]
+        max_arg_ln = max(arg_line_numbers)
+
+        # loop through subroutine lines
+        if self.cpp_filepath:
+            fn = self.cpp_filepath
+        else:
+            fn = self.filepath
+
+        print(f"{func_name}::Opening File {fn}")
+        file = open(fn, "r")
+        lines = file.readlines()
+        file.close()
+        # Determine starting linenumber. If there is no associate clause,
+        # start parsing AFTER final argument declaration
+        if self.associate_end == 0:
+            if self.cpp_startline:
+                # NOTE: Will self.startline > self.cpp_startline always?
+                delta_ln = self.startline - self.cpp_startline
+                startline = max_arg_ln - delta_ln
+                print(
+                    f"{func_name}::Adjusted Argumnet line number for {self.name} in CPP file"
+                )
+                print(startline)
+                # sys exit to test this feature.
+                sys.exit("Verify line number is correct!")
+            else:
+                startline = max_arg_ln + 1
+        else:
+            startline = self.associate_end
+
+        if self.cpp_endline:
+            endline = self.cpp_endline
+        else:
+            endline = self.endline
+
+        args_accessed = {}
+        line_num = startline
+        while line_num < endline:
+            # Take into account Fortran line continuations
+            line, line_num = line_unwrapper(lines, line_num)
+            line = line.strip().lower()
+
+            # match subroutine call - will require recursive `parse_arguments`
+            match_call = re.search(r"^\s*(call) ", line)
+            # Check for args
+            match_arg_use = regex_args.findall(line)
+
+            # Need checks to make sure we are
+
+            if match_arg_use:
+                # end case, check for arg without subcall
+                if not match_call:
+                    match_arg_use = list(set(match_arg_use))
+                    args_accessed = determine_variable_status(
+                        match_arg_use, line, line_num, args_accessed, verbose=verbose
+                    )
+                    print(f"{ func_name }::args_accessed ", args_accessed)
+                    if not args_accessed:
+                        print(f"{func_name}::match_arg_use ", match_arg_use)
+                        print(line)
+                        sys.exit(1)
+
+                # Case of subroutine call:
+                else:
+                    print(f"{func_name}:: line\n", line)
+                    print(f"{func_name}::match_arg_use", match_arg_use)
+                    subname = line.split()[1].split("(")[0]
+                    child_child_sub = sub_dict[subname]
+                    if not child_child_sub.arguments_read_write:
+                        print(
+                            f"{func_name}::{self.name}  calling parse_arguments for {subname}"
+                        )
+                        child_child_sub.parse_arguments(sub_dict, verbose=verbose)
+
+                    # child args have been parsed, now figure out what dummy args we need.
+                    # args is a list of values passed to subroutine.
+                    new_passed_args = getArguments(line)
+
+                    arg_to_dtype = determine_arg_name(
+                        match_arg_use, child_child_sub, new_passed_args
+                    )
+                    print(f"{ func_name } :: {self.name} arg_to_dtype ", arg_to_dtype)
+                    sys.exit(1)
+
+                    # Change the status line numbers to be the line number where
+                    # the child subroutine is called in the parent.
+                    # TODO:
+            line_num += 1
+
+        # All args should have been processed. Store information into Subroutine
+        for arg, status in args_accessed.items():
+            self.arguments_read_write[arg] = status

@@ -139,8 +139,21 @@ def add_acc_routine_info(sub):
         ofile.writelines(lines)
 
 
-def determine_argvar_status(vars_as_arguments, sub_dict):
+def determine_argvar_status(vars_as_arguments, sub_dict, verbose=False):
     """
-    go through a subroutine to classify their argument read,write status
+    Function goes through a subroutine to classify their arguments as read,write status
+    Inputs:
+        vars_as_arguments : dict { 'subname' : [list of PointerAliases]}
+        sub_dict : dict {`subname` : Subroutine object}
+
     """
+    func_name = "determine_argvar_status"
+    # First go through the child subroutines and analyze arguments if not already done.
+    for subname in vars_as_arguments.keys():
+        child_sub = sub_dict[subname]
+        if child_sub.arguments_read_write:
+            continue
+        print(f"{func_name}::parsing arguments for {subname}")
+        child_sub.parse_arguments(sub_dict, verbose=verbose)
+
     return None

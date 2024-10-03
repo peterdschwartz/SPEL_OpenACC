@@ -24,15 +24,14 @@ intrinsic_type = re.compile(r"^(integer|real|logical|character)", re.IGNORECASE)
 # Capture user-defined types
 user_type = re.compile(r"^(class\s*\(|type\s*\()", re.IGNORECASE)
 # non-greedy capture for arrays
-ng_regex_array = re.compile(f"\w+?\s*\(.+?\)")
+ng_regex_array = re.compile(r"\w+?\s*\(.+?\)")
 # capture array bounds only:
 regex_bounds = re.compile(r"(?<=(\w|\s))\(.+\)")
 
 
 class Variable(object):
-    """
-    Class to hold information on the variable
-    declarations in a subroutine
+    """ 
+    Class to hold information on the variable declarations in a subroutine
         * self.type : data type of variable
         * self.name : name of variable
         * self.subgrid : subgrid level used for allocation
@@ -69,6 +68,7 @@ class Variable(object):
         # These are used for Argument variables
         self.optional = optional
         self.keyword = keyword
+        # filter_used corresponds to adjusting memory allocations
         self.filter_used = ""
         self.subs = []
         # Mostly used for global derived-type variables

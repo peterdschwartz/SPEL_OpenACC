@@ -259,6 +259,8 @@ def determine_arg_name(matched_vars, child_sub, args):
     Function that takes a list of vars passed as arguments to sub.
 
         returns list of PointerAlias(ptr=argname,obj=varname)
+    where `argname` is the dummy arg name in the subroutine
+    and `varname` is the variable passed to it.
     """
 
     var_string = "|".join(matched_vars)
@@ -274,6 +276,8 @@ def determine_arg_name(matched_vars, child_sub, args):
         matched_arg = matches[i]
         if "=" in matched_arg:
             keyword, m_var_name = matched_arg.split("=")
+            keyword = keyword.strip()
+            m_var_name = m_var_name.strip()
             actual_arg = child_sub.Arguments[keyword]
         else:
             # if not keyword we need to match by position.
@@ -286,4 +290,3 @@ def determine_arg_name(matched_vars, child_sub, args):
         arg_vars_list.append(arg_to_dtype)
 
     return arg_vars_list
-
