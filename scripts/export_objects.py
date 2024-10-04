@@ -41,7 +41,7 @@ def create_dataframe(sub_dict):
     import pandas as pd
 
     # Create dataframe for subroutine's readwrite variable status:
-    subname = "SurfaceAlbedo"
+    subname = "SoilTemperature".lower()
     sub = sub_dict[subname]
     # combine each dictionary
     status_dict = sub.elmtype_r | sub.elmtype_rw | sub.elmtype_w
@@ -76,3 +76,6 @@ if __name__ == "__main__":
     mod_dict, sub_dict, type_dict = unpickle_unit_test(mod_dict, sub_dict, type_dict)
 
     global_var_dataframe(mod_dict)
+    df_test = create_dataframe(sub_dict)
+
+    print(df_test)

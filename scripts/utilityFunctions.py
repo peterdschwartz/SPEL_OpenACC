@@ -30,7 +30,7 @@ regex_bounds = re.compile(r"(?<=(\w|\s))\(.+\)")
 
 
 class Variable(object):
-    """ 
+    """
     Class to hold information on the variable declarations in a subroutine
         * self.type : data type of variable
         * self.name : name of variable
@@ -92,20 +92,15 @@ class Variable(object):
 
     # Override __str__ for easy printing
     def __str__(self):
-        return f"{self.declaration}::{self.type} {self.name} {self.dim}"
+        return f"{self.type} {self.name} {self.dim}-D {self.active}"
 
     def __repr__(self):
-        return f"Variable({self.declaration}::{self.type} {self.name} {self.dim})"
+        return f"Variable({self.type} {self.name} {self.dim})"
 
-    def printVariable(self, ofile=None):
-        if ofile:
-            ofile.write(f"{self.type} {self.dim}-D {self.name}\n")
-            if self.subs:
-                ofile.write(f"Passed to {self.subs} {self.keyword}\n")
-        else:
-            print(f"{self.type} {self.dim}-D {self.name}")
-            if self.subs:
-                print(f"Passed to {self.subs} {self.keyword}")
+    def printVariable(self, ofile=sys.stdout):
+        ofile.write(f"{self}\n")
+        if self.subs:
+            ofile.write(f"Passed to {self.subs} {self.keyword}\n")
 
 
 def comment_line(lines, ct, mode="normal", verbose=False):
@@ -1042,20 +1037,20 @@ def line_unwrapper(lines, ct, verbose=False):
     Function that takes code segment that has line continuations
     and returns it all on one line.
     """
-    l = lines[ct].split("!")[0]  # remove comments
+    simple_l = lines[ct].split("!")[0]  # remove comments
     # remove new line character
-    l = l.rstrip("\n").strip()
-    continuation = bool(l.endswith("&"))
-    full_line = l
+    simple_l = simple_l.rstrip("\n").strip()
+    continuation = bool(simple_l.endswith("&"))
+    full_line = simple_l
     newct = ct
     while continuation:
         newct += 1
-        l = lines[newct].split("!")[0]  # in case of inline comments
-        l = l.rstrip("\n")
+        simple_l = lines[newct].split("!")[0]  # in case of inline comments
+        simple_l = simple_l.rstrip("\n")
         # Fortran allow empty lines in between line continuations
-        if l.isspace() or not l:
+        if simple_l.isspace() or not simple_l:
             continue
-        full_line = full_line[:-1] + l.strip()
+        full_line = full_line[:-1] + simple_l.strip()
         continuation = bool(full_line.endswith("&"))
 
     # Debug check:

@@ -20,7 +20,7 @@ def main() -> None:
         spel_output_dir,
         unittests_dir,
     )
-    from utilityFunctions import insert_header_for_unittest
+    from utilityFunctions import find_file_for_subroutine, insert_header_for_unittest
     from variable_analysis import determine_global_variable_status
 
     # Set up Argument Parser
@@ -41,7 +41,7 @@ def main() -> None:
     case_dir = unittests_dir + casename
 
     # List of subroutines to be analyzed
-    sub_name_list = ["dyn_veg_cs_adjustments"]
+    sub_name_list = ["LakeTemperature", "SoilTemperature", "SurfaceAlbedo"]
 
     # Determines if SPEL should run to make optimizations
     opt = False
@@ -84,14 +84,14 @@ def main() -> None:
     mod_dict = {}
     for s in sub_name_list:
         # Get general info of the subroutine
-        subroutines[s] = Subroutine(s, calltree=["elm_drv"])
+        # subroutines[s] = Subroutine(s, calltree=["elm_drv"])
 
         # Process files by removing certain modules
         # so that a standalone unit test can be compiled.
         # All file information will be stored in `mod_dict` and `main_sub_dict`
         if preprocess and not opt:
+            fn, startl, endl = find_file_for_subroutine(name=s)
             print(f"Processing for {s}")
-            fn = subroutines[s].filepath
             mod_dict, file_list, main_sub_dict = process_for_unit_test(
                 fname=fn,
                 case_dir=case_dir,
@@ -106,6 +106,7 @@ def main() -> None:
             # NOTE: direct assignment here means that changes to subroutines[s] object
             #       below will be reflected immediately in main_sub_dict. Make explicit instead?
             subroutines[s] = main_sub_dict[s]
+            subroutines[s].print_subroutine_info()
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
     # examineLoops performs adjustments that go beyond the "naive"                  #
@@ -137,10 +138,6 @@ def main() -> None:
         print(f"{func_name}::Error didn't find any modules related to subroutines")
         sys.exit(1)
     # print_spel_module_dependencies(mod_dict=mod_dict,subs=subroutines)
-    ofile = open(f"{case_dir}/module_dependencies.txt", "w")
-    for mod in mod_dict.values():
-        mod.display_info(ofile=ofile)
-    ofile.close()
 
     with open(f"{case_dir}/source_files_needed.txt", "w") as ofile:
         for f in file_list:
@@ -150,6 +147,7 @@ def main() -> None:
     for mod in mod_dict.values():
         for utype, dtype in mod.defined_types.items():
             type_dict[utype] = dtype
+
     #
     # 'main_sub_dict' contains Subroutine instances for all subroutines
     # in any needed modules. Next, each subroutine within the call trees of the user
