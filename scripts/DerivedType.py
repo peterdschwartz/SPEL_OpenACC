@@ -197,7 +197,27 @@ class DerivedType(object):
                     bounds = ""
                 str_ = f"  {status} {var.type} {var.name} {bounds} {str(var.dim)}-D"
                 ofile.write(str_ + "\n")
-
+                
+    def export_derived_type(self, ofile=sys.stdout):
+        ofile.write(f"Type: {self.type_name}\n")
+        ofile.write(f"  Mod: {self.declaration}\n")
+        ofile.write(f"  Instances: \n")
+        if not len(self.instances):
+            ofile.write("   i: None\n")
+        else:
+            for v in self.instances:
+                ofile.write(f"   i: {v.type} {v.name} {v.declaration}\n")
+        ofile.write(f"  Defines: \n")
+        if not len(self.components):
+            ofile.write("   - None\n")
+        else:
+            for c in self.components:
+                status = c['active']
+                var = c['var']
+                bounds = c['bounds'] if var.dim > 0 else "None"
+                ofile.write(f"   - {var.type} {var.name} {bounds} {var.dim} {status}\n")
+        
+        
     # def analyzeDerivedType(self, verbose=False):
     #     #
     #     # This function will open each mod file, find the variable type

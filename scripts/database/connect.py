@@ -1,17 +1,17 @@
-import psycopg2
-from config import load_config
+import mariadb
+import sys
 
-def connect(config):
-    """ Connect to the PostgreSQL database server """
+def connect():
     try:
-        # connecting to the PostgreSQL server
-        with psycopg2.connect(**config) as conn:
-            print('Connected to the PostgreSQL server.')
-            return conn
-    except (psycopg2.DatabaseError, Exception) as error:
-        print(error)
-
-
-if __name__ == '__main__':
-    config = load_config()
-    connect(config)
+        conn = mariadb.connect(
+            user="root",
+            password="root",
+            host="127.0.0.1",
+            port=3306,
+            database="spel",
+        )
+    except mariadb.Error as e:
+        print("error")
+        sys.exit(1)
+    cur = conn.cursor()
+    return cur, conn

@@ -10,6 +10,7 @@ spel_mods_dir = home_dir + "SourceFiles/"
 spel_output_dir = scripts_dir + "/script-output/"
 try:
     HOME = os.environ["HOME"] + "/"
+    # HOME = "c:/Users/mungs/Desktop/"
 except KeyError:
     print(
         "HOME environment variable not set. Please set it to your home directory\n"
