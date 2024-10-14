@@ -14,7 +14,7 @@ from mod_config import _bc, spel_dir
 from process_associate import getAssociateClauseVars
 from utilityFunctions import (find_file_for_subroutine, get_interface_list,
                               getArguments, getLocalVariables, line_unwrapper)
-
+from fortran_modules import get_module_name_from_file
 
 class Subroutine(object):
     """
@@ -141,6 +141,17 @@ class Subroutine(object):
 
     def __repr__(self) -> str:
         return f"Subroutine({self.name})"
+    
+    def export_subroutine_info(self, ofile=sys.stdout):
+        filename = home_dir + self.filepath.split("/", 6)[-1]
+        mod = get_module_name_from_file(filename)[1]
+        ofile.write(f"Sub: {self.name}\n")
+        ofile.write(f" Mod: {mod}\n")
+        ofile.write(f" Args: {mod}\n")
+        if self.
+        
+        
+        
 
     def print_subroutine_info(self, ofile=sys.stdout, long=False):
         """

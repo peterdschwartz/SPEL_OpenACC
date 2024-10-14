@@ -89,7 +89,10 @@ class Variable(object):
 
     # Override __str__ for easy printing
     def __str__(self):
-        return f"{self.type} {self.name} {self.dim}-D {self.active}"
+        # return self.name
+        # return [self.type, self.name, self.dim]
+        return f"{self.type} {self.name} {self.dim}"
+
 
     def __repr__(self):
         return f"Variable({self.type} {self.name} {self.dim})"
