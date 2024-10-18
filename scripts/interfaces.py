@@ -271,7 +271,6 @@ def determine_arg_name(matched_vars, child_sub, args):
     matches = [arg for arg in args if re.search(var_string, arg)]
     match_locs = [args.index(m) for m in matches]
     for i, locs in enumerate(match_locs):
-        print(f"{args[locs]} === { matches[i] }")
         # Check if keyword:
         matched_arg = matches[i]
         if "=" in matched_arg:

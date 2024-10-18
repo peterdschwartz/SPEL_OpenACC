@@ -1,4 +1,5 @@
 import re
+import sys
 from collections import namedtuple
 
 # Declare namedtuple for readwrite status of variables:
@@ -139,21 +140,67 @@ def add_acc_routine_info(sub):
         ofile.writelines(lines)
 
 
-def determine_argvar_status(vars_as_arguments, sub_dict, verbose=False):
+def determine_argvar_status(
+    vars_as_arguments, subname, sub_dict, linenum, verbose=False
+):
     """
     Function goes through a subroutine to classify their arguments as read,write status
     Inputs:
-        vars_as_arguments : dict { 'subname' : [list of PointerAliases]}
-        sub_dict : dict {`subname` : Subroutine object}
-
+        vars_as_arguments : { 'dummy_arg' : 'global variable'}
+        sub_dict : dict {'subname' : Subroutine object}
     """
     func_name = "determine_argvar_status"
     # First go through the child subroutines and analyze arguments if not already done.
-    for subname in vars_as_arguments.keys():
-        child_sub = sub_dict[subname]
-        if child_sub.arguments_read_write:
-            continue
-        print(f"{func_name}::parsing arguments for {subname}")
+    child_sub = sub_dict[subname]
+    if not child_sub.arguments_read_write:
         child_sub.parse_arguments(sub_dict, verbose=verbose)
+    # Update the global variables with the status of their corresponding dummy args
+    updated_var_status = {
+        gv: child_sub.arguments_read_write[dummy_arg]
+        for dummy_arg, gv in vars_as_arguments.items()
+    }
+    # Update the line number to be line child_sub is called in parent.
+    updated_var_status = {
+        gv: [ReadWrite(status=val.status, ln=linenum)]
+        for gv, val in updated_var_status.items()
+    }
 
-    return None
+    return updated_var_status
+
+
+def summarize_read_write_status(var_access, map_names=[]):
+    """
+    Function that takes the raw ReadWrite status for given variables
+    and returns a dict of variables with only one overall ReadWrite Status
+
+    """
+    summary = {}
+    for varname, values in var_access.items():
+        # read-only: all values are 'r'
+        # write-only: all values are 'w'
+        # read-write: mixture of 'r' and 'w'
+        status_list = [v.status for v in values]
+        num_uses = len(status_list)
+        num_reads = status_list.count("r")
+        num_writes = status_list.count("w")
+        # NOTE: This code section
+        # Allow for multiple variables to correspond to the same gv
+        # var_name_list = []
+        # if key in ptrname_list:
+        #     if isinstance(self.associate_vars[key], list):
+        #         var_name_list = self.associate_vars[key].copy()
+        #     else:
+        #         var_name_list.append(self.associate_vars[key])
+        # else:
+        #     var_name_list.append(key)
+        if num_uses == num_reads:
+            # read-only
+            summary[varname] = "r"
+        elif num_uses == num_writes:
+            # write-only
+            summary[varname] = "w"
+        else:
+            # read-write
+            summary[varname] = "rw"
+
+    return summary

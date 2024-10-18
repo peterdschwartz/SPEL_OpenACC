@@ -12,15 +12,10 @@ def main() -> None:
     from analyze_subroutines import Subroutine
     from edit_files import process_for_unit_test
     from export_objects import pickle_unit_test
-    from mod_config import (
-        _bc,
-        default_mods,
-        scripts_dir,
-        spel_mods_dir,
-        spel_output_dir,
-        unittests_dir,
-    )
-    from utilityFunctions import find_file_for_subroutine, insert_header_for_unittest
+    from mod_config import (_bc, default_mods, scripts_dir, spel_mods_dir,
+                            spel_output_dir, unittests_dir)
+    from utilityFunctions import (find_file_for_subroutine,
+                                  insert_header_for_unittest)
     from variable_analysis import determine_global_variable_status
 
     # Set up Argument Parser
@@ -41,7 +36,7 @@ def main() -> None:
     case_dir = unittests_dir + casename
 
     # List of subroutines to be analyzed
-    sub_name_list = ["LakeTemperature", "SoilTemperature", "SurfaceAlbedo"]
+    sub_name_list = ["dyn_veg_cs_adjustments"]
 
     # Determines if SPEL should run to make optimizations
     opt = False
@@ -148,7 +143,6 @@ def main() -> None:
         for utype, dtype in mod.defined_types.items():
             type_dict[utype] = dtype
 
-    #
     # 'main_sub_dict' contains Subroutine instances for all subroutines
     # in any needed modules. Next, each subroutine within the call trees of the user
     # specified subroutines will be further analyzed to trace usage of global variables
@@ -159,11 +153,11 @@ def main() -> None:
         # to by the subroutine and any of its callees
         #
         subroutines[s].parse_subroutine(
-            dtype_dict=type_dict, main_sub_dict=main_sub_dict, verbose=True
+            dtype_dict=type_dict, main_sub_dict=main_sub_dict, verbose=False
         )
 
         subroutines[s].child_subroutines_analysis(
-            dtype_dict=type_dict, main_sub_dict=main_sub_dict, verbose=True
+            dtype_dict=type_dict, main_sub_dict=main_sub_dict, verbose=False
         )
 
         print(_bc.OKGREEN + f"Derived Type Analysis for {subroutines[s].name}")
