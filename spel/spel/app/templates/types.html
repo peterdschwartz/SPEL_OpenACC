@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Home</title>
+</head>
+
+<body>
+    <style>
+        table,
+        th,
+        td {
+            border: 1px solid black;
+            border-collapse: collapse;
+            text-align: center;
+        }
+
+        tr:nth-child(even) {
+            background-color: #D6EEEE;
+        }
+    </style>
+    <h1>All Objects</h1>
+
+    <table>
+        <tr>
+            <th>ID</th>
+            <th>Module</th>
+            <th>Type_Name</th>
+            <th>Member</th>
+            <th>Member_Type</th>
+            <th>Dimensions</th>
+            <th>Bounds</th>
+            <th>Active</th>
+        </tr>
+        {% for obj in all_objects %}
+        <tr>
+            <td>{{ obj.id }}</td>
+            <td>{{ obj.module }}</td>
+            <td>{{ obj.type_name }}</td>
+            <td>{{ obj.member }}</td>
+            <td>{{ obj.member_type }}</td>
+            <td>{{ obj.dim }}</td>
+            <td>{{ obj.bounds }}</td>
+            <td>{{ obj.active }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</body>
+
+</html>
