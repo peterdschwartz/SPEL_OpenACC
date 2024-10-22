@@ -1,6 +1,6 @@
 """
-Python Module that collects functions that 
-have broad utility for several modules in SPEL 
+Python Module that collects functions that
+have broad utility for several modules in SPEL
 """
 
 import re
@@ -75,6 +75,7 @@ class Variable(object):
             self.declaration = ""
         self.active = active
         self.private = private
+        self.default_value = None
 
     # Define equality for comparison of two Variables
     def __eq__(self, other):
@@ -91,8 +92,8 @@ class Variable(object):
     def __str__(self):
         # return self.name
         # return [self.type, self.name, self.dim]
-        return f"{self.type} {self.name} {self.dim}"
 
+        return f"{self.type} {self.name} {self.dim}"
 
     def __repr__(self):
         return f"Variable({self.type} {self.name} {self.dim})"
@@ -1078,7 +1079,6 @@ def insert_header_for_unittest(file_list, casedir, mod_dict):
 
     # Loop through files, insert header, and save them to the Unit Test dir
     for f in file_list:
-
         # Retrieve module name for the file and the linenumber it starts at.
         # Note that `linenumber` is 1-indexed from grep. So that if we insert,
         # at that loc here, it will be just after the "module" statement.

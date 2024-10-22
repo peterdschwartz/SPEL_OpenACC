@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Database Table Column Matcher</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+
+        .container {
+            display: flex;
+            justify-content: center;
+            margin-top: 20px;
+        }
+
+        .box {
+            border: 1px solid #ccc;
+            padding: 20px;
+            margin: 5px;
+            width: 150px;
+            text-align: center;
+            cursor: pointer;
+            background-color: #f9f9f9;
+        }
+
+        .box.selected {
+            background-color: #4CAF50;
+            color: white;
+        }
+
+        .columns-container {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 20px;
+        }
+
+        .column {
+            border: 1px solid #ccc;
+            padding: 20px;
+            width: 150px;
+        }
+
+        .column select {
+            width: 100%;
+        }
+
+        .match-btn {
+            display: block;
+            margin: 20px auto;
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        .match-result {
+            text-align: center;
+            margin-top: 20px;
+            font-weight: bold;
+        }
+
+        .color-coded {
+            padding: 5px;
+        }
+    </style>
+</head>
+<body>
+
+<h2 style="text-align: center;">Database Table Column Matcher</h2>
+
+<div class="container" id="tableList">
+    <!-- Dynamic boxes representing tables will go here -->
+</div>
+
+<div class="columns-container">
+    <div class="column">
+        <h3>Left Columns</h3>
+        <select id="leftColumns" size="10" multiple></select>
+    </div>
+    <div class="column">
+        <h3>Right Columns</h3>
+        <select id="rightColumns" size="10" multiple></select>
+    </div>
+</div>
+
+<button class="match-btn" onclick="matchColumns()">Match Columns</button>
+
+<div class="match-result" id="matchResult"></div>
+
+<script>
+    // Example of table data (can be fetched dynamically)
+    const databaseTables = {
+        "users": ["id", "name", "email", "created_at"],
+        "orders": ["order_id", "user_id", "total", "order_date"],
+        "products": ["product_id", "name", "price", "category"]
+    };
+
+    // Define colors for each table (for color coding)
+    const tableColors = {
+        "users": "#ffadad",
+        "orders": "#ffd6a5",
+        "products": "#caffbf"
+    };
+
+    let selectedTables = [];
+
+    // Populate table boxes dynamically
+    const tableList = document.getElementById("tableList");
+    for (let tableName in databaseTables) {
+        const tableBox = document.createElement("div");
+        tableBox.classList.add("box");
+        tableBox.textContent = tableName;
+        tableBox.onclick = () => toggleTableSelection(tableName, tableBox);
+        tableList.appendChild(tableBox);
+    }
+
+    // Toggle table selection
+    function toggleTableSelection(tableName, tableBox) {
+        if (selectedTables.includes(tableName)) {
+            // Deselect table
+            selectedTables = selectedTables.filter(t => t !== tableName);
+            tableBox.classList.remove("selected");
+        } else {
+            // Select table
+            selectedTables.push(tableName);
+            tableBox.classList.add("selected");
+        }
+
+        // Update the columns shown based on selected tables
+        displayColumns();
+    }
+
+    // Display columns from selected tables in the left and right select elements
+    function displayColumns() {
+        const leftColumns = document.getElementById("leftColumns");
+        const rightColumns = document.getElementById("rightColumns");
+
+        // Clear previous options
+        leftColumns.innerHTML = "";
+        rightColumns.innerHTML = "";
+
+        // Add columns from selected tables with color coding
+        selectedTables.forEach(tableName => {
+            const columns = databaseTables[tableName];
+            const color = tableColors[tableName]; // Get color for the table
+
+            columns.forEach(col => {
+                let leftOption = document.createElement("option");
+                let rightOption = document.createElement("option");
+
+                leftOption.value = `${tableName}.${col}`;
+                rightOption.value = `${tableName}.${col}`;
+
+                leftOption.textContent = `${tableName}.${col}`;
+                rightOption.textContent = `${tableName}.${col}`;
+
+                // Apply color coding
+                leftOption.style.backgroundColor = color;
+                rightOption.style.backgroundColor = color;
+
+                leftColumns.appendChild(leftOption);
+                rightColumns.appendChild(rightOption);
+            });
+        });
+    }
+
+    // Match columns and display the result
+    function matchColumns() {
+        const leftSelect = document.getElementById("leftColumns");
+        const rightSelect = document.getElementById("rightColumns");
+        const matchResult = document.getElementById("matchResult");
+
+        const leftValue = leftSelect.value;
+        const rightValue = rightSelect.value;
+
+        if (leftValue && rightValue) {
+            matchResult.textContent = `Query: WHERE ${leftValue} = ${rightValue}`;
+        } else {
+            matchResult.textContent = "Please select both columns to match.";
+        }
+    }
+</script>
+
+</body>
+</html>
