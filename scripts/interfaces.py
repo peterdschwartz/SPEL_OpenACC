@@ -254,21 +254,26 @@ def match_input_arguments(l_args, sub, special, verbose=False):
     return matched
 
 
-def determine_arg_name(matched_vars, child_sub, args):
+def determine_arg_name(matched_vars, child_sub, args) -> list:
     """
-    Function that takes a list of vars passed as arguments to sub.
+    Function that takes a list of vars passed as arguments to subroutine and
+    checks if any correspond to any in 'matched_vars'
+        * matched_vars : list of strings for variable names to match
+        * child_sub : Subroutine obj
+        * args : arguments passed to child_sub
 
         returns list of PointerAlias(ptr=argname,obj=varname)
-    where `argname` is the dummy arg name in the subroutine
-    and `varname` is the variable passed to it.
+            where `argname` is the dummy arg name in the subroutine
+            and `varname` is the variable passed to it.
     """
+    func_name = "determine_arg_name::"
 
     var_string = "|".join(matched_vars)
     var_string = f"({var_string})"
 
     arg_vars_list = []
     # Make lists of matched expressions and their location in args.
-    matches = [arg for arg in args if re.search(var_string, arg)]
+    matches = [arg for arg in args if re.search(r"\b{}\b".format(var_string), arg)]
     match_locs = [args.index(m) for m in matches]
     for i, locs in enumerate(match_locs):
         # Check if keyword:

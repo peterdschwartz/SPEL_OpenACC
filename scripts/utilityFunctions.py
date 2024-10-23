@@ -351,7 +351,6 @@ def get_interface_list():
     NOTE:  Should store it in mod_config so it's only run once per
            Unit Test creation
     """
-    import os
 
     cmd = f'grep -rin --exclude-dir={ELM_SRC}external_models/ -E "^[[:space:]]+(interface)" {ELM_SRC}*'
     output = sp.getoutput(cmd)
@@ -408,12 +407,11 @@ def getLocalVariables(sub, verbose=False, class_var=False):
     user_type = re.compile(r"^(class\s*\(|type\s*\()", re.IGNORECASE)
 
     #
-    for ln in range(startline, endline):
-        line = lines[ln].split("!")[0]
-        line = line.strip()
-        line = line.strip("\n")
-        if not (line):
-            continue
+    ln = startline
+    while ln < endline:
+        line, ln = line_unwrapper(lines=lines, ct=ln)
+        line = line.strip().lower()
+
         match_variable = find_variables.search(line)
 
         if match_variable:
@@ -528,6 +526,7 @@ def getLocalVariables(sub, verbose=False, class_var=False):
                     sub.LocalVariables["scalars"][var] = Variable(
                         data_type, var, "", ln, dim=0, parameter=parameter
                     )
+        ln += 1
     return
 
 
@@ -609,7 +608,7 @@ def adjust_array_access_and_allocation(local_arrs, sub, dargs=False, verbose=Fal
     import os.path
     import re
 
-    from mod_config import _bc, elm_files, home_dir
+    from mod_config import _bc, elm_files, spel_dir
 
     # Get lines of this file:
     ifile = open(elm_files + sub.filepath, "r")
@@ -834,12 +833,12 @@ def adjust_array_access_and_allocation(local_arrs, sub, dargs=False, verbose=Fal
 
     # Save changes:
     if track_changes:
-        if not os.path.exists(home_dir + f"modified-files/{sub.filepath}"):
+        if not os.path.exists(spel_dir + f"modified-files/{sub.filepath}"):
             print(
                 _bc.BOLD + _bc.WARNING + "Writing to file ",
-                home_dir + f"modified-files/{sub.filepath}" + _bc.ENDC,
+                spel_dir + f"modified-files/{sub.filepath}" + _bc.ENDC,
             )
-            ofile = open(home_dir + f"modified-files/{sub.filepath}", "w")
+            ofile = open(spel_dir + f"modified-files/{sub.filepath}", "w")
             ofile.writelines(lines)
             ofile.close()
         else:
@@ -874,9 +873,9 @@ def adjust_child_sub_arguments(sub, file, lstart, lend, args):
     """
     import os
 
-    from mod_config import _bc, home_dir
+    from mod_config import _bc, spel_dir
 
-    if os.path.exists(home_dir + f"modified-files/{file}"):
+    if os.path.exists(spel_dir + f"modified-files/{file}"):
         print(file, "has already been modified")
         file = f"../modified-files/{file}"
 

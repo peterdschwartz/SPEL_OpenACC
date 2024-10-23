@@ -1,36 +1,59 @@
 import pickle
+import sys
+
+from mod_config import E3SM_SRCROOT
 
 
 def pickle_unit_test(mod_dict, sub_dict, type_dict):
     """
     Function to dump SPEL's output as pickled objects.
     """
-    dbfile = open("mod_dict.pkl", "ab")
+
+    import subprocess as sp
+
+    func_name = "pickle_unit_test"
+    cmd = f"./git_commit.sh {E3SM_SRCROOT}"
+    output = sp.getoutput(cmd)
+
+    if "ERROR" in output:
+        print(f"{func_name}::Couldn't find GIT COMMIT\n{output}")
+        sys.exit(1)
+    output = output.split()
+    output[1] = output[1][0:7]
+    commit = output[1]
+
+    dbfile = open(f"mod_dict-{commit}.pkl", "ab")
     pickle.dump(mod_dict, dbfile)
     dbfile.close()
 
-    dbfile = open("sub_dict.pkl", "ab")
+    for sub in sub_dict.values():
+        sub.filepath = sub.filepath.replace(E3SM_SRCROOT, "")
+
+    dbfile = open(f"sub_dict-{commit}.pkl", "ab")
     pickle.dump(sub_dict, dbfile)
     dbfile.close()
 
-    dbfile = open("type_dict.pkl", "ab")
+    dbfile = open(f"type_dict-{commit}.pkl", "ab")
     pickle.dump(type_dict, dbfile)
     dbfile.close()
 
 
-def unpickle_unit_test(mod_dict, sub_dict, type_dict):
+def unpickle_unit_test(mod_dict, sub_dict, type_dict, commit):
     """
     Function to load SPEL's output from pickled files.
     """
-    dbfile = open("mod_dict.pkl", "rb")
+    dbfile = open(f"mod_dict{commit}.pkl", "rb")
     mod_dict = pickle.load(dbfile)
     dbfile.close()
 
-    dbfile = open("sub_dict.pkl", "rb")
+    dbfile = open(f"sub_dict{commit}.pkl", "rb")
     sub_dict = pickle.load(dbfile)
     dbfile.close()
 
-    dbfile = open("type_dict.pkl", "rb")
+    for sub in sub_dict.values():
+        sub.filepath = E3SM_SRCROOT + sub.filepath
+
+    dbfile = open(f"type_dict{commit}.pkl", "rb")
     type_dict = pickle.load(dbfile)
     dbfile.close()
 

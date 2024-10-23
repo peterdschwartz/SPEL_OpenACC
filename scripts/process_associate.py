@@ -8,7 +8,7 @@ def getAssociateClauseVars(sub, verbose=False):
     """
     Funtion to extract the associated variables in a subroutine
     """
-    func_name = "getAssociateClauseVars"
+    func_name = "getAssociateClauseVars::"
 
     subroutine_name = sub.name
     if sub.cpp_startline:

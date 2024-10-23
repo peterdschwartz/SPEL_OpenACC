@@ -2,17 +2,27 @@ import os.path
 import re
 import sys
 
-from helper_functions import (ReadWrite, SubroutineCall,
-                              determine_argvar_status, determine_level_in_tree,
-                              determine_variable_status,
-                              summarize_read_write_status)
-from interfaces import determine_arg_name
+from helper_functions import (
+    ReadWrite,
+    SubroutineCall,
+    determine_argvar_status,
+    determine_level_in_tree,
+    determine_variable_status,
+    summarize_read_write_status,
+    trace_derived_type_arguments,
+)
+from interfaces import determine_arg_name, resolve_interface
 from log_functions import center_print
 from LoopConstructs import Loop, exportVariableDependency
-from mod_config import _bc, home_dir
+from mod_config import _bc, spel_dir
 from process_associate import getAssociateClauseVars
-from utilityFunctions import (find_file_for_subroutine, get_interface_list,
-                              getArguments, getLocalVariables, line_unwrapper)
+from utilityFunctions import (
+    find_file_for_subroutine,
+    get_interface_list,
+    getArguments,
+    getLocalVariables,
+    line_unwrapper,
+)
 
 
 class Subroutine(object):
@@ -243,10 +253,11 @@ class Subroutine(object):
         """
         This function will find child subroutines and variables used
         in the associate clause to be used for parsing for ro and wr derived types
+            * main_sub_dict : dict of all subroutines for FUT
+            * dtype_dict : dict of user type defintions
+            * interface_list : contains names of known interfaces
         """
-        from interfaces import resolve_interface
-        from mod_config import _bc, regex_skip_string
-        from utilityFunctions import getArguments
+        from mod_config import _bc
 
         func_name = "_preprocess_file"
 
@@ -330,9 +341,6 @@ class Subroutine(object):
 
                 # args is a list of arguments passed to subroutine
                 args = getArguments(l_unwrp)
-                if child_sub_name == "computeseedamounts":
-                    print("l:", l_unwrp)
-                    print("ARGS: ", args)
 
                 # If child sub name is an interface, then
                 # find the actual subroutine name corresponding
@@ -387,17 +395,18 @@ class Subroutine(object):
                             lib_func=True,
                         )
                     else:
-                        childsub = main_sub_dict[child_sub_name]
+                        childsub: Subroutine = main_sub_dict[child_sub_name]
 
                 # Transform args to list of PointerAlias with dummy_arg => passed_var
-                args_matched = determine_arg_name(
-                    matched_vars=args, child_sub=childsub, args=args
-                )
+                if not childsub.library:
+                    args_matched = determine_arg_name(
+                        matched_vars=args, child_sub=childsub, args=args
+                    )
+                    # Store the subroutine call information (name of parent and the arguments passed)
+                    subcall = SubroutineCall(self.name, args_matched)
+                    if subcall not in childsub.subroutine_call:
+                        childsub.subroutine_call.append(subcall)
 
-                # Store the subroutine call information (name of parent and the arguments passed)
-                subcall = SubroutineCall(self.name, args_matched)
-                if subcall not in childsub.subroutine_call:
-                    childsub.subroutine_call.append(subcall)
                 # Add child subroutine to the dict if not already present
                 child_sub_names = [s for s in self.child_Subroutine.keys()]
                 if child_sub_name not in child_sub_names:
@@ -422,7 +431,7 @@ class Subroutine(object):
                 self.acc_status = True
                 return None
 
-    def _analyze_variables(self, sub_dict, verbose=False):
+    def _analyze_variables(self, sub_dict, global_vars, interface_list, verbose=False):
         """
         Function used to determine read and write variables
         If var is written to first, then rest of use is ignored.
@@ -440,6 +449,9 @@ class Subroutine(object):
             - Part 3, check rw status of global vars
         """
         func_name = "_analyze_variables"
+        debug = False
+        if self.name == "dyn_veg_cs_adjustments":
+            debug = True
 
         if self.cpp_filepath:
             fn = self.cpp_filepath
@@ -499,7 +511,11 @@ class Subroutine(object):
                     this_var = [v for v in match_var if "this" in v]
                     if this_var:
                         split_map = map(lambda v: v.split("%")[0], match_var)
-                        temp = { v : self.Arguments[v] for v in split_map if v in self.Arguments and v not in user_type_args}
+                        temp = {
+                            v: self.Arguments[v]
+                            for v in split_map
+                            if v in self.Arguments and v not in user_type_args
+                        }
                         user_type_args.update(temp)
                     dtype_accessed = determine_variable_status(
                         match_var, line, ct, dtype_accessed, verbose=verbose
@@ -512,6 +528,7 @@ class Subroutine(object):
                             match_ptrs, line, ct, dtype_accessed
                         )
             else:
+                # Found child subroutine!
                 # Dictionary that holds the global variables passed in as arguments
                 #       { 'dummy_arg' : 'global variable'}
                 vars_passed_as_args = {}
@@ -522,8 +539,23 @@ class Subroutine(object):
                     # args is a list of values passed to subroutine.
                     args = getArguments(line)
 
-                    # Get subroutine of call
-                    child_sub = sub_dict[subname]
+                    # Match Subroutine to name. Resolve interface if necessary
+                    if subname in interface_list:
+                        subname, child_sub = resolve_interface(
+                            self,
+                            iname=subname,
+                            args=args,
+                            dtype_dict=global_vars,
+                            sub_dict=sub_dict,
+                            verbose=verbose,
+                        )
+                        if not subname:
+                            print(f"{func_name}::Error unresolved interface {subname}")
+                            self.print_subroutine_info()
+                            sys.exit(1)
+                    else:
+                        child_sub = sub_dict[subname]
+
                     # arg_to dtype is a list of PointerAlias(ptr=argname,obj=varname)
                     arg_to_dtype = determine_arg_name(match_var, child_sub, args)
                     vars_passed_as_args = {arg.ptr: arg.obj for arg in arg_to_dtype}
@@ -536,7 +568,9 @@ class Subroutine(object):
                         args = getArguments(line)
                         child_sub = sub_dict[subname]
                         arg_to_dtype = determine_arg_name(match_ptrs, child_sub, args)
-                        vars_passed_as_args = {arg.ptr: arg.obj for arg in arg_to_dtype}
+                        vars_passed_as_args.update(
+                            {arg.ptr: arg.obj for arg in arg_to_dtype}
+                        )
 
                 # This function will parse the dummy arguments of child subroutines
                 # so that the status of the dtypes matched above can be updated.
@@ -564,24 +598,29 @@ class Subroutine(object):
                     )
             ct += 1
 
-        if(user_type_args):
-            print(f"{func_name} user_type_args \n{user_type_args}")
-            keys_to_replace = [key for key in dtype_accessed if key.split("%")[0] in user_type_args]
-            print("keys_to replace",keys_to_replace)
-            passed_args = {key : [] for key in user_type_args}
+        if user_type_args:
+            keys_to_replace = [
+                key for key in dtype_accessed if key.split("%")[0] in user_type_args
+            ]
+            passed_args = {key: [] for key in user_type_args}
             for type_arg in user_type_args:
                 for subcall in self.subroutine_call:
-                    temp =list({ ptrobj.obj:True for ptrobj in subcall.args
-                            if ptrobj.ptr == type_arg and ptrobj.obj not in passed_args[type_arg]}) 
+                    temp = list(
+                        {
+                            ptrobj.obj: True
+                            for ptrobj in subcall.args
+                            if ptrobj.ptr == type_arg
+                            and ptrobj.obj not in passed_args[type_arg]
+                        }
+                    )
                     passed_args[type_arg].extend(temp)
-                print('passed_args',passed_args)
 
             for key in keys_to_replace:
                 save_val = dtype_accessed.pop(key)
-                var_to_replace = key.split('%')[0]
+                var_to_replace = key.split("%")[0]
                 for sub_val in passed_args[var_to_replace]:
-                    new_key = key.replace(var_to_replace,sub_val)
-                    print(key,"=>",new_key)
+                    new_key = key.replace(var_to_replace, sub_val)
+                    print(key, "=>", new_key)
                     dtype_accessed[new_key] = save_val
 
         # NOTE: to allow tracking of NML options, we will want to be able
@@ -604,6 +643,8 @@ class Subroutine(object):
             else:
                 var_name_list.append(key)
             for varname in var_name_list:
+                if "%" not in varname:
+                    print(f"Adding { varname } to elmtype!")
                 if num_uses == num_reads:
                     # read-only
                     self.elmtype_r[varname] = "r"
@@ -627,11 +668,10 @@ class Subroutine(object):
             main_sub_dict : dictionary of all subroutines in files needed for unit testing
             child : boolean flag to indicate if subroutine is a child subroutine
         """
-        func_name = "parse_subroutine"
+        func_name = "parse_subroutine::"
 
         # Get interfaces
         interface_list = get_interface_list()
-        elmvar = [dtype for dtype in dtype_dict.values()]
 
         self._preprocess_file(
             main_sub_dict=main_sub_dict,
@@ -640,31 +680,24 @@ class Subroutine(object):
             verbose=verbose,
         )
 
-        # Create list that holds the names of the derived types only
-        elm_var_names = []
-        for dtype in elmvar:
-            for inst in dtype.instances:
-                elm_var_names.append(inst.name)
+        # Set up dictionary of derived type instances
+        global_vars = {}
+        for argname, arg in self.Arguments.items():
+            if arg.type in dtype_dict.keys():
+                global_vars[argname] = dtype_dict[arg.type]
 
-        # If the subroutine has been called, then extra care must be taken
-        # for any global variables passed as arguments to match the names
-        # of dummy args to their actual name.
+        for typename, dtype in dtype_dict.items():
+            for inst in dtype.instances:
+                if inst.name not in global_vars:
+                    global_vars[inst.name] = dtype
 
         # Determine read/write status of variables
-        self._analyze_variables(sub_dict=main_sub_dict, verbose=verbose)
-
-        subcall_dict = {
-            childsub.name: childsub.subroutine_call
-            for childsub in self.child_Subroutine.values()
-        }
-        if subcall_dict:
-            print(f"{func_name}::Finished analyzing for {self.name}")
-            print(f"{func_name}::Subroutine CALLS for {self.name}")
-            for subname, calls in subcall_dict.items():
-                fmt_string = center_print(name=subname, pad_char="+")
-                print(_bc.WARNING + _bc.BOLD + f"{fmt_string}" + _bc.ENDC)
-                for sc in calls:
-                    print(_bc.OKGREEN + f"{sc}" + _bc.ENDC)
+        self._analyze_variables(
+            sub_dict=main_sub_dict,
+            global_vars=global_vars,
+            interface_list=interface_list,
+            verbose=verbose,
+        )
 
         # Update main_sub_dict with new parsing information?
         main_sub_dict[self.name] = self
@@ -686,10 +719,9 @@ class Subroutine(object):
         for child_sub in self.child_Subroutine.values():
             if child_sub.library:
                 print(
-                    f"{func_name}:: {child_sub.name} is a library function -- Skipping."
+                    f"{func_name}::{child_sub.name} is a library function -- Skipping."
                 )
                 continue
-            print("Analyzing child subroutine:", child_sub.name)
             if child_sub.name in interface_list:
                 print(
                     f"{func_name}::Error: need to resolve interface for {child_sub.name}"
@@ -711,7 +743,9 @@ class Subroutine(object):
                         verbose=verbose,
                     )
 
-            # Add needed elmtypes to parent subroutine
+            # Figure out if child subroutine is called with derived type arguments
+            trace_derived_type_arguments(self, child_sub, verbose=verbose)
+
             for varname, status in child_sub.elmtype_r.items():
                 if varname in self.elmtype_w.keys():
                     # Check if previously write-only and change to read-write
@@ -774,7 +808,7 @@ class Subroutine(object):
         update directives to check the results of the subroutine
         """
         ofile = open(
-            f"{home_dir}scripts/script-output/update_vars_{self.name}.F90", "w"
+            f"{spel_dir}scripts/script-output/update_vars_{self.name}.F90", "w"
         )
 
         spaces = " " * 2
@@ -866,13 +900,15 @@ class Subroutine(object):
         Function that will parse the loop structure of a subroutine
         Add loop parallel directives if desired
         """
-        from interfaces import resolve_interface
         from mod_config import _bc
-        from utilityFunctions import (determine_filter_access,
-                                      find_file_for_subroutine,
-                                      get_interface_list, getArguments,
-                                      getLocalVariables,
-                                      lineContinuationAdjustment)
+        from utilityFunctions import (
+            determine_filter_access,
+            find_file_for_subroutine,
+            get_interface_list,
+            getArguments,
+            getLocalVariables,
+            lineContinuationAdjustment,
+        )
 
         interface_list = (
             get_interface_list()
@@ -1273,18 +1309,18 @@ class Subroutine(object):
         Compare new and old directives and overwrite if they are different
         """
         # Open File:
-        if os.path.exists(home_dir + "modified-files/" + self.filepath):
+        if os.path.exists(spel_dir + "modified-files/" + self.filepath):
             print("Modified file found")
             print(
                 _bc.BOLD
                 + _bc.WARNING
                 + f"Opening file "
-                + home_dir
+                + spel_dir
                 + "modified-files/"
                 + self.filepath
                 + _bc.ENDC
             )
-            ifile = open(home_dir + "modified-files/" + self.filepath, "r")
+            ifile = open(spel_dir + "modified-files/" + self.filepath, "r")
         else:
             print(_bc.BOLD + _bc.WARNING + f"Opening file{self.filepath}" + _bc.ENDC)
             ifile = open(self.filepath, "r")
@@ -1465,12 +1501,12 @@ class Subroutine(object):
                     _bc.BOLD
                     + _bc.WARNING
                     + f"Writing to file "
-                    + home_dir
+                    + spel_dir
                     + "modified-files/"
                     + self.filepath
                     + _bc.ENDC
                 )
-                ofile = open(home_dir + "modified-files/" + self.filepath, "w")
+                ofile = open(spel_dir + "modified-files/" + self.filepath, "w")
 
             ofile.writelines(lines)
             ofile.close()
@@ -1489,14 +1525,13 @@ class Subroutine(object):
               as much of it is duplicated. 1st, get this working for as intended.
               Then do the re-factor taking care that nothing is broken in the process.
         """
-        func_name = "parse_args"
+        func_name = "parse_args::"
 
-        # Create regex to check,
-        # NOTE: Only want to analyze intrinsic arguments as the user derived-types will be analyzed elsewhere.
-        intrinsic_types = ["real", "integer", "character", "logical"]
+        # intrinsic_types = ["real", "integer", "character", "logical"]
         args_to_match = [
-            arg for arg, var in self.Arguments.items() if var.type in intrinsic_types
+            arg for arg, var in self.Arguments.items()  # if var.type in intrinsic_types
         ]
+        print("args to match", args_to_match)
         arg_match_string = "|".join(args_to_match)
         regex_args = re.compile(r"\b({})\b".format(arg_match_string), re.IGNORECASE)
 
@@ -1509,6 +1544,9 @@ class Subroutine(object):
         else:
             fn = self.filepath
 
+        print("Opening file :", fn)
+        print(self.associate_end, self.cpp_startline)
+
         file = open(fn, "r")
         lines = file.readlines()
         file.close()
@@ -1518,13 +1556,10 @@ class Subroutine(object):
             if self.cpp_startline:
                 # NOTE: Will self.startline > self.cpp_startline always?
                 delta_ln = self.startline - self.cpp_startline
-                startline = max_arg_ln - delta_ln
+                startline = max_arg_ln - delta_ln + 1
                 print(
                     f"{func_name}::Adjusted Argumnet line number for {self.name} in CPP file"
                 )
-                print(startline)
-                # sys exit to test this feature.
-                sys.exit("Verify line number is correct!")
             else:
                 startline = max_arg_ln + 1
         else:
@@ -1546,6 +1581,9 @@ class Subroutine(object):
             match_call = re.search(r"^\s*(call) ", line)
             # Check for args
             match_arg_use = regex_args.findall(line)
+            if self.name == "setrhsvec_snownonurban":
+                print(_bc.FAIL, line_num, line)
+                print(match_arg_use, _bc.ENDC)
 
             # Need checks to make sure we are
 
@@ -1563,28 +1601,40 @@ class Subroutine(object):
 
                 # Case of subroutine call:
                 else:
-                    subname = line.split()[1].split("(")[0]
-                    child_child_sub = sub_dict[subname]
-                    if not child_child_sub.arguments_read_write:
-                        child_child_sub.parse_arguments(sub_dict, verbose=verbose)
+                    subname: str = line.split()[1].split("(")[0]
+                    child_sub: Subroutine = sub_dict[subname]
+                    if not child_sub.arguments_read_write:
+                        child_sub.parse_arguments(sub_dict, verbose=verbose)
 
                     # child args have been parsed, now figure out what dummy args we need.
                     # args is a list of values passed to subroutine.
                     new_passed_args = getArguments(line)
 
                     arg_to_dtype = determine_arg_name(
-                        match_arg_use, child_child_sub, new_passed_args
+                        match_arg_use, child_sub, new_passed_args
                     )
+
+                    inactive_args = [
+                        arg_var.ptr
+                        for arg_var in arg_to_dtype
+                        if arg_var.ptr not in child_sub.arguments_read_write.keys()
+                    ]
+                    if inactive_args:
+                        print(
+                            func_name,
+                            _bc.WARNING
+                            + f"Inactive args in {child_sub.name}\n{inactive_args}"
+                            + _bc.ENDC,
+                        )
+                        arg_to_dtype = [
+                            arg for arg in arg_to_dtype if arg.ptr not in inactive_args
+                        ]
                     for arg_var in arg_to_dtype:
                         argname = arg_var.ptr
                         dtypename = arg_var.obj
-                        arg_status = child_child_sub.arguments_read_write[argname]
+                        arg_status = child_sub.arguments_read_write[argname]
                         arg_status = ReadWrite(status=arg_status, ln=line_num)
                         args_accessed.setdefault(dtypename, []).append(arg_status)
-
-                    # Change the status line numbers to be the line number where
-                    # the child subroutine is called in the parent.
-                    # TODO:
             line_num += 1
 
         # All args should have been processed. Store information into Subroutine

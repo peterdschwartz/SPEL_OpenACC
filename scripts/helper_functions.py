@@ -2,6 +2,9 @@ import re
 import sys
 from collections import namedtuple
 
+from log_functions import list_print
+from mod_config import _bc
+
 # Declare namedtuple for readwrite status of variables:
 ReadWrite = namedtuple("ReadWrite", ["status", "ln"])
 
@@ -150,10 +153,24 @@ def determine_argvar_status(
         sub_dict : dict {'subname' : Subroutine object}
     """
     func_name = "determine_argvar_status"
+
     # First go through the child subroutines and analyze arguments if not already done.
     child_sub = sub_dict[subname]
     if not child_sub.arguments_read_write:
         child_sub.parse_arguments(sub_dict, verbose=verbose)
+
+    # Filter out unused arguments:
+    inactive_args_to_remove = [
+        arg
+        for arg in vars_as_arguments.keys()
+        if arg not in child_sub.arguments_read_write
+    ]
+    vars_as_arguments = {
+        darg: gv
+        for darg, gv in vars_as_arguments.items()
+        if darg not in inactive_args_to_remove
+    }
+
     # Update the global variables with the status of their corresponding dummy args
     updated_var_status = {
         gv: child_sub.arguments_read_write[dummy_arg]
@@ -204,3 +221,55 @@ def summarize_read_write_status(var_access, map_names=[]):
             summary[varname] = "rw"
 
     return summary
+
+
+def trace_derived_type_arguments(parent_sub, child_sub, verbose=False):
+    """
+    Function will check if the parent passed it's own argument to the child.
+        parent_sub : Subroutine, child_sub: Subroutine
+    """
+    func_name = "trace_derived_type_arguments"
+    subcalls_by_parent = [
+        subcall
+        for subcall in child_sub.subroutine_call
+        if subcall.subname == parent_sub.name
+    ]
+    passed_args = {}
+    intrinsic_types = ["real", "integer", "character", "logical", "complex"]
+    for subcall in subcalls_by_parent:
+        for ptrobj in subcall.args:
+            dummy_arg = ptrobj.ptr
+            arg = ptrobj.obj
+            # if arg == dummy_arg:
+            #    continue
+            temp = {
+                dummy_arg: var.name
+                for var in parent_sub.Arguments.values()
+                if var.name == arg and var.type not in intrinsic_types
+            }
+            passed_args.update(temp)
+
+    child_sub.elmtype_r = replace_elmtype_arg(passed_args, child_sub.elmtype_r)
+    child_sub.elmtype_w = replace_elmtype_arg(passed_args, child_sub.elmtype_w)
+    child_sub.elmtype_rw = replace_elmtype_arg(passed_args, child_sub.elmtype_rw)
+
+    return None
+
+
+def replace_elmtype_arg(passed_args, elmtype):
+    """
+    Function replaces entries in elmtype that are dummy_args of the child
+    with the variable passed by the parent.
+
+    passed_args = { dummy_arg (in child_sub) : arg (in parent_sub) }
+    elmtype = { "inst%member" : <status> }
+    """
+    func_name = "replace_elmtype_arg::"
+
+    for global_var in list(elmtype.keys()):
+        inst_var, member = global_var.split("%")
+        if inst_var in passed_args.keys():
+            new_var = passed_args[inst_var] + "%" + member
+            elmtype[new_var] = elmtype.pop(global_var)
+
+    return elmtype

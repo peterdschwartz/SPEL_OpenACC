@@ -1,24 +1,15 @@
 import os
 import re
-import sys
 
 # Configure path information
 scripts_dir = os.path.dirname(__file__)
-home_dir = f"{scripts_dir}/../"
-unittests_dir = home_dir + "unit-tests/"
-spel_mods_dir = home_dir + "SourceFiles/"
+spel_dir = f"{scripts_dir}/../"
+unittests_dir = spel_dir + "unit-tests/"
+spel_mods_dir = spel_dir + "SourceFiles/"
 spel_output_dir = scripts_dir + "/script-output/"
-try:
-    HOME = os.environ["HOME"] + "/"
-except KeyError:
-    print(
-        "HOME environment variable not set. Please set it to your home directory\n"
-        "Or configure the PATH in the mod_config.py file. Exiting..."
-    )
-    sys.exit(1)
 
 # E3SM root directory. Assume it's cloned in same directory as SPEL
-E3SM_SRCROOT = home_dir + "../repo/E3SM"
+E3SM_SRCROOT = spel_dir + "../repo/E3SM"
 # path for modules shared by components (eg, shr_kind_mod)
 SHR_SRC = E3SM_SRCROOT + "/share/util/"
 ELM_SRC = E3SM_SRCROOT + "/components/elm/src/"  # elm source directory

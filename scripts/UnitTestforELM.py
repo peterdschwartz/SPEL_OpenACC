@@ -12,10 +12,15 @@ def main() -> None:
     from analyze_subroutines import Subroutine
     from edit_files import process_for_unit_test
     from export_objects import pickle_unit_test
-    from mod_config import (_bc, default_mods, scripts_dir, spel_mods_dir,
-                            spel_output_dir, unittests_dir)
-    from utilityFunctions import (find_file_for_subroutine,
-                                  insert_header_for_unittest)
+    from mod_config import (
+        _bc,
+        default_mods,
+        scripts_dir,
+        spel_mods_dir,
+        spel_output_dir,
+        unittests_dir,
+    )
+    from utilityFunctions import find_file_for_subroutine, insert_header_for_unittest
     from variable_analysis import determine_global_variable_status
 
     # Set up Argument Parser
@@ -36,7 +41,7 @@ def main() -> None:
     case_dir = unittests_dir + casename
 
     # List of subroutines to be analyzed
-    sub_name_list = ["dyn_veg_cs_adjustments"]
+    sub_name_list = ["LakeTemperature", "SoilTemperature"]
 
     # Determines if SPEL should run to make optimizations
     opt = False
@@ -63,10 +68,10 @@ def main() -> None:
         else:
             preprocess = True
 
-    # initialize dictionary that will hold inst of all subroutines encountered.
+    # Initialize dictionary that will hold instance of all subroutines encountered.
     main_sub_dict = {}
 
-    # intialize lists that will hold global variables based on read/write status
+    # Initialize lists that will hold global variables based on read/write status
     read_types = []
     write_types = []
 
@@ -132,6 +137,7 @@ def main() -> None:
     if not mod_dict:
         print(f"{func_name}::Error didn't find any modules related to subroutines")
         sys.exit(1)
+
     # print_spel_module_dependencies(mod_dict=mod_dict,subs=subroutines)
 
     with open(f"{case_dir}/source_files_needed.txt", "w") as ofile:
@@ -199,6 +205,18 @@ def main() -> None:
                 continue
             write_types.append(key)
 
+    argument_vars = {}
+    for sub in subroutines.values():
+        for key in list(sub.elmtype_r.keys()):
+            if "%" not in key:
+                argument_vars[key] = sub.elmtype_r.pop(key)
+        for key in list(sub.elmtype_w.keys()):
+            if "%" not in key:
+                argument_vars[key] = sub.elmtype_w.pop(key)
+        for key in list(sub.elmtype_rw.keys()):
+            if "%" not in key:
+                argument_vars[key] = sub.elmtype_rw.pop(key)
+
     # Create a makefile for the unit test
     wr.generate_makefile(files=file_list, case_dir=case_dir)
 
@@ -238,10 +256,9 @@ def main() -> None:
         set_active_variables(
             type_dict, instance_to_user_type, subroutines[s].elmtype_rw, dtype_info_list
         )
-    #
+
     # Will need to read in physical properties type
     # so set all components to True
-    #
     for type_name, dtype in type_dict.items():
         instances = [inst.name for inst in dtype.instances]
         for varname in instances:
@@ -373,7 +390,9 @@ def set_active_variables(type_dict, type_lookup, variable_list, dtype_info_list)
         * variable_list   : list of variables that are used (eg. elmtype_r, elmtype_w)
         * dtype_info_list : list for saving to file (redundant?)
     """
-    for var in variable_list:
+    argument_variables = [var for var in variable_list if "%" not in var]
+    instance_member_vars = [var for var in variable_list if "%" in var]
+    for var in instance_member_vars:
         dtype, component = var.split("%")
         if "bounds" in dtype:
             continue
@@ -389,7 +408,7 @@ def set_active_variables(type_dict, type_lookup, variable_list, dtype_info_list)
                 dtype_info_list.append([dtype, field_var.name, datatype, f"{dim}D"])
 
     # Set which instances of derived types are actually used.
-    global_vars = [v.split("%")[0] for v in variable_list]
+    global_vars = [v.split("%")[0] for v in instance_member_vars]
     global_vars = list(set(global_vars))
     for var in global_vars:
         if "bounds" == var:

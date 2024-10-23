@@ -24,7 +24,7 @@ class PointerAlias:
             return f"{ self.obj }"
 
     def __repr__(self):
-        return f"PointerAlias({self.ptr} => {self.obj})"
+        return f"{self.ptr} => {self.obj}"
 
 
 def get_module_name_from_file(fpath) -> tuple[int, str]:
@@ -191,7 +191,7 @@ class FortranModule:
 
         return None
 
-    def sort_used_variables(self, mod_dict):
+    def sort_used_variables(self, mod_dict, verbose=False):
         """
         Go through the used modules, if any variables are used,
         replace their string name with their variable instance.
@@ -207,8 +207,9 @@ class FortranModule:
                         if objname == var.name:
                             ptrobj.obj = var
                             break
-                    if isinstance(ptrobj.obj, str):
-                        print(
-                            f"{func_name}::{objname} from {used_mod_name} is not a Variable"
-                        )
+                    if verbose:
+                        if isinstance(ptrobj.obj, str):
+                            print(
+                                f"{func_name}::{objname} from {used_mod_name} -- not Variable"
+                            )
         return None

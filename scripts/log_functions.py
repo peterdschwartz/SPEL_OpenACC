@@ -16,3 +16,9 @@ def center_print(name: str, pad_char="_") -> str:
     print_string = f"{pad}{name}{pad}{remainder}"
     return print_string
 
+
+def list_print(my_list, groups):
+    print_string = "\n".join(
+        " ".join(my_list[i : i + groups]) for i in range(0, len(my_list))
+    )
+    return print_string
