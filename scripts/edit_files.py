@@ -396,6 +396,7 @@ def get_used_mods(ifile, mods, singlefile, mod_dict, verbose=False):
             if m.lower() in fort_mod.modules:
                 fort_mod.modules.pop(m.lower())
         elif needed_modfile not in mods:
+
             files_to_parse.append(needed_modfile)
             mods.append(needed_modfile)
 
@@ -844,7 +845,6 @@ def process_for_unit_test(
         )
 
     new_mods = [m.split("/")[-1] for m in mods if m not in initial_mods]
-    print(f"{func_name}::new mods found {new_mods}")
 
     # Next process required modules if they are not already in the list
     # save current processed mods:
@@ -897,6 +897,7 @@ def process_for_unit_test(
     # (NOTE: Could write a make file to do this instead and
     # read the results back into SPEL?)
     linenumber, unit_test_module = get_module_name_from_file(fpath=fname)
+    print(mod_dict.keys())
     file_list = sort_file_dependency(mod_dict, unit_test_module)
     for m in required_mods:
         file_list = sort_file_dependency(mod_dict, m.lower())

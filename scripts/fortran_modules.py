@@ -1,4 +1,5 @@
 import subprocess as sp
+import sys
 
 from mod_config import ELM_SRC, SHR_SRC, _bc
 
@@ -23,7 +24,7 @@ class PointerAlias:
             return f"{ self.obj }"
 
     def __repr__(self):
-        return f"PointerAlias({self.ptr} => {self.obj})"
+        return f"{self.ptr} => {self.obj}"
 
 
 def get_module_name_from_file(fpath) -> tuple[int, str]:
@@ -36,7 +37,7 @@ def get_module_name_from_file(fpath) -> tuple[int, str]:
     # grep will have pattern <line_number>:module <module_name>
     linenumber, module_name = module_name.split(":")
     # split by space and get the module name
-    module_name = module_name.split(" ")[1]
+    module_name = module_name.split()[1]
 
     return int(linenumber), module_name.lower()
 
@@ -49,7 +50,7 @@ def get_filename_from_module(module_name, verbose=False) -> str | None:
     elm_output = sp.getoutput(cmd)
     if not elm_output:
         if verbose:
-            print(f"Checking shared modules...")
+            print("Checking shared modules...")
         #
         # If file is not an ELM file, may be a shared module in E3SM/share/util/
         #
@@ -152,43 +153,45 @@ class FortranModule:
         self.defined_types = {}  # user types defined in the module
         self.modified = False  # if module has been through modify_file or not.
 
-    def display_info(self, ofile=None):
-        if ofile:
-            ofile.write(f"Module Name: {self.name}\n")
-            ofile.write(f"Module Depedencies:\n")
-        else:
-            print(_bc.BOLD + _bc.HEADER + f"Module Name: {self.name}" + _bc.ENDC)
-            print(_bc.BOLD + _bc.WARNING + f"Module Depedencies" + _bc.ENDC)
+    def print_module_info(self, ofile=sys.stdout):
+        """
+        Function to print summary of FortranModule object
+        """
+        base_fn = "/".join(self.filepath.split("/")[-2:])
+        ofile.write(
+            _bc.BOLD + _bc.HEADER + f"Module Name: {self.name} {base_fn}\n" + _bc.ENDC
+        )
+        ofile.write(_bc.WARNING + "Module Depedencies:\n" + _bc.ENDC)
 
         for module, onlyclause in self.modules.items():
             if ofile:
-                ofile.write(f"used {module}\n")
+                ofile.write(
+                    _bc.WARNING
+                    + "use "
+                    + _bc.ENDC
+                    + _bc.OKCYAN
+                    + f"{module}"
+                    + _bc.ENDC
+                )
                 if onlyclause == "all":
                     ofile.write("-> all\n")
                 else:
+                    ofile.write("->")
                     for ptrobj in onlyclause:
-                        ofile.write(f"-> {ptrobj.obj}\n")
-            else:
-                print(_bc.WARNING + f"used {module}" + _bc.ENDC)
+                        ofile.write(_bc.OKGREEN + f" {ptrobj.obj}," + _bc.ENDC)
+                    ofile.write("\n")
 
-        if not ofile:
-            print(_bc.BOLD + _bc.OKBLUE + "Variables:" + _bc.ENDC)
-        else:
-            ofile.write("Variables:\n")
-
+        ofile.write(_bc.BOLD + _bc.WARNING + "Variables:\n" + _bc.ENDC)
         for variable in self.global_vars:
-            variable.printVariable(ofile=ofile)
+            print(_bc.OKGREEN + f"{variable}" + _bc.ENDC)
 
-        if ofile:
-            ofile.write("User Types:\n")
-        else:
-            print(_bc.BOLD + _bc.OKBLUE + "User Types:" + _bc.ENDC)
+        ofile.write(_bc.WARNING + "User Types:\n" + _bc.ENDC)
         for utype in self.defined_types:
-            self.defined_types[utype].print_derived_type(ofile=ofile)
+            ofile.write(_bc.OKGREEN + f"{self.defined_types[utype]}\n" + _bc.ENDC)
 
         return None
 
-    def sort_used_variables(self, mod_dict):
+    def sort_used_variables(self, mod_dict, verbose=False):
         """
         Go through the used modules, if any variables are used,
         replace their string name with their variable instance.
@@ -204,8 +207,9 @@ class FortranModule:
                         if objname == var.name:
                             ptrobj.obj = var
                             break
-                    if isinstance(ptrobj.obj, str):
-                        print(
-                            f"{func_name}::{objname} from {used_mod_name} is not a Variable"
-                        )
+                    if verbose:
+                        if isinstance(ptrobj.obj, str):
+                            print(
+                                f"{func_name}::{objname} from {used_mod_name} -- not Variable"
+                            )
         return None

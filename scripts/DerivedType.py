@@ -5,7 +5,7 @@ import sys
 import write_routines as wr
 from fortran_modules import get_module_name_from_file
 from mod_config import ELM_SRC
-from utilityFunctions import Variable, parse_line_for_variables
+from utilityFunctions import Variable, line_unwrapper, parse_line_for_variables
 
 ## arrow and tab are strings for writing files or printing readable output
 arrow = "|--->"
@@ -20,23 +20,25 @@ def get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=Fa
     type_start_line = ln
     type_end_line = 0
     user_derived_type = DerivedType(type_name, vmod=modname, fpath=ifile)
-    for ct in range(ln, len(lines)):
-        line = lines[ct]
-        l = line.split("!")[0]
-        l = l.strip()
+    ct = ln
+    while ct < len(lines):
+        full_line, ct = line_unwrapper(lines, ct)
+        full_line = full_line.strip().lower()
         # test to see if we exceeded type definition
-        _end = re.search(f"^(end\s+type)", l)
+        _end = re.search(r"^(end\s+type)", full_line)
+        if verbose:
+            print(full_line)
         if not _end:
-            data_type = re.compile(f"^\s*(real|integer|logical|character)")
-            m = data_type.search(l)
+            data_type = re.compile(r"^\s*(real|integer|logical|character)")
+            m = data_type.search(full_line)
             if m:
                 datatype = m.group()
-                lprime = re.sub(f"(?<={datatype})(.+)(?=::)", "", l)
-                # remove => null()
+                lprime = re.sub(r"(?<={})(.+)(?=::)".format(datatype), "", full_line)
+
                 lprime = re.sub(r"(\s*=>\s*null\(\))", "", lprime)
                 variable_list = parse_line_for_variables(ifile=ifile, l=lprime, ln=ct)
                 if verbose:
-                    print(f"vars : {[x.name for x in variable_list]}")
+                    print(f"variable list : {variable_list}")
                 for var in variable_list:
                     user_derived_type._add_components(
                         var_inst=var, lines=lines, ln=type_start_line, verbose=verbose
@@ -44,6 +46,8 @@ def get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=Fa
         else:
             type_end_line = ct
             break
+        ct += 1
+
     # Sanity check
     if type_end_line == 0:
         print("Error couldn't analyze type ", type_name)
@@ -56,7 +60,8 @@ def get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=Fa
         f'{grep} "type\s*(\s*{type_name}\s*)" {ELM_SRC}* | grep "::" | grep -v "intent"'
     )
     output = sp.getoutput(cmd)
-    # Each element in output has the format:
+
+    # Each element in output should have the format:
     # <filepath> : <ln> : type(<type_name>) :: <instance_name>
     instance_list = []
     if output:
@@ -67,7 +72,6 @@ def get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=Fa
 
             filepath = el.split(":")[0].strip()
             ln = int(el.split(":")[1].strip())
-            # Get module name
             mod_ln, module_name = get_module_name_from_file(filepath)
 
             dim = inst_name.count(":")
@@ -124,6 +128,9 @@ class DerivedType(object):
         self.analyzed = False
         self.active = False
 
+    def __repr__(self):
+        return f"DerivedType({self.type_name})"
+
     def _add_components(self, var_inst, lines, ln, verbose=False):
         """
         Function to add components to the derived type.
@@ -134,7 +141,7 @@ class DerivedType(object):
             array = True
         else:
             array = False
-        n = "%" + name
+        name_component = "%" + name
         datatype = var_inst.type
 
         if verbose:
@@ -143,18 +150,16 @@ class DerivedType(object):
         # Need to find the allocation of component
         # to get the bounds.  Necessary for duplicateMod.F90 creation
         if array:
-            for ln in range(ln, len(lines)):
-                line = lines[ln]
-                # Get rid of comments
-                line = line.split("!")[0].strip()
-                alloc = re.compile(f"^(allocate)\s*(.+)({n}\s*\()")
-                # alloc_name = re.compile(f'^(allocate)\s*\({self.name}{n}( |\()')
-                # string_name = f'allocate({self.name}{n}'
-                string = f"allocate(this{n}"
-                match_alloc = alloc.search(line.lower())
+            while ln < len(lines):
+                full_line, ln = line_unwrapper(lines, ln)
+                full_line = full_line.strip().lower()
+                alloc = re.compile(
+                    r"^(allocate)\s*(.+)({}\s*\()".format(name_component)
+                )
+                match_alloc = alloc.search(full_line)
                 if match_alloc:
-                    regex_b = re.compile(f"(?<=(%{name}))\s*\((.+?)\)")
-                    bounds = regex_b.search(line).group()
+                    regex_b = re.compile(r"(?<=(%{}))\s*\((.+?)\)".format(name))
+                    bounds = regex_b.search(full_line).group()
                     beg_x = re.search(r"(?<=(beg))[a-z]", bounds, re.IGNORECASE)
                     if beg_x:
                         end_x = re.search(r"(?<=(end))[a-z]", bounds, re.IGNORECASE)
@@ -170,40 +175,22 @@ class DerivedType(object):
                         {"active": False, "var": var_inst, "bounds": bounds}
                     )
                     break
-                # NOTE: I don't recall what this is for
-                # match_alloc_name = alloc_name.search(line.lower())
-                # if match_alloc_name :
-                #     line = line.split(';')[0]
-                #     line = line[len(string_name):].strip()
-                #     l = line[0:len(line)-1]
-                #     self.components.append([False,name,l,datatype.strip()])
-                #     break
+                ln += 1
         else:
             self.components.append({"active": False, "var": var_inst, "bounds": None})
-        return
 
-    def print_derived_type(self, ofile=None, long=False):
+        return None
+
+    def print_derived_type(self, ofile=sys.stdout, long=False):
         """
         Function to print info on the user derived type
         """
-        if ofile:
-            ofile.write("Derived Type:" + self.type_name + "\n")
-            ofile.write("from Mod:" + self.mod + "\n")
-            for v in self.instances:
-                ofile.write(f"{v.type} {v.name} {v.declaration}\n")
-        else:
-            print("Derived Type:", self.type_name)
-            print("from Mod:", self.mod)
-            print(f"Instances of {self.type_name}:")
-            print(self.instances)
-            for v in self.instances:
-                print(f"{v.type} {v.name} {v.declaration}")
+        ofile.write("Derived Type:" + self.type_name + "\n")
+        ofile.write("from Mod:" + self.mod + "\n")
+        for v in self.instances:
+            ofile.write(f"{v.type} {v.name} {v.declaration}\n")
         if long:
-            if ofile:
-                ofile.write("w/ components:")
-            else:
-                print("w/ components:")
-
+            ofile.write("w/ components:")
             for c in self.components:
                 status = c["active"]
                 var = c["var"]
@@ -212,103 +199,7 @@ class DerivedType(object):
                 else:
                     bounds = ""
                 str_ = f"  {status} {var.type} {var.name} {bounds} {str(var.dim)}-D"
-                if ofile:
-                    ofile.write(str_ + "\n")
-                else:
-                    print(str_)
-        else:
-            for c in self.components:
-                status = c["active"]
-                var = c["var"]
-                if var.dim > 0:
-                    bounds = c["bounds"]
-                else:
-                    bounds = ""
-                str_ = f"  {status} {var.type} {var.name} {bounds} {str(var.dim)}-D"
-                if status:
-                    print(str_)
-
-    def analyzeDerivedType(self, verbose=False):
-        #
-        # This function will open each mod file, find the variable type
-        # and fill out the components of the variable
-        #
-        import subprocess as sp
-        import sys
-
-        found_declaration = False
-        # First need to check if declaration is in elm_instMod
-        name = self.name
-        cmd = f'grep -in -E "::[[:space:]]*({name})" {ELM_SRC}/main/elm_instMod.F90'
-        cmd2 = f'grep -in -E "::[[:space:]]*({name})" {ELM_SRC}/dyn_subgrid/dynSubgridDriverMod.F90'
-        output1 = sp.getoutput(cmd)
-        output2 = sp.getoutput(cmd2)
-        output = ""
-        if output1:
-            output = output1
-            self.declaration = "elm_instMod"
-        if output2 and not (output1) and "intent" not in output2:
-            output = output2
-            self.declaration = "dynSubgridDriverMod"
-        if output:
-            output = output.replace(":", " ")
-            output = output.split()
-            dec_linenum = output[0]
-            # find what's in the parentheses
-            par = re.compile("(?<=\()(\w+)(?=\))")
-            m = par.search(output[1])
-            if not m:
-                print(output)
-            inner_str = m.group()
-            self.dtype = inner_str
-            found_declaration = True
-            clminst = True
-            print(f"declaration in {self.declaration}")
-        try:
-            if verbose:
-                print(f"{self.name} Opening file: {self.fpath}")
-            ifile = open(self.fpath)
-        except:
-            print("ERROR: file ", self.fpath, "not found")
-            exit(1)
-
-        # Find declaration of variable
-        lines = ifile.readlines()
-        var = self.name
-        if not found_declaration:
-            for l in lines:
-                line = l.split("!")[0]
-                line = line.strip()
-                m_type = re.search(f"^(type)", line)
-                match = re.search(f"::\s*({var})", line)
-                if match and m_type:
-                    # find what's in the parentheses
-                    par = re.compile("(?<=\()(\w+)(?=\))")
-                    m = par.search(line)
-                    if not m:
-                        print("Error in analyzeDerivedType")
-                        print(line)
-                        print(f"var : {var} , file = {self.fpath} ")
-                        sys.exit()
-                    inner_str = m.group()
-                    self.dtype = inner_str
-                    if verbose:
-                        print(f"{self.name} -- Found type {self.dtype}")
-                    found_declaration = True
-                    break
-
-        if not found_declaration:
-            print("ERROR:  Couldn't find declaration of", var)
-            print("in file", self.mod)
-            exit(1)
-
-        # Now find definition of type to find components!
-        get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=False)
-        ifile.close()
-        if type_start_line == 0:
-            print(f"Error couldn't analyze type {self.name} {self.dtype}")
-            sys.exit()
-        self.analyzed = True
+                ofile.write(str_ + "\n")
 
     def create_write_read_functions(self, rw, ofile, gpu=False):
         #

@@ -1,5 +1,9 @@
 import re
+import sys
 from collections import namedtuple
+
+from log_functions import list_print
+from mod_config import _bc
 
 # Declare namedtuple for readwrite status of variables:
 ReadWrite = namedtuple("ReadWrite", ["status", "ln"])
@@ -26,23 +30,24 @@ def determine_variable_status(
 
     Move to utilityFunctions.py?  Use for loop variable analysis as well?
     """
-    func_name = "determine_variable_status"
-    # match assignment
+    func_name = "determine_variable_status::"
     match_assignment = re.search(r"(?<![><=/])=(?![><=])", line)
-    # match do and if statements
     match_doif = re.search(r"[\s]*(do |if[\s]*\(|else[\s]*if[\s]*\()", line)
     regex_indices = re.compile(r"(?<=\()(.+)(?=\))")
 
+    find_variables = re.search(
+        r"^(class\s*\(|type\s*\(|integer|real|logical|character)", line
+    )
     # Loop through each derived type and determine rw status.
     for dtype in matched_variables:
+        if find_variables:
+            rw_status = ReadWrite("r", ct)
+            dtype_accessed.setdefault(dtype, []).append(rw_status)
+
         # if the variables are in an if or do statement, they are read
         if match_doif:
             rw_status = ReadWrite("r", ct)
             dtype_accessed.setdefault(dtype, []).append(rw_status)
-        # Split line into rhs and lhs of assignment.
-        # What if there is no assignment:
-        #   1) subroutine call, 2) i/o statement
-        # which I think we can safely skip over here
         elif match_assignment:
             m_start = match_assignment.start()
             m_end = match_assignment.end()
@@ -139,8 +144,133 @@ def add_acc_routine_info(sub):
         ofile.writelines(lines)
 
 
-def determine_argvar_status(vars_as_arguments, sub_dict):
+def determine_argvar_status(
+    vars_as_arguments, subname, sub_dict, linenum, verbose=False
+):
     """
-    go through a subroutine to classify their argument read,write status
+    Function goes through a subroutine to classify their arguments as read,write status
+    Inputs:
+        vars_as_arguments : { 'dummy_arg' : 'global variable'}
+        sub_dict : dict {'subname' : Subroutine object}
     """
+    func_name = "determine_argvar_status"
+
+    # First go through the child subroutines and analyze arguments if not already done.
+    child_sub = sub_dict[subname]
+    if not child_sub.arguments_read_write:
+        child_sub.parse_arguments(sub_dict, verbose=verbose)
+
+    # Filter out unused arguments:
+    inactive_args_to_remove = [
+        arg
+        for arg in vars_as_arguments.keys()
+        if arg not in child_sub.arguments_read_write
+    ]
+    vars_as_arguments = {
+        darg: gv
+        for darg, gv in vars_as_arguments.items()
+        if darg not in inactive_args_to_remove
+    }
+
+    # Update the global variables with the status of their corresponding dummy args
+    updated_var_status = {
+        gv: child_sub.arguments_read_write[dummy_arg]
+        for dummy_arg, gv in vars_as_arguments.items()
+    }
+    # Update the line number to be line child_sub is called in parent.
+    updated_var_status = {
+        gv: [ReadWrite(status=val.status, ln=linenum)]
+        for gv, val in updated_var_status.items()
+    }
+
+    return updated_var_status
+
+
+def summarize_read_write_status(var_access, map_names=[]):
+    """
+    Function that takes the raw ReadWrite status for given variables
+    and returns a dict of variables with only one overall ReadWrite Status
+
+    """
+    summary = {}
+    for varname, values in var_access.items():
+        # read-only: all values are 'r'
+        # write-only: all values are 'w'
+        # read-write: mixture of 'r' and 'w'
+        status_list = [v.status for v in values]
+        num_uses = len(status_list)
+        num_reads = status_list.count("r")
+        num_writes = status_list.count("w")
+        # NOTE: This code section
+        # Allow for multiple variables to correspond to the same gv
+        # var_name_list = []
+        # if key in ptrname_list:
+        #     if isinstance(self.associate_vars[key], list):
+        #         var_name_list = self.associate_vars[key].copy()
+        #     else:
+        #         var_name_list.append(self.associate_vars[key])
+        # else:
+        #     var_name_list.append(key)
+        if num_uses == num_reads:
+            # read-only
+            summary[varname] = "r"
+        elif num_uses == num_writes:
+            # write-only
+            summary[varname] = "w"
+        else:
+            # read-write
+            summary[varname] = "rw"
+
+    return summary
+
+
+def trace_derived_type_arguments(parent_sub, child_sub, verbose=False):
+    """
+    Function will check if the parent passed it's own argument to the child.
+        parent_sub : Subroutine, child_sub: Subroutine
+    """
+    func_name = "trace_derived_type_arguments"
+    subcalls_by_parent = [
+        subcall
+        for subcall in child_sub.subroutine_call
+        if subcall.subname == parent_sub.name
+    ]
+    passed_args = {}
+    intrinsic_types = ["real", "integer", "character", "logical", "complex"]
+    for subcall in subcalls_by_parent:
+        for ptrobj in subcall.args:
+            dummy_arg = ptrobj.ptr
+            arg = ptrobj.obj
+            # if arg == dummy_arg:
+            #    continue
+            temp = {
+                dummy_arg: var.name
+                for var in parent_sub.Arguments.values()
+                if var.name == arg and var.type not in intrinsic_types
+            }
+            passed_args.update(temp)
+
+    child_sub.elmtype_r = replace_elmtype_arg(passed_args, child_sub.elmtype_r)
+    child_sub.elmtype_w = replace_elmtype_arg(passed_args, child_sub.elmtype_w)
+    child_sub.elmtype_rw = replace_elmtype_arg(passed_args, child_sub.elmtype_rw)
+
     return None
+
+
+def replace_elmtype_arg(passed_args, elmtype):
+    """
+    Function replaces entries in elmtype that are dummy_args of the child
+    with the variable passed by the parent.
+
+    passed_args = { dummy_arg (in child_sub) : arg (in parent_sub) }
+    elmtype = { "inst%member" : <status> }
+    """
+    func_name = "replace_elmtype_arg::"
+
+    for global_var in list(elmtype.keys()):
+        inst_var, member = global_var.split("%")
+        if inst_var in passed_args.keys():
+            new_var = passed_args[inst_var] + "%" + member
+            elmtype[new_var] = elmtype.pop(global_var)
+
+    return elmtype

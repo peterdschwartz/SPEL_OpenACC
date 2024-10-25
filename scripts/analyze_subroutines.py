@@ -2,33 +2,23 @@ import os.path
 import re
 import sys
 
-from helper_functions import (
-    SubroutineCall,
-    determine_argvar_status,
-    determine_level_in_tree,
-    determine_variable_status,
-)
-from interfaces import determine_arg_name
+from helper_functions import (ReadWrite, SubroutineCall,
+                              determine_argvar_status, determine_level_in_tree,
+                              determine_variable_status,
+                              summarize_read_write_status,
+                              trace_derived_type_arguments)
+from interfaces import determine_arg_name, resolve_interface
+from log_functions import center_print
 from LoopConstructs import Loop, exportVariableDependency
-from mod_config import _bc, home_dir
+from mod_config import _bc, spel_dir
 from process_associate import getAssociateClauseVars
-from utilityFunctions import (
-    find_file_for_subroutine,
-    get_interface_list,
-    getArguments,
-    getLocalVariables,
-    line_unwrapper,
-)
+from utilityFunctions import (find_file_for_subroutine, get_interface_list,
+                              getArguments, getLocalVariables, line_unwrapper)
 
 
 class Subroutine(object):
     """
     Class object that holds relevant metadata on a subroutine
-        * First, Given the name of the subroutine, the file is found
-        * Call tree information is stored into self.calltree (must be analyzed at the end)
-        * The Global variabes used in Associate clause are stored.
-        * Dummy arguments are processed.
-        * Rest of class elements are initialized.
 
     Note: Variables are stored using the Variable Class defined in utilityFunctions.py
     Class Methods:
@@ -53,8 +43,6 @@ class Subroutine(object):
         * update_arg_tree -> maps dummy args to real args
         * generate_unstructured_data_regions -> inserts OpenACC data regions for local variables
     """
-
-    from utilityFunctions import find_file_for_subroutine, getLocalVariables
 
     def __init__(
         self,
@@ -98,18 +86,10 @@ class Subroutine(object):
                 f"Error in finding subroutine {self.name} {self.filepath} {self.startline} {self.endline}"
             )
             sys.exit()
-        self.cpp_filepath = cpp_fn
 
         # Initialize call tree
         self.calltree = list(calltree)
         self.calltree.append(name)
-
-        # Process the Associate Clause
-        self.associate_vars = {}
-        if not lib_func:
-            self.associate_vars, jstart, jend = getAssociateClauseVars(self)
-            self.associate_start = jstart
-            self.associate_end = jend
 
         # Initialize arguments and local variables
         self.Arguments = {}  # Order is important here
@@ -119,11 +99,24 @@ class Subroutine(object):
         self.class_method = False
         self.class_type = None
 
+        # Create another argument dict that stores the read,write status of them:
+        self.arguments_read_write = {}
+
         # Store when the arguments/local variable declarations start and end
         self.var_declaration_startl = 0
         self.var_declaration_endl = 0
+
+        # Compiler preprocessor flags
         self.cpp_startline = cpp_start
         self.cpp_endline = cpp_end
+        self.cpp_filepath = cpp_fn
+
+        # Process the Associate Clause
+        self.associate_vars = {}
+        if not lib_func:
+            self.associate_vars, jstart, jend = getAssociateClauseVars(self)
+            self.associate_start = jstart
+            self.associate_end = jend
 
         # Retrieve dummy arguments and parse variables
         if not lib_func:
@@ -139,52 +132,54 @@ class Subroutine(object):
         self.acc_status = False
         self.elmtypes = []
         self.DoLoops = []
-        self.status = False
+        self.analyzed_child_subroutines = False
 
     def __repr__(self) -> str:
         return f"Subroutine({self.name})"
 
-    def printSubroutineInfo(self, long=False):
+    def print_subroutine_info(self, ofile=sys.stdout, long=False):
         """
         Prints the current subroutine metadata that has been collected.
         If `long` is True, then local scalar variables are printed as well.
         """
         tab = "  "
-        print(
-            _bc.OKCYAN
-            + f"Subroutine {self.name} in {self.filepath} L{self.startline}-{self.endline}"
+        base_path = "/".join(self.filepath.split("/")[-2:])
+        ofile.write(
+            _bc.HEADER
+            + f"Subroutine {self.name} in {base_path} L{self.startline}-{self.endline}\n"
+            + _bc.ENDC
         )
-        print(
-            f"{tab} Variable Declaration: L{self.var_declaration_startl}-{self.var_declaration_endl}"
-        )
-        print(f"Has Arguments: ")
-        for vname, arg in self.Arguments.items():
+
+        # Variable Declaration
+        # ofile.write(
+        #     _bc.WARNING+f"{tab} Variable Declaration: L{self.var_declaration_startl}-{self.var_declaration_endl}\n"
+        # )
+
+        ofile.write(_bc.WARNING + "Has Arguments:\n" + _bc.ENDC)
+        for arg in self.Arguments.values():
             if arg.optional:
                 _str = "~" * len(tab)
             else:
                 _str = tab
-            print(_str + f"{arg.type} {arg.name} {arg.dim}-D {arg.subgrid} {arg.ln}")
+            ofile.write(_bc.OKBLUE + _str + f"{arg}\n" + _bc.ENDC)
 
-        # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-        # Print Other Modules needed to compile this subroutine #
-        # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-        # print local variables
-        print(f"Local Arrays:")
+        # Print local variables
+        ofile.write(_bc.WARNING + "Local Arrays:\n" + _bc.ENDC)
         array_dict = self.LocalVariables["arrays"]
         for arg in array_dict:
             var = array_dict[arg]
-            print(f"{tab}{var.type} {var.name} {var.dim}-D {var.subgrid} {var.ln}")
+            ofile.write(_bc.OKGREEN + f"{tab}{var}\n" + _bc.ENDC)
         if long:
-            print(f"Local Scalars:")
+            ofile.write(_bc.WARNING + "Local Scalars:\n")
             for arg in self.LocalVariables["scalars"]:
-                print(f"{tab}{arg.type} {arg.name} {arg.subgrid} {arg.ln}")
+                ofile.write(f"{tab}{arg}\n")
 
-        # Print Child Subroutines
+        # print Child Subroutines
         if self.child_Subroutine:
-            print(f"Child Subroutines:")
+            ofile.write(_bc.WARNING + "Child Subroutines:\n")
             for s in self.child_Subroutine.values():
-                print(f"{tab}{s.name}")
-        print(_bc.ENDC)
+                ofile.write(f"{tab}{s.name}\n")
+        ofile.write(_bc.ENDC)
         return None
 
     def _get_dummy_args(self):
@@ -200,14 +195,9 @@ class Subroutine(object):
         ifile.close()
 
         ln = self.startline
-        l = lines[ln].strip("\n")
-        l = l.strip()
+        full_line,ln = line_unwrapper(lines=lines,ct=ln)
 
-        while l.endswith("&"):
-            ln += 1
-            l = l[:-1] + lines[ln].strip("\n").strip()
-        l = l.strip()
-        args = getArguments(l)
+        args = getArguments(full_line)
         return args
 
     def _get_global_constants(self, constants):
@@ -249,17 +239,13 @@ class Subroutine(object):
         """
         This function will find child subroutines and variables used
         in the associate clause to be used for parsing for ro and wr derived types
+            * main_sub_dict : dict of all subroutines for FUT
+            * dtype_dict : dict of user type defintions
+            * interface_list : contains names of known interfaces
         """
-        from interfaces import resolve_interface
-        from mod_config import _bc, regex_skip_string
-        from utilityFunctions import getArguments
+        from mod_config import _bc
 
         func_name = "_preprocess_file"
-
-        # Note: no longer serves a purpose here
-        self._check_acc_status()
-
-        m_skip = regex_skip_string.search(self.name)
 
         if self.cpp_filepath:
             fn = self.cpp_filepath
@@ -286,7 +272,7 @@ class Subroutine(object):
             if self.associate_end == 0:
                 ct = self.cpp_startline
             else:
-                # Note: currently don't differentiate between cpp files and regular files
+                # Note: don't differentiate between cpp files and regular files
                 #       for location of the associate clause.
                 ct = self.associate_end
             endline = self.cpp_endline
@@ -298,6 +284,7 @@ class Subroutine(object):
             endline = self.endline
 
         # Loop through the routine and find any child subroutines
+
         while ct < endline:
             line = lines[ct]
             # get rid of comments
@@ -336,15 +323,10 @@ class Subroutine(object):
                     continue
 
                 # Get the arguments passed to the subroutine
-                l = lines[ct].strip("\n")
-                l = l.strip()
-                while l.endswith("&"):
-                    ct += 1
-                    l = l[:-1] + lines[ct].strip("\n").strip()
-                l = l.strip()
+                l_unwrp, ct = line_unwrapper(lines=lines, ct=ct)
 
                 # args is a list of arguments passed to subroutine
-                args = getArguments(l)
+                args = getArguments(l_unwrp)
 
                 # If child sub name is an interface, then
                 # find the actual subroutine name corresponding
@@ -362,7 +344,7 @@ class Subroutine(object):
                         print(
                             f"{func_name}::Error couldn't resolve interface for {x[1]}"
                         )
-                        self.printSubroutineInfo()
+                        self.print_subroutine_info()
                         sys.exit(1)
                     print(f"{func_name}::New child sub name is:", child_sub_name)
                 elif "%" in child_sub_name:
@@ -371,7 +353,7 @@ class Subroutine(object):
                     #       `call <var>%<alias>()` syntax.
                     print(
                         _bc.WARNING
-                        + f"{func_name}::WARNING CALLING CLASS METHOD at {self.name}:L{ct}!\n{l}"
+                        + f"{func_name}::WARNING CALLING CLASS METHOD at {self.name}:L{ct}!\n{l_unwrp}"
                         + _bc.ENDC
                     )
                     var_name, method_name = child_sub_name.split("%")
@@ -399,11 +381,18 @@ class Subroutine(object):
                             lib_func=True,
                         )
                     else:
-                        childsub = main_sub_dict[child_sub_name]
-                # Store the subroutine call information (name of parent and the arguments passed)
-                subcall = SubroutineCall(self.name, args)
-                if subcall not in childsub.subroutine_call:
-                    childsub.subroutine_call.append(subcall)
+                        childsub: Subroutine = main_sub_dict[child_sub_name]
+
+                # Transform args to list of PointerAlias with dummy_arg => passed_var
+                if not childsub.library:
+                    args_matched = determine_arg_name(
+                        matched_vars=args, child_sub=childsub, args=args
+                    )
+                    # Store the subroutine call information (name of parent and the arguments passed)
+                    subcall = SubroutineCall(self.name, args_matched)
+                    if subcall not in childsub.subroutine_call:
+                        childsub.subroutine_call.append(subcall)
+
                 # Add child subroutine to the dict if not already present
                 child_sub_names = [s for s in self.child_Subroutine.keys()]
                 if child_sub_name not in child_sub_names:
@@ -411,8 +400,6 @@ class Subroutine(object):
                     childsub.calltree.append(child_sub_name)
                     self.child_Subroutine[child_sub_name] = childsub
             ct += 1
-        print(f"{func_name}::Finished analyzing for {self.name}")
-
         return None
 
     def _check_acc_status(self):
@@ -430,7 +417,7 @@ class Subroutine(object):
                 self.acc_status = True
                 return None
 
-    def _analyze_variables(self, dtype_dict, sub_dict, verbose=False):
+    def _analyze_variables(self, sub_dict, global_vars, interface_list, verbose=False):
         """
         Function used to determine read and write variables
         If var is written to first, then rest of use is ignored.
@@ -445,7 +432,7 @@ class Subroutine(object):
             - Part 1, check rw status of any derived types
             - Part 2, check rw status of associated derived types
                     self.associate_vars is a dictionary { ptrname : variable}
-            - Part 3, check rw status of global vars (not derived types?)
+            - Part 3, check rw status of global vars
         """
         func_name = "_analyze_variables"
 
@@ -478,26 +465,15 @@ class Subroutine(object):
             no_associate = False
             ptrname_list = [key for key in self.associate_vars.keys()]
             ptrname_str = "|".join(ptrname_list)
-            regex_associated_ptr = re.compile(f"({ptrname_str})", re.IGNORECASE)
+            regex_associated_ptr = re.compile(
+                r"\b({})\b".format(ptrname_str), re.IGNORECASE
+            )
 
-        # character class for regex needed to ignore '%'
-        # c = "[^a-zA-Z0-9_%]"
-
-        # Note: unneccessary?
-        dtype_instance_dict = {}
-        for dtype in dtype_dict.values():
-            for inst in dtype.instances:
-                dtype_instance_dict[inst.name] = dtype
-
-        # dictonary to keep track of any derived types accessed
-        # in the subroutine.
-        # {'inst%component' : [ list of ReadWrite ] }
+        # dictonary to keep track of any derived types accessed in the subroutine.
+        #        {'inst%component' : [ list of ReadWrite ] }
         #  where ReadWrite = namedtuple('ReadWrite',['status','ln'])
         dtype_accessed = {}
-
-        # Dictionary that holds the global variables passed in as arguments
-        #       { 'child_sub_name' : [list of vars] }
-        vars_as_arguments = {}
+        user_type_args = {}
 
         # Loop through subroutine line by line starting after the associate clause
         ct = startline
@@ -515,6 +491,15 @@ class Subroutine(object):
                 # There are derived types to analyze!
                 if match_var:
                     match_var = list(set(match_var))
+                    this_var = [v for v in match_var if "this" in v]
+                    if this_var:
+                        split_map = map(lambda v: v.split("%")[0], match_var)
+                        temp = {
+                            v: self.Arguments[v]
+                            for v in split_map
+                            if v in self.Arguments and v not in user_type_args
+                        }
+                        user_type_args.update(temp)
                     dtype_accessed = determine_variable_status(
                         match_var, line, ct, dtype_accessed, verbose=verbose
                     )
@@ -526,6 +511,10 @@ class Subroutine(object):
                             match_ptrs, line, ct, dtype_accessed
                         )
             else:
+                # Found child subroutine!
+                # Dictionary that holds the global variables passed in as arguments
+                #       { 'dummy_arg' : 'global variable'}
+                vars_passed_as_args = {}
                 subname = line.split()[1].split("(")[0]
                 if match_var:
                     # Remove duplicates and make regex string for all matched variables
@@ -533,11 +522,26 @@ class Subroutine(object):
                     # args is a list of values passed to subroutine.
                     args = getArguments(line)
 
-                    # Get subroutine of call
-                    child_sub = sub_dict[subname]
+                    # Match Subroutine to name. Resolve interface if necessary
+                    if subname in interface_list:
+                        subname, child_sub = resolve_interface(
+                            self,
+                            iname=subname,
+                            args=args,
+                            dtype_dict=global_vars,
+                            sub_dict=sub_dict,
+                            verbose=verbose,
+                        )
+                        if not subname:
+                            print(f"{func_name}::Error unresolved interface {subname}")
+                            self.print_subroutine_info()
+                            sys.exit(1)
+                    else:
+                        child_sub = sub_dict[subname]
+
+                    # arg_to dtype is a list of PointerAlias(ptr=argname,obj=varname)
                     arg_to_dtype = determine_arg_name(match_var, child_sub, args)
-                    for el in arg_to_dtype:
-                        vars_as_arguments.setdefault(subname, []).append(el)
+                    vars_passed_as_args = {arg.ptr: arg.obj for arg in arg_to_dtype}
 
                 # Do the same for any variables in the associate clause
                 if not no_associate:
@@ -547,19 +551,61 @@ class Subroutine(object):
                         args = getArguments(line)
                         child_sub = sub_dict[subname]
                         arg_to_dtype = determine_arg_name(match_ptrs, child_sub, args)
-                        for el in arg_to_dtype:
-                            vars_as_arguments.setdefault(subname, []).append(el)
+                        vars_passed_as_args.update(
+                            {arg.ptr: arg.obj for arg in arg_to_dtype}
+                        )
+
+                # This function will parse the dummy arguments of child subroutines
+                # so that the status of the dtypes matched above can be updated.
+                if vars_passed_as_args:
+                    updated_var_status = determine_argvar_status(
+                        vars_as_arguments=vars_passed_as_args,
+                        subname=subname,
+                        sub_dict=sub_dict,
+                        linenum=ct,
+                    )
+                    # Update dtype_accessed with existing vars and their updated values
+                    vars_to_update = {
+                        key: dtype_accessed[key] + updated_var_status[key]
+                        for key in updated_var_status
+                        if key in dtype_accessed
+                    }
+
+                    dtype_accessed.update(vars_to_update)
+                    dtype_accessed.update(
+                        {
+                            key: val
+                            for key, val in updated_var_status.items()
+                            if key not in dtype_accessed
+                        }
+                    )
             ct += 1
 
-        for sub, m in vars_as_arguments.items():
-            print(_bc.WARNING + sub + _bc.ENDC, m)
-            print("=== === === === ===")
+        if user_type_args:
+            keys_to_replace = [
+                key for key in dtype_accessed if key.split("%")[0] in user_type_args
+            ]
+            passed_args = {key: [] for key in user_type_args}
+            for type_arg in user_type_args:
+                for subcall in self.subroutine_call:
+                    temp = list(
+                        {
+                            ptrobj.obj: True
+                            for ptrobj in subcall.args
+                            if ptrobj.ptr == type_arg
+                            and ptrobj.obj not in passed_args[type_arg]
+                        }
+                    )
+                    passed_args[type_arg].extend(temp)
 
-        determine_argvar_status(vars_as_arguments, sub_dict)
-        sys.exit(1)
+            for key in keys_to_replace:
+                save_val = dtype_accessed.pop(key)
+                var_to_replace = key.split("%")[0]
+                for sub_val in passed_args[var_to_replace]:
+                    new_key = key.replace(var_to_replace, sub_val)
+                    print(key, "=>", new_key)
+                    dtype_accessed[new_key] = save_val
 
-        # Sort the variables based on complete read/write status
-        # So ignoring line numbers
         # NOTE: to allow tracking of NML options, we will want to be able
         # to generate elmtype_X based on NML options
         for key, values in dtype_accessed.items():
@@ -580,6 +626,8 @@ class Subroutine(object):
             else:
                 var_name_list.append(key)
             for varname in var_name_list:
+                if "%" not in varname:
+                    print(f"Adding { varname } to elmtype!")
                 if num_uses == num_reads:
                     # read-only
                     self.elmtype_r[varname] = "r"
@@ -603,11 +651,11 @@ class Subroutine(object):
             main_sub_dict : dictionary of all subroutines in files needed for unit testing
             child : boolean flag to indicate if subroutine is a child subroutine
         """
+        func_name = "parse_subroutine::"
+
         # Get interfaces
         interface_list = get_interface_list()
-        elmvar = [dtype for dtype in dtype_dict.values()]
 
-        # preprocess file so to get child subroutines
         self._preprocess_file(
             main_sub_dict=main_sub_dict,
             dtype_dict=dtype_dict,
@@ -615,34 +663,25 @@ class Subroutine(object):
             verbose=verbose,
         )
 
-        # Create list that holds the names of the derived types only
-        elm_var_names = []
-        for dtype in elmvar:
-            for inst in dtype.instances:
-                elm_var_names.append(inst.name)
+        # Set up dictionary of derived type instances
+        global_vars = {}
+        for argname, arg in self.Arguments.items():
+            if arg.type in dtype_dict.keys():
+                global_vars[argname] = dtype_dict[arg.type]
 
-        # If the subroutine has been called, then extra care must be taken
-        # for any global variables passed as arguments to match the names
-        # of dummy args to their actual name.
-        if child:
-            for scall in self.subroutine_call:
-                # Match the args to the variables.
-                parent_sub = main_sub_dict[scall.subname]
-                varg_dict = {}  # variable instance of args
-                for arg in scall.args:
-                    if arg in parent_sub.associate_vars.keys():
-                        varg_dict[arg] = parent_sub.associate_vars[arg]
-                    elif arg in parent_sub.Arguments.keys():
-                        varg_dict[arg] = parent_sub.Arguments[arg]
-                    elif arg in parent_sub.LocalVariables["arrays"].keys():
-                        varg_dict[arg] = parent_sub.LocalVariables["arrays"][arg]
-                    elif arg in parent_sub.LocalVariables["scalars"]:
-                        varg_dict[arg] = parent_sub.LocalVariables["scalars"][arg]
+        for typename, dtype in dtype_dict.items():
+            for inst in dtype.instances:
+                if inst.name not in global_vars:
+                    global_vars[inst.name] = dtype
 
         # Determine read/write status of variables
         self._analyze_variables(
-            dtype_dict=dtype_dict, sub_dict=main_sub_dict, verbose=verbose
+            sub_dict=main_sub_dict,
+            global_vars=global_vars,
+            interface_list=interface_list,
+            verbose=verbose,
         )
+
         # Update main_sub_dict with new parsing information?
         main_sub_dict[self.name] = self
 
@@ -663,10 +702,9 @@ class Subroutine(object):
         for child_sub in self.child_Subroutine.values():
             if child_sub.library:
                 print(
-                    f"{func_name}:: {child_sub.name} is a library function -- Skipping."
+                    f"{func_name}::{child_sub.name} is a library function -- Skipping."
                 )
                 continue
-            print("Analyzing child subroutine:", child_sub.name)
             if child_sub.name in interface_list:
                 print(
                     f"{func_name}::Error: need to resolve interface for {child_sub.name}"
@@ -688,7 +726,9 @@ class Subroutine(object):
                         verbose=verbose,
                     )
 
-            # Add needed elmtypes to parent subroutine
+            # Figure out if child subroutine is called with derived type arguments
+            trace_derived_type_arguments(self, child_sub, verbose=verbose)
+
             for varname, status in child_sub.elmtype_r.items():
                 if varname in self.elmtype_w.keys():
                     # Check if previously write-only and change to read-write
@@ -722,7 +762,7 @@ class Subroutine(object):
             self.calltree.append(s.calltree)
             if child_sub in interface_list:
                 continue
-        self.status = True
+        self.analyzed_child_subroutines = True
 
         return None
 
@@ -751,7 +791,7 @@ class Subroutine(object):
         update directives to check the results of the subroutine
         """
         ofile = open(
-            f"{home_dir}scripts/script-output/update_vars_{self.name}.F90", "w"
+            f"{spel_dir}scripts/script-output/update_vars_{self.name}.F90", "w"
         )
 
         spaces = " " * 2
@@ -843,16 +883,12 @@ class Subroutine(object):
         Function that will parse the loop structure of a subroutine
         Add loop parallel directives if desired
         """
-        from interfaces import resolve_interface
         from mod_config import _bc
-        from utilityFunctions import (
-            determine_filter_access,
-            find_file_for_subroutine,
-            get_interface_list,
-            getArguments,
-            getLocalVariables,
-            lineContinuationAdjustment,
-        )
+        from utilityFunctions import (determine_filter_access,
+                                      find_file_for_subroutine,
+                                      get_interface_list, getArguments,
+                                      getLocalVariables,
+                                      lineContinuationAdjustment)
 
         interface_list = (
             get_interface_list()
@@ -1218,7 +1254,6 @@ class Subroutine(object):
         print(_bc.HEADER)
         print(f"update_arg_tree::{self.name} called {childsubname} w/ args {args}")
         print(_bc.ENDC)
-        # self.printSubroutineInfo(long=True)
 
         arrays = self.LocalVariables["arrays"]
 
@@ -1244,7 +1279,7 @@ class Subroutine(object):
                     self.LocalVariables["arrays"][var]
                 )
 
-    def generate_unstructured_data_regions(self, remove=True):
+    def generate_unstructured_data_regions(self, remove=True) -> None:
         """
         Function generates appropriate enter and exit data
         directives for the local variables of this Subroutine.
@@ -1254,18 +1289,18 @@ class Subroutine(object):
         Compare new and old directives and overwrite if they are different
         """
         # Open File:
-        if os.path.exists(home_dir + "modified-files/" + self.filepath):
+        if os.path.exists(spel_dir + "modified-files/" + self.filepath):
             print("Modified file found")
             print(
                 _bc.BOLD
                 + _bc.WARNING
                 + f"Opening file "
-                + home_dir
+                + spel_dir
                 + "modified-files/"
                 + self.filepath
                 + _bc.ENDC
             )
-            ifile = open(home_dir + "modified-files/" + self.filepath, "r")
+            ifile = open(spel_dir + "modified-files/" + self.filepath, "r")
         else:
             print(_bc.BOLD + _bc.WARNING + f"Opening file{self.filepath}" + _bc.ENDC)
             ifile = open(self.filepath, "r")
@@ -1446,14 +1481,137 @@ class Subroutine(object):
                     _bc.BOLD
                     + _bc.WARNING
                     + f"Writing to file "
-                    + home_dir
+                    + spel_dir
                     + "modified-files/"
                     + self.filepath
                     + _bc.ENDC
                 )
-                ofile = open(home_dir + "modified-files/" + self.filepath, "w")
+                ofile = open(spel_dir + "modified-files/" + self.filepath, "w")
 
             ofile.writelines(lines)
             ofile.close()
         else:
             print(_bc.BOLD + _bc.WARNING + "NO CHANGE" + _bc.ENDC)
+        return None
+
+    def parse_arguments(self, sub_dict, verbose=False):
+        """
+        Function that will analyze the variable status for only the arguments
+            'sub.arguments_read_write' : { `arg` : `list of ReadWrite status`}
+        where,
+            ReadWrite = namedtuple("ReadWrite", ["status", "ln"])
+
+        NOTE: Ideally, this should just be a mode of the original _analyze_variables function
+              as much of it is duplicated. 1st, get this working for as intended.
+              Then do the re-factor taking care that nothing is broken in the process.
+        """
+        func_name = "parse_args::"
+
+        # intrinsic_types = ["real", "integer", "character", "logical"]
+        args_to_match = [
+            arg for arg, var in self.Arguments.items()  # if var.type in intrinsic_types
+        ]
+        arg_match_string = "|".join(args_to_match)
+        regex_args = re.compile(r"\b({})\b".format(arg_match_string), re.IGNORECASE)
+        regex_ptr = re.compile(r"\w+\s*(=>)\s*({})(%)\w+".format(arg_match_string))
+
+        arg_line_numbers = [var.ln for var in self.Arguments.values()]
+        max_arg_ln = max(arg_line_numbers)
+
+        # loop through subroutine lines
+        if self.cpp_filepath:
+            fn = self.cpp_filepath
+        else:
+            fn = self.filepath
+
+        file = open(fn, "r")
+        lines = file.readlines()
+        file.close()
+        if self.associate_end == 0:
+            if self.cpp_startline:
+                delta_ln = self.startline - self.cpp_startline
+                startline = max_arg_ln - delta_ln + 1
+                print(
+                    f"{func_name}::Adjusted Argumnet line number for {self.name} in CPP file"
+                )
+            else:
+                startline = max_arg_ln + 1
+        else:
+            startline = self.associate_end
+
+        if self.cpp_endline:
+            endline = self.cpp_endline
+        else:
+            endline = self.endline
+
+        args_accessed = {}
+        line_num = startline
+        while line_num < endline:
+            line, line_num = line_unwrapper(lines, line_num)
+            line = line.strip().lower()
+
+            # match subroutine call - will require recursive `parse_arguments`
+            match_call = re.search(r"^\s*(call) ", line)
+            match_arg_use = regex_args.findall(line)
+
+            # Need checks to make sure we are
+            if match_arg_use:
+                if not match_call:
+                    # check if a Derived Type argument is being associated with another ptr
+                    # I do not _think_ that we need to capture this alias as in this routine
+                    # we are interested in how the argument in used.
+                    match_ptr = regex_ptr.search(line)
+                    if(match_ptr):
+                        line_num +=1
+                        continue
+
+                    match_arg_use = list(set(match_arg_use))
+                    args_accessed = determine_variable_status(
+                        match_arg_use, line, line_num, args_accessed, verbose=verbose
+                    )
+                    if not args_accessed:
+                        print(_bc.FAIL+f"{func_name}::Failed to finds args ", match_arg_use,_bc.ENDC)
+                        print(self.name,line_num, line)
+                        sys.exit(1)
+
+                else:
+                    # Case of argument being passed to another subroutine:
+                    subname: str = line.split()[1].split("(")[0]
+                    child_sub: Subroutine = sub_dict[subname]
+                    if not child_sub.arguments_read_write:
+                        child_sub.parse_arguments(sub_dict, verbose=verbose)
+
+                    new_passed_args = getArguments(line)
+
+                    arg_to_dtype = determine_arg_name(
+                        match_arg_use, child_sub, new_passed_args
+                    )
+
+                    inactive_args = [
+                        arg_var.ptr
+                        for arg_var in arg_to_dtype
+                        if arg_var.ptr not in child_sub.arguments_read_write.keys()
+                    ]
+                    if inactive_args:
+                        arg_to_dtype = [
+                            arg for arg in arg_to_dtype 
+                            if arg.ptr not in inactive_args
+                        ]
+                    for arg_var in arg_to_dtype:
+                        argname = arg_var.ptr
+                        dtypename = arg_var.obj
+                        arg_status = child_sub.arguments_read_write[argname]
+                        arg_status = ReadWrite(status=arg_status, ln=line_num)
+                        args_accessed.setdefault(dtypename, []).append(arg_status)
+            line_num += 1
+
+        # All args should have been processed. Store information into Subroutine
+        arg_status_summary = summarize_read_write_status(args_accessed)
+        for arg, status in arg_status_summary.items():
+            self.arguments_read_write[arg] = ReadWrite(status, -999)
+
+        # Make sure arguments were found
+        if not self.arguments_read_write:
+            print(f"{func_name}::ERROR: Failed to analyze arguments for {self.name}")
+            sys.exit(1)
+        return None

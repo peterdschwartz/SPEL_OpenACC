@@ -12,6 +12,7 @@ def main() -> None:
     from analyze_subroutines import Subroutine
     from edit_files import process_for_unit_test
     from export_objects import pickle_unit_test
+    from fortran_modules import FortranModule
     from mod_config import (
         _bc,
         default_mods,
@@ -20,7 +21,7 @@ def main() -> None:
         spel_output_dir,
         unittests_dir,
     )
-    from utilityFunctions import insert_header_for_unittest
+    from utilityFunctions import find_file_for_subroutine, insert_header_for_unittest
     from variable_analysis import determine_global_variable_status
 
     # Set up Argument Parser
@@ -37,11 +38,12 @@ def main() -> None:
     func_name = "main"
 
     # Note unittests_dir is a location to make unit tests directories named {casename}
-    casename = "dyn_cs"
+    casename = "canflux"
     case_dir = unittests_dir + casename
 
     # List of subroutines to be analyzed
-    sub_name_list = ["dyn_veg_cs_adjustments"]
+    # sub_name_list = ["LakeTemperature", "SoilTemperature"]
+    sub_name_list = ["CanopyFluxes"]
 
     # Determines if SPEL should run to make optimizations
     opt = False
@@ -68,30 +70,29 @@ def main() -> None:
         else:
             preprocess = True
 
-    # initialize dictionary that will hold inst of all subroutines encountered.
+    # Initialize dictionary that will hold instance of all subroutines encountered.
     main_sub_dict = {}
 
-    # intialize lists that will hold global variables based on read/write status
+    # Initialize lists that will hold global variables based on read/write status
     read_types = []
     write_types = []
 
     # dictionary holds instances for Unit Test specific subroutines
     sub_name_list = [s.lower() for s in sub_name_list]
-    subroutines = {}
+    subroutines: dict[str, Subroutine] = {}
 
     # List to hold all the modules needed for the unit test
     needed_mods = []
-    mod_dict = {}
+    mod_dict: dict[str, FortranModule] = {}
     for s in sub_name_list:
         # Get general info of the subroutine
-        subroutines[s] = Subroutine(s, calltree=["elm_drv"])
+        # subroutines[s] = Subroutine(s, calltree=["elm_drv"])
 
         # Process files by removing certain modules
         # so that a standalone unit test can be compiled.
         # All file information will be stored in `mod_dict` and `main_sub_dict`
         if preprocess and not opt:
-            print(f"Processing for {s}")
-            fn = subroutines[s].filepath
+            fn, startl, endl = find_file_for_subroutine(name=s)
             mod_dict, file_list, main_sub_dict = process_for_unit_test(
                 fname=fn,
                 case_dir=case_dir,
@@ -106,6 +107,7 @@ def main() -> None:
             # NOTE: direct assignment here means that changes to subroutines[s] object
             #       below will be reflected immediately in main_sub_dict. Make explicit instead?
             subroutines[s] = main_sub_dict[s]
+            subroutines[s].print_subroutine_info()
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
     # examineLoops performs adjustments that go beyond the "naive"                  #
@@ -136,11 +138,8 @@ def main() -> None:
     if not mod_dict:
         print(f"{func_name}::Error didn't find any modules related to subroutines")
         sys.exit(1)
+
     # print_spel_module_dependencies(mod_dict=mod_dict,subs=subroutines)
-    ofile = open(f"{case_dir}/module_dependencies.txt", "w")
-    for mod in mod_dict.values():
-        mod.display_info(ofile=ofile)
-    ofile.close()
 
     with open(f"{case_dir}/source_files_needed.txt", "w") as ofile:
         for f in file_list:
@@ -150,7 +149,7 @@ def main() -> None:
     for mod in mod_dict.values():
         for utype, dtype in mod.defined_types.items():
             type_dict[utype] = dtype
-    #
+
     # 'main_sub_dict' contains Subroutine instances for all subroutines
     # in any needed modules. Next, each subroutine within the call trees of the user
     # specified subroutines will be further analyzed to trace usage of global variables
@@ -161,11 +160,11 @@ def main() -> None:
         # to by the subroutine and any of its callees
         #
         subroutines[s].parse_subroutine(
-            dtype_dict=type_dict, main_sub_dict=main_sub_dict, verbose=True
+            dtype_dict=type_dict, main_sub_dict=main_sub_dict, verbose=False
         )
 
         subroutines[s].child_subroutines_analysis(
-            dtype_dict=type_dict, main_sub_dict=main_sub_dict, verbose=True
+            dtype_dict=type_dict, main_sub_dict=main_sub_dict, verbose=False
         )
 
         print(_bc.OKGREEN + f"Derived Type Analysis for {subroutines[s].name}")
@@ -185,9 +184,6 @@ def main() -> None:
             if c13c14:
                 del subroutines[s].elmtype_r[key]
                 continue
-            if "_inst" in key:
-                print(f"error: {key} has _inst")
-                sys.exit(1)
             read_types.append(key)
 
         for key in list(subroutines[s].elmtype_w.keys()):
@@ -195,9 +191,6 @@ def main() -> None:
             if c13c14:
                 del subroutines[s].elmtype_w[key]
                 continue
-            if "_inst" in key:
-                print(f"error: {key} has _inst")
-                sys.exit(1)
             write_types.append(key)
 
         for key in list(subroutines[s].elmtype_rw.keys()):
@@ -206,6 +199,18 @@ def main() -> None:
                 del subroutines[s].elmtype_rw[key]
                 continue
             write_types.append(key)
+
+    argument_vars = {}
+    for sub in subroutines.values():
+        for key in list(sub.elmtype_r.keys()):
+            if "%" not in key:
+                argument_vars[key] = sub.elmtype_r.pop(key)
+        for key in list(sub.elmtype_w.keys()):
+            if "%" not in key:
+                argument_vars[key] = sub.elmtype_w.pop(key)
+        for key in list(sub.elmtype_rw.keys()):
+            if "%" not in key:
+                argument_vars[key] = sub.elmtype_rw.pop(key)
 
     # Create a makefile for the unit test
     wr.generate_makefile(files=file_list, case_dir=case_dir)
@@ -229,8 +234,9 @@ def main() -> None:
             continue
         # All instances should have been found so throw an error
         if not dtype.instances:
-            print(f"Warning: no instances found for {type_name}")
-            sys.exit(1)
+            print(
+                _bc.WARNING + f"Warning: no instances found for {type_name}" + _bc.ENDC
+            )
         for instance in dtype.instances:
             instance_to_user_type[instance.name] = type_name
 
@@ -246,10 +252,9 @@ def main() -> None:
         set_active_variables(
             type_dict, instance_to_user_type, subroutines[s].elmtype_rw, dtype_info_list
         )
-    #
+
     # Will need to read in physical properties type
     # so set all components to True
-    #
     for type_name, dtype in type_dict.items():
         instances = [inst.name for inst in dtype.instances]
         for varname in instances:
@@ -381,7 +386,9 @@ def set_active_variables(type_dict, type_lookup, variable_list, dtype_info_list)
         * variable_list   : list of variables that are used (eg. elmtype_r, elmtype_w)
         * dtype_info_list : list for saving to file (redundant?)
     """
-    for var in variable_list:
+    argument_variables = [var for var in variable_list if "%" not in var]
+    instance_member_vars = [var for var in variable_list if "%" in var]
+    for var in instance_member_vars:
         dtype, component = var.split("%")
         if "bounds" in dtype:
             continue
@@ -397,7 +404,7 @@ def set_active_variables(type_dict, type_lookup, variable_list, dtype_info_list)
                 dtype_info_list.append([dtype, field_var.name, datatype, f"{dim}D"])
 
     # Set which instances of derived types are actually used.
-    global_vars = [v.split("%")[0] for v in variable_list]
+    global_vars = [v.split("%")[0] for v in instance_member_vars]
     global_vars = list(set(global_vars))
     for var in global_vars:
         if "bounds" == var:

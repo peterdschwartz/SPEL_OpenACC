@@ -42,15 +42,10 @@ def resolve_interface(sub, iname, args, dtype_dict, sub_dict, verbose=False):
     ifile = open(fn, "r")
     lines = ifile.readlines()
     ifile.close()
-    # If one of the arguments is a derived type, then that will have to be analyzed:
-    for arg in args:
-        if "%" in arg:
-            print(_bc.WARNING + f"Encountered {arg} as an argument!!" + _bc.ENDC)
-            sys.exit()
 
     # Get list of possible procedures within the interface
 
-    regex_end = re.compile(f"^\s*(end)\s+(interface)", re.IGNORECASE)
+    regex_end = re.compile(r"^\s*(end)\s+(interface)", re.IGNORECASE)
     regex_procedure = re.compile(r"^\s*(module)\s+(procedure)\s+", re.IGNORECASE)
 
     interface_sub_names = []  # list of subroutine names in the interface
@@ -63,8 +58,8 @@ def resolve_interface(sub, iname, args, dtype_dict, sub_dict, verbose=False):
         else:
             m_proc = regex_procedure.search(lines[ct])
             if m_proc:
-                subname = lines[ct].replace(m_proc.group(), "").strip()
-                interface_sub_names.append(subname.lower())
+                subname = lines[ct].replace(m_proc.group(), "").strip().lower()
+                interface_sub_names.extend([s.strip() for s in subname.split(",")])
         ct += 1
 
     # Go through each argument passed to interface and create an appropiate Variable instance for it
@@ -77,6 +72,16 @@ def resolve_interface(sub, iname, args, dtype_dict, sub_dict, verbose=False):
         # Check global associate variables
         # if arg is an associated global variable
         # then the type is already known
+        if "%" in arg:
+            vname, compname = arg.split("%")
+            if vname in sub.Arguments:
+                for field in dtype_dict[vname].components:
+                    fieldname = field["var"].name
+                    if compname == fieldname:
+                        l_args.append(field["var"])
+                        found = True
+                        break
+
         if arg in sub.associate_vars:
             vname, compname = sub.associate_vars[arg].split("%")
             for field in dtype_dict[vname].components:
@@ -254,26 +259,34 @@ def match_input_arguments(l_args, sub, special, verbose=False):
     return matched
 
 
-def determine_arg_name(matched_vars, child_sub, args):
+def determine_arg_name(matched_vars, child_sub, args) -> list:
     """
-    Function that takes a list of vars passed as arguments to sub.
+    Function that takes a list of vars passed as arguments to subroutine and
+    checks if any correspond to any in 'matched_vars'
+        * matched_vars : list of strings for variable names to match
+        * child_sub : Subroutine obj
+        * args : arguments passed to child_sub
 
         returns list of PointerAlias(ptr=argname,obj=varname)
+            where `argname` is the dummy arg name in the subroutine
+            and `varname` is the variable passed to it.
     """
+    func_name = "determine_arg_name::"
 
     var_string = "|".join(matched_vars)
     var_string = f"({var_string})"
 
     arg_vars_list = []
     # Make lists of matched expressions and their location in args.
-    matches = [arg for arg in args if re.search(var_string, arg)]
+    matches = [arg for arg in args if re.search(r"\b{}\b".format(var_string), arg)]
     match_locs = [args.index(m) for m in matches]
     for i, locs in enumerate(match_locs):
-        print(f"{args[locs]} === { matches[i] }")
         # Check if keyword:
         matched_arg = matches[i]
         if "=" in matched_arg:
             keyword, m_var_name = matched_arg.split("=")
+            keyword = keyword.strip()
+            m_var_name = m_var_name.strip()
             actual_arg = child_sub.Arguments[keyword]
         else:
             # if not keyword we need to match by position.
@@ -286,4 +299,3 @@ def determine_arg_name(matched_vars, child_sub, args):
         arg_vars_list.append(arg_to_dtype)
 
     return arg_vars_list
-

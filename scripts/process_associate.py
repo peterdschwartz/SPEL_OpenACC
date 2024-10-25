@@ -8,18 +8,22 @@ def getAssociateClauseVars(sub, verbose=False):
     """
     Funtion to extract the associated variables in a subroutine
     """
-    func_name = "getAssociateClauseVars"
+    func_name = "getAssociateClauseVars::"
 
-    iofile = open(sub.filepath, "r")
-    # status intitialized to False -- routine needs analysis
-    lines = iofile.readlines()
-    iofile.close()
     subroutine_name = sub.name
-    subroutine_start_line = sub.startline
-    subroutine_end_line = sub.endline
+    if sub.cpp_startline:
+        subroutine_start_line = sub.cpp_startline
+        subroutine_end_line = sub.cpp_endline
+        fn = sub.cpp_filepath
+    else:
+        subroutine_start_line = sub.startline
+        subroutine_end_line = sub.endline
+        fn = sub.filepath
 
+    ifile = open(fn, "r")
+    lines = ifile.readlines()
+    ifile.close()
     associate_vars = {}
-
     associate_start = 0
     associate_end = 0
     ct = subroutine_start_line
@@ -28,9 +32,14 @@ def getAssociateClauseVars(sub, verbose=False):
         line = line.strip().split("!")[0]
         match = re.search(r"\b(associate)\b(?=\()", line)  # find start of assoicate(
         if match and ct < subroutine_end_line:
+            if verbose:
+                print(f"{func_name}::matched associate start {match}\n{line}")
             associate_start = ct
             break
         ct = ct + 1
+
+    if verbose:
+        print(f"{func_name}::associate start {associate_start} {sub.cpp_startline}")
 
     if associate_start != 0:
         line, ct = line_unwrapper(lines, ct)
@@ -39,6 +48,8 @@ def getAssociateClauseVars(sub, verbose=False):
         regex_str = re.compile(r"(?<=\()(.+)(?=\))")
         associate_string = regex_str.search(line).group(0)
 
+        if verbose:
+            print(f"{func_name}::{associate_string}")
         regex_remove_index = re.compile(r"(\()(.+)(\))")
         for pair in associate_string.split(","):
             parsed = pair.split("=>")
@@ -61,4 +72,6 @@ def getAssociateClauseVars(sub, verbose=False):
             for key in associate_vars:
                 print(f"{key} => {associate_vars[key]}")
 
+        if verbose:
+            sys.exit(1)
     return associate_vars, associate_start, associate_end
