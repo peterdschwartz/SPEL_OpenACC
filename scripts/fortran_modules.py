@@ -37,7 +37,7 @@ def get_module_name_from_file(fpath) -> tuple[int, str]:
     # grep will have pattern <line_number>:module <module_name>
     linenumber, module_name = module_name.split(":")
     # split by space and get the module name
-    module_name = module_name.split(" ")[1]
+    module_name = module_name.split()[1]
 
     return int(linenumber), module_name.lower()
 

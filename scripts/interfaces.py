@@ -42,15 +42,10 @@ def resolve_interface(sub, iname, args, dtype_dict, sub_dict, verbose=False):
     ifile = open(fn, "r")
     lines = ifile.readlines()
     ifile.close()
-    # If one of the arguments is a derived type, then that will have to be analyzed:
-    for arg in args:
-        if "%" in arg:
-            print(_bc.WARNING + f"Encountered {arg} as an argument!!" + _bc.ENDC)
-            sys.exit()
 
     # Get list of possible procedures within the interface
 
-    regex_end = re.compile(f"^\s*(end)\s+(interface)", re.IGNORECASE)
+    regex_end = re.compile(r"^\s*(end)\s+(interface)", re.IGNORECASE)
     regex_procedure = re.compile(r"^\s*(module)\s+(procedure)\s+", re.IGNORECASE)
 
     interface_sub_names = []  # list of subroutine names in the interface
@@ -63,8 +58,8 @@ def resolve_interface(sub, iname, args, dtype_dict, sub_dict, verbose=False):
         else:
             m_proc = regex_procedure.search(lines[ct])
             if m_proc:
-                subname = lines[ct].replace(m_proc.group(), "").strip()
-                interface_sub_names.append(subname.lower())
+                subname = lines[ct].replace(m_proc.group(), "").strip().lower()
+                interface_sub_names.extend([s.strip() for s in subname.split(",")])
         ct += 1
 
     # Go through each argument passed to interface and create an appropiate Variable instance for it
@@ -77,6 +72,16 @@ def resolve_interface(sub, iname, args, dtype_dict, sub_dict, verbose=False):
         # Check global associate variables
         # if arg is an associated global variable
         # then the type is already known
+        if "%" in arg:
+            vname, compname = arg.split("%")
+            if vname in sub.Arguments:
+                for field in dtype_dict[vname].components:
+                    fieldname = field["var"].name
+                    if compname == fieldname:
+                        l_args.append(field["var"])
+                        found = True
+                        break
+
         if arg in sub.associate_vars:
             vname, compname = sub.associate_vars[arg].split("%")
             for field in dtype_dict[vname].components:

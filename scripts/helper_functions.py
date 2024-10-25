@@ -30,23 +30,24 @@ def determine_variable_status(
 
     Move to utilityFunctions.py?  Use for loop variable analysis as well?
     """
-    func_name = "determine_variable_status"
-    # match assignment
+    func_name = "determine_variable_status::"
     match_assignment = re.search(r"(?<![><=/])=(?![><=])", line)
-    # match do and if statements
     match_doif = re.search(r"[\s]*(do |if[\s]*\(|else[\s]*if[\s]*\()", line)
     regex_indices = re.compile(r"(?<=\()(.+)(?=\))")
 
+    find_variables = re.search(
+        r"^(class\s*\(|type\s*\(|integer|real|logical|character)", line
+    )
     # Loop through each derived type and determine rw status.
     for dtype in matched_variables:
+        if find_variables:
+            rw_status = ReadWrite("r", ct)
+            dtype_accessed.setdefault(dtype, []).append(rw_status)
+
         # if the variables are in an if or do statement, they are read
         if match_doif:
             rw_status = ReadWrite("r", ct)
             dtype_accessed.setdefault(dtype, []).append(rw_status)
-        # Split line into rhs and lhs of assignment.
-        # What if there is no assignment:
-        #   1) subroutine call, 2) i/o statement
-        # which I think we can safely skip over here
         elif match_assignment:
             m_start = match_assignment.start()
             m_end = match_assignment.end()

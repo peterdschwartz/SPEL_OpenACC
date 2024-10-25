@@ -2,27 +2,18 @@ import os.path
 import re
 import sys
 
-from helper_functions import (
-    ReadWrite,
-    SubroutineCall,
-    determine_argvar_status,
-    determine_level_in_tree,
-    determine_variable_status,
-    summarize_read_write_status,
-    trace_derived_type_arguments,
-)
+from helper_functions import (ReadWrite, SubroutineCall,
+                              determine_argvar_status, determine_level_in_tree,
+                              determine_variable_status,
+                              summarize_read_write_status,
+                              trace_derived_type_arguments)
 from interfaces import determine_arg_name, resolve_interface
 from log_functions import center_print
 from LoopConstructs import Loop, exportVariableDependency
 from mod_config import _bc, spel_dir
 from process_associate import getAssociateClauseVars
-from utilityFunctions import (
-    find_file_for_subroutine,
-    get_interface_list,
-    getArguments,
-    getLocalVariables,
-    line_unwrapper,
-)
+from utilityFunctions import (find_file_for_subroutine, get_interface_list,
+                              getArguments, getLocalVariables, line_unwrapper)
 
 
 class Subroutine(object):
@@ -204,14 +195,9 @@ class Subroutine(object):
         ifile.close()
 
         ln = self.startline
-        l = lines[ln].strip("\n")
-        l = l.strip()
+        full_line,ln = line_unwrapper(lines=lines,ct=ln)
 
-        while l.endswith("&"):
-            ln += 1
-            l = l[:-1] + lines[ln].strip("\n").strip()
-        l = l.strip()
-        args = getArguments(l)
+        args = getArguments(full_line)
         return args
 
     def _get_global_constants(self, constants):
@@ -337,7 +323,7 @@ class Subroutine(object):
                     continue
 
                 # Get the arguments passed to the subroutine
-                l_unwrp, ct = line_unwrapper(lines=lines, ct=ct, verbose=verbose)
+                l_unwrp, ct = line_unwrapper(lines=lines, ct=ct)
 
                 # args is a list of arguments passed to subroutine
                 args = getArguments(l_unwrp)
@@ -449,9 +435,6 @@ class Subroutine(object):
             - Part 3, check rw status of global vars
         """
         func_name = "_analyze_variables"
-        debug = False
-        if self.name == "dyn_veg_cs_adjustments":
-            debug = True
 
         if self.cpp_filepath:
             fn = self.cpp_filepath
@@ -901,14 +884,11 @@ class Subroutine(object):
         Add loop parallel directives if desired
         """
         from mod_config import _bc
-        from utilityFunctions import (
-            determine_filter_access,
-            find_file_for_subroutine,
-            get_interface_list,
-            getArguments,
-            getLocalVariables,
-            lineContinuationAdjustment,
-        )
+        from utilityFunctions import (determine_filter_access,
+                                      find_file_for_subroutine,
+                                      get_interface_list, getArguments,
+                                      getLocalVariables,
+                                      lineContinuationAdjustment)
 
         interface_list = (
             get_interface_list()
@@ -1531,9 +1511,9 @@ class Subroutine(object):
         args_to_match = [
             arg for arg, var in self.Arguments.items()  # if var.type in intrinsic_types
         ]
-        print("args to match", args_to_match)
         arg_match_string = "|".join(args_to_match)
         regex_args = re.compile(r"\b({})\b".format(arg_match_string), re.IGNORECASE)
+        regex_ptr = re.compile(r"\w+\s*(=>)\s*({})(%)\w+".format(arg_match_string))
 
         arg_line_numbers = [var.ln for var in self.Arguments.values()]
         max_arg_ln = max(arg_line_numbers)
@@ -1544,17 +1524,11 @@ class Subroutine(object):
         else:
             fn = self.filepath
 
-        print("Opening file :", fn)
-        print(self.associate_end, self.cpp_startline)
-
         file = open(fn, "r")
         lines = file.readlines()
         file.close()
-        # Determine starting linenumber. If there is no associate clause,
-        # start parsing AFTER final argument declaration
         if self.associate_end == 0:
             if self.cpp_startline:
-                # NOTE: Will self.startline > self.cpp_startline always?
                 delta_ln = self.startline - self.cpp_startline
                 startline = max_arg_ln - delta_ln + 1
                 print(
@@ -1573,41 +1547,40 @@ class Subroutine(object):
         args_accessed = {}
         line_num = startline
         while line_num < endline:
-            # Take into account Fortran line continuations
             line, line_num = line_unwrapper(lines, line_num)
             line = line.strip().lower()
 
             # match subroutine call - will require recursive `parse_arguments`
             match_call = re.search(r"^\s*(call) ", line)
-            # Check for args
             match_arg_use = regex_args.findall(line)
-            if self.name == "setrhsvec_snownonurban":
-                print(_bc.FAIL, line_num, line)
-                print(match_arg_use, _bc.ENDC)
 
             # Need checks to make sure we are
-
             if match_arg_use:
-                # End case, check for arg without subcall
                 if not match_call:
+                    # check if a Derived Type argument is being associated with another ptr
+                    # I do not _think_ that we need to capture this alias as in this routine
+                    # we are interested in how the argument in used.
+                    match_ptr = regex_ptr.search(line)
+                    if(match_ptr):
+                        line_num +=1
+                        continue
+
                     match_arg_use = list(set(match_arg_use))
                     args_accessed = determine_variable_status(
                         match_arg_use, line, line_num, args_accessed, verbose=verbose
                     )
                     if not args_accessed:
-                        print(f"{func_name}::match_arg_use ", match_arg_use)
-                        print(line)
+                        print(_bc.FAIL+f"{func_name}::Failed to finds args ", match_arg_use,_bc.ENDC)
+                        print(self.name,line_num, line)
                         sys.exit(1)
 
-                # Case of subroutine call:
                 else:
+                    # Case of argument being passed to another subroutine:
                     subname: str = line.split()[1].split("(")[0]
                     child_sub: Subroutine = sub_dict[subname]
                     if not child_sub.arguments_read_write:
                         child_sub.parse_arguments(sub_dict, verbose=verbose)
 
-                    # child args have been parsed, now figure out what dummy args we need.
-                    # args is a list of values passed to subroutine.
                     new_passed_args = getArguments(line)
 
                     arg_to_dtype = determine_arg_name(
@@ -1620,14 +1593,9 @@ class Subroutine(object):
                         if arg_var.ptr not in child_sub.arguments_read_write.keys()
                     ]
                     if inactive_args:
-                        print(
-                            func_name,
-                            _bc.WARNING
-                            + f"Inactive args in {child_sub.name}\n{inactive_args}"
-                            + _bc.ENDC,
-                        )
                         arg_to_dtype = [
-                            arg for arg in arg_to_dtype if arg.ptr not in inactive_args
+                            arg for arg in arg_to_dtype 
+                            if arg.ptr not in inactive_args
                         ]
                     for arg_var in arg_to_dtype:
                         argname = arg_var.ptr

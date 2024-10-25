@@ -12,6 +12,7 @@ def main() -> None:
     from analyze_subroutines import Subroutine
     from edit_files import process_for_unit_test
     from export_objects import pickle_unit_test
+    from fortran_modules import FortranModule
     from mod_config import (
         _bc,
         default_mods,
@@ -37,11 +38,12 @@ def main() -> None:
     func_name = "main"
 
     # Note unittests_dir is a location to make unit tests directories named {casename}
-    casename = "dyn_cs"
+    casename = "canflux"
     case_dir = unittests_dir + casename
 
     # List of subroutines to be analyzed
-    sub_name_list = ["LakeTemperature", "SoilTemperature"]
+    # sub_name_list = ["LakeTemperature", "SoilTemperature"]
+    sub_name_list = ["CanopyFluxes"]
 
     # Determines if SPEL should run to make optimizations
     opt = False
@@ -77,11 +79,11 @@ def main() -> None:
 
     # dictionary holds instances for Unit Test specific subroutines
     sub_name_list = [s.lower() for s in sub_name_list]
-    subroutines = {}
+    subroutines: dict[str, Subroutine] = {}
 
     # List to hold all the modules needed for the unit test
     needed_mods = []
-    mod_dict = {}
+    mod_dict: dict[str, FortranModule] = {}
     for s in sub_name_list:
         # Get general info of the subroutine
         # subroutines[s] = Subroutine(s, calltree=["elm_drv"])
@@ -91,7 +93,6 @@ def main() -> None:
         # All file information will be stored in `mod_dict` and `main_sub_dict`
         if preprocess and not opt:
             fn, startl, endl = find_file_for_subroutine(name=s)
-            print(f"Processing for {s}")
             mod_dict, file_list, main_sub_dict = process_for_unit_test(
                 fname=fn,
                 case_dir=case_dir,
@@ -183,9 +184,6 @@ def main() -> None:
             if c13c14:
                 del subroutines[s].elmtype_r[key]
                 continue
-            if "_inst" in key:
-                print(f"error: {key} has _inst")
-                sys.exit(1)
             read_types.append(key)
 
         for key in list(subroutines[s].elmtype_w.keys()):
@@ -193,9 +191,6 @@ def main() -> None:
             if c13c14:
                 del subroutines[s].elmtype_w[key]
                 continue
-            if "_inst" in key:
-                print(f"error: {key} has _inst")
-                sys.exit(1)
             write_types.append(key)
 
         for key in list(subroutines[s].elmtype_rw.keys()):
@@ -239,8 +234,9 @@ def main() -> None:
             continue
         # All instances should have been found so throw an error
         if not dtype.instances:
-            print(f"Warning: no instances found for {type_name}")
-            sys.exit(1)
+            print(
+                _bc.WARNING + f"Warning: no instances found for {type_name}" + _bc.ENDC
+            )
         for instance in dtype.instances:
             instance_to_user_type[instance.name] = type_name
 
