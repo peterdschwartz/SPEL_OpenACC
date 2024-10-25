@@ -28,12 +28,16 @@ class PointerAlias:
 
 
 def get_module_name_from_file(fpath) -> tuple[int, str]:
+    fpath = fpath.split("/",7)[-1]
+    fpath = "/mnt/c/Users/mungs/Desktop/SPEL_OpenACC/scripts/../../" + fpath
+    print(fpath)
     """
     Given a file path, returns the name of the module
     """
     cmd = f'grep -rin -E "^[[:space:]]*module [[:space:]]*[[:alnum:]]+" {fpath}'
     # the module declaration will be the first one. Any others will be interfaces
     module_name = sp.getoutput(cmd).split("\n")[0]
+    print(module_name)
     # grep will have pattern <line_number>:module <module_name>
     linenumber, module_name = module_name.split(":")
     # split by space and get the module name
