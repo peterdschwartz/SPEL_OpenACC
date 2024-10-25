@@ -95,12 +95,14 @@ def subroutine_calltree(request):
     if request.method == "POST":
         instance = request.POST.get('instance')
         member = request.POST.get('member')
-        tree = get_subroutine_calltree(instance,member)
+        tree, all = get_subroutine_calltree(instance,member)
         # print(tree[0].split())
-        for i in tree: print (tree)
+        print(all)
+        print(tree)
+        
     else:
         return render(request, 'subroutine_calltree.html', {})
-    return render(request, 'subroutine_calltree.html', {"tree":tree})
+    return render(request, 'subroutine_calltree.html', {"tree":tree, "all":all})
 
 
     

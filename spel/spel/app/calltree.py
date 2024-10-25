@@ -116,6 +116,40 @@ def subroutine_active_table(instance, member):
         s = cur.fetchall()
     return [i[0] for i in s]
 
+def subroutine_active_table_ALL(instance, member):
+    s = None
+    with connection.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT 
+                m1.subroutine_name, 
+                m2.instance_name, 
+                m4.member_name, 
+                m3.status 
+            FROM 
+                subroutines m1 
+            JOIN 
+                user_type_instances m2 
+            JOIN 
+                subroutine_active_global_vars m3 
+            JOIN 
+                type_definitions m4 
+            WHERE 
+                m3.subroutine_id = m1.subroutine_id 
+            AND 
+                m3.instance_id = m2.instance_id 
+            AND 
+                m3.member_id = m4.define_id 
+            AND 
+                m2.instance_name = '{instance}'
+            AND
+                m4.member_name = '{member}' 
+            
+            """
+        )
+        s = cur.fetchall()
+    return s
+
 
 subroutines = {}
 def subroutine_dfs(sub_id, node):
@@ -154,6 +188,7 @@ def subroutine_calltree_helper():
 def get_subroutine_calltree(instance, member):
     res = []
     subs = subroutine_active_table(instance, member)
+    all = subroutine_active_table_ALL(instance, member)
     for sub_name in subs:
         root=Node('')
         subroutines = subroutine_calltree_helper()
@@ -169,7 +204,7 @@ def get_subroutine_calltree(instance, member):
         r = {}
         jsonify(root, r)
         res.append(json.dumps(r))
-    return res
+    return res, all
         
 
 
