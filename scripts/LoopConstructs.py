@@ -424,7 +424,6 @@ class Loop(object):
                 m_arr = ng_regex_array.findall(l)
                 if m_arr:
                     lnew = l
-                    # assume that there are some arrays used as indices
                     removing = True
                     while removing:
                         temp, removing = self.removeArraysAsIndices(

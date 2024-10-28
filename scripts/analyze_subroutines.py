@@ -123,9 +123,14 @@ class Subroutine(object):
             self.dummy_args_list = self._get_dummy_args()
             getLocalVariables(self, verbose=verbose)
 
+        # These 3 dictionaries will be summaries of ReadWrite Status for
+        # the FUT subroutines as a whole
         self.elmtype_r = {}
         self.elmtype_w = {}
         self.elmtype_rw = {}
+        # This dict holds "global var" : list[ReadWrite] with no processing.
+        self.elmtype_access_by_ln = {}
+
         self.subroutine_call = []
         self.child_Subroutine = {}
 
@@ -469,28 +474,35 @@ class Subroutine(object):
                 r"\b({})\b".format(ptrname_str), re.IGNORECASE
             )
 
-        # dictonary to keep track of any derived types accessed in the subroutine.
+        regex_dtype_var =  re.compile(r"\w+(?:\(\w+\))?%\w+")
+        regex_paren = re.compile(r"\((.+)\)")
+
+        # dtype_accessed is a dictonary to keep track of derived type vars accessed in the subroutine.
         #        {'inst%component' : [ list of ReadWrite ] }
         #  where ReadWrite = namedtuple('ReadWrite',['status','ln'])
         dtype_accessed = {}
         user_type_args = {}
-
-        # Loop through subroutine line by line starting after the associate clause
         ct = startline
         while ct < endline:
-
-            # Take into account Fortran line continuations
             line, ct = line_unwrapper(lines, ct)
             line = line.strip().lower()
 
             # match subroutine call
             match_call = re.search(r"^\s*(call) ", line)
-            # Get list of all global variables used in this line
-            match_var = re.findall(r"\w+%\w+", line)
+            # Get list of all global variables used in this line and for array of structs, remove index
+            match_var = regex_dtype_var.findall(line)
+            arr_of_structs = [regex_paren.sub('',mvar) for mvar in match_var]
+
+            # Solution to avoid replacing regex in other functions for now?
+            for i,mvar in enumerate(match_var):
+                line = line.replace(mvar,arr_of_structs[i])
+            match_var = arr_of_structs.copy()
+
             if not match_call:
                 # There are derived types to analyze!
                 if match_var:
                     match_var = list(set(match_var))
+
                     this_var = [v for v in match_var if "this" in v]
                     if this_var:
                         split_map = map(lambda v: v.split("%")[0], match_var)
@@ -500,9 +512,11 @@ class Subroutine(object):
                             if v in self.Arguments and v not in user_type_args
                         }
                         user_type_args.update(temp)
+
                     dtype_accessed = determine_variable_status(
                         match_var, line, ct, dtype_accessed, verbose=verbose
                     )
+
                 # Do the same for any variables in the associate clause
                 if not no_associate:
                     match_ptrs = regex_associated_ptr.findall(line)
@@ -564,7 +578,6 @@ class Subroutine(object):
                         sub_dict=sub_dict,
                         linenum=ct,
                     )
-                    # Update dtype_accessed with existing vars and their updated values
                     vars_to_update = {
                         key: dtype_accessed[key] + updated_var_status[key]
                         for key in updated_var_status
@@ -606,37 +619,33 @@ class Subroutine(object):
                     print(key, "=>", new_key)
                     dtype_accessed[new_key] = save_val
 
-        # NOTE: to allow tracking of NML options, we will want to be able
-        # to generate elmtype_X based on NML options
-        for key, values in dtype_accessed.items():
-            # read-only: all values are 'r'
-            # write-only: all values are 'w'
-            # read-write: mixture of 'r' and 'w'
-            status_list = [v.status for v in values]
-            num_uses = len(status_list)
-            num_reads = status_list.count("r")
-            num_writes = status_list.count("w")
-            # Allow for multiple variables to correspond to the same gv
-            var_name_list = []
-            if key in ptrname_list:
-                if isinstance(self.associate_vars[key], list):
-                    var_name_list = self.associate_vars[key].copy()
+        if dtype_accessed:
+            for key, values in dtype_accessed.items():
+                status_list = [v.status for v in values]
+                num_uses = len(status_list)
+                num_reads = status_list.count("r")
+                num_writes = status_list.count("w")
+                var_name_list = []
+                if key in ptrname_list:
+                    if isinstance(self.associate_vars[key], list):
+                        var_name_list = self.associate_vars[key].copy()
+                    else:
+                        var_name_list.append(self.associate_vars[key])
                 else:
-                    var_name_list.append(self.associate_vars[key])
-            else:
-                var_name_list.append(key)
-            for varname in var_name_list:
-                if "%" not in varname:
-                    print(f"Adding { varname } to elmtype!")
-                if num_uses == num_reads:
-                    # read-only
-                    self.elmtype_r[varname] = "r"
-                elif num_uses == num_writes:
-                    # write-only
-                    self.elmtype_w[varname] = "w"
-                else:
-                    # read-write
-                    self.elmtype_rw[varname] = "rw"
+                    var_name_list.append(key)
+                for varname in var_name_list:
+                    self.elmtype_access_by_ln[varname] = values
+                    if "%" not in varname:
+                        print(f"Adding { varname } to elmtype!")
+                    if num_uses == num_reads:
+                        # read-only
+                        self.elmtype_r[varname] = "r"
+                    elif num_uses == num_writes:
+                        # write-only
+                        self.elmtype_w[varname] = "w"
+                    else:
+                        # read-write
+                        self.elmtype_rw[varname] = "rw"
 
         return None
 
@@ -663,7 +672,6 @@ class Subroutine(object):
             verbose=verbose,
         )
 
-        # Set up dictionary of derived type instances
         global_vars = {}
         for argname, arg in self.Arguments.items():
             if arg.type in dtype_dict.keys():
@@ -1531,9 +1539,6 @@ class Subroutine(object):
             if self.cpp_startline:
                 delta_ln = self.startline - self.cpp_startline
                 startline = max_arg_ln - delta_ln + 1
-                print(
-                    f"{func_name}::Adjusted Argumnet line number for {self.name} in CPP file"
-                )
             else:
                 startline = max_arg_ln + 1
         else:

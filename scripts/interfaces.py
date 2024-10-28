@@ -18,7 +18,6 @@ def resolve_interface(sub, iname, args, dtype_dict, sub_dict, verbose=False):
         sub_dict : dictionary of subroutines -- used to match child subroutines
     """
     func_name = "resolve_interface"
-    verbose = True
     if verbose:
         print(_bc.FAIL + f"Resolving interface for {iname}\n with args: {args}")
     cmd = f'grep -rin --exclude-dir={ELM_SRC}external_models/ -E "^[[:space:]]+(interface {iname})" {ELM_SRC}*'
