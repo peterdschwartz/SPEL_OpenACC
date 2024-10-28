@@ -38,10 +38,11 @@ def pickle_unit_test(mod_dict, sub_dict, type_dict):
     dbfile.close()
 
 
-def unpickle_unit_test(mod_dict, sub_dict, type_dict, commit):
+def unpickle_unit_test(commit):
     """
     Function to load SPEL's output from pickled files.
     """
+    mod_dict, sub_dict, type_dict = {}, {}, {}
     dbfile = open(f"mod_dict{commit}.pkl", "rb")
     mod_dict = pickle.load(dbfile)
     dbfile.close()

@@ -14,12 +14,17 @@ tab = " " * 2
 
 def get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=False):
     """
-    Now find definition of type to find components
+    Function to retrieve the definition (i.e., members) of user derived types.
+    1) The type definition is parsed and a list of the Variable members is stored.
+    2) Pass list of members to _add_components where arrays/pointers are further processed.
+    3) Find any instances of derived type.
     """
     func_name = "get_derived_type_definition"
     type_start_line = ln
     type_end_line = 0
     user_derived_type = DerivedType(type_name, vmod=modname, fpath=ifile)
+
+    member_list = []
     ct = ln
     while ct < len(lines):
         full_line, ct = line_unwrapper(lines, ct)
@@ -39,15 +44,13 @@ def get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=Fa
                 variable_list = parse_line_for_variables(ifile=ifile, l=lprime, ln=ct)
                 if verbose:
                     print(f"variable list : {variable_list}")
-                for var in variable_list:
-                    user_derived_type._add_components(
-                        var_inst=var, lines=lines, ln=type_start_line, verbose=verbose
-                    )
+                member_list.extend(variable_list)
         else:
             type_end_line = ct
             break
         ct += 1
 
+    user_derived_type._add_components(member_list, lines, type_end_line, verbose)
     # Sanity check
     if type_end_line == 0:
         print("Error couldn't analyze type ", type_name)
@@ -131,53 +134,78 @@ class DerivedType(object):
     def __repr__(self):
         return f"DerivedType({self.type_name})"
 
-    def _add_components(self, var_inst, lines, ln, verbose=False):
+    def _add_components(
+        self, member_list: list[Variable], lines, type_end, verbose=False
+    ):
         """
         Function to add components to the derived type.
-        If it's an array, the function looks for allocation statements
+        If it's an array, the function looks for allocation statements, storing the bounds.
+
+        Arguments:
+            var_inst : Variable representing component to add
+            lines : lines of files containing type definition
+            ln : line number to start with.
         """
-        name = var_inst.name
-        if var_inst.dim > 0:
-            array = True
-        else:
-            array = False
-        name_component = "%" + name
-        datatype = var_inst.type
+        member_arr_or_ptr = {var.name: var for var in member_list if var.dim > 0}
+        _arrptr_names = ["%" + varname for varname in member_arr_or_ptr.keys()]
+        member_match_string = "|".join(_arrptr_names)
 
-        if verbose:
-            print(f"Adding component {datatype} {name} to {self.type_name}")
+        regex_alloc = re.compile(
+            r"^(allocate)\s*(.+)\b({})\b(\s*\()".format(member_match_string)
+        )
+        regex_ptr_init = re.compile(r"({})\s*(=>)(.+)".format(member_match_string))
+        regex_member_name = re.compile(r"\b({})\b".format(member_match_string))
 
-        # Need to find the allocation of component
-        # to get the bounds.  Necessary for duplicateMod.F90 creation
-        if array:
+        member_scalars = {var.name: var for var in member_list if var.dim == 0}
+
+        added_member_to_type = {var.name: False for var in member_arr_or_ptr.values()}
+        if member_arr_or_ptr:
+            ln = type_end
             while ln < len(lines):
                 full_line, ln = line_unwrapper(lines, ln)
                 full_line = full_line.strip().lower()
-                alloc = re.compile(
-                    r"^(allocate)\s*(.+)({}\s*\()".format(name_component)
-                )
-                match_alloc = alloc.search(full_line)
-                if match_alloc:
-                    regex_b = re.compile(r"(?<=(%{}))\s*\((.+?)\)".format(name))
-                    bounds = regex_b.search(full_line).group()
-                    beg_x = re.search(r"(?<=(beg))[a-z]", bounds, re.IGNORECASE)
-                    if beg_x:
-                        end_x = re.search(r"(?<=(end))[a-z]", bounds, re.IGNORECASE)
-                        if beg_x.group() != end_x.group():
-                            print(
-                                f"Error: subgrid differs {beg_x.group()} {end_x.group()}"
-                            )
-                            sys.exit(1)
-                        else:
-                            var_inst.subgrid = beg_x.group()
+                match_alloc = regex_alloc.findall(full_line)
+                match_ptrinit = regex_ptr_init.search(full_line)
+                if match_ptrinit:
+                    member_name = match_ptrinit.groups()[0].replace("%", "")
+                    if added_member_to_type[member_name]:
+                        ln += 1
+                        continue
+                    else:
+                        var_inst = member_arr_or_ptr[member_name]
+                        member = {"active": False, "var": var_inst, "bounds": None}
+                        self.components.append(member)
+                        added_member_to_type[member_name] = True
 
-                    self.components.append(
-                        {"active": False, "var": var_inst, "bounds": bounds}
-                    )
-                    break
+                elif match_alloc:
+                    members_matched = regex_member_name.findall(full_line)
+                    members_matched = list(set(members_matched))
+                    for varname in members_matched:
+                        varname = varname.replace("%", "")
+                        if added_member_to_type[varname]:
+                            continue
+                        var_inst = member_arr_or_ptr[varname]
+                        regex_b = re.compile(r"(?<=(%{}))\s*\((.+?)\)".format(varname))
+                        bounds = regex_b.search(full_line).group()
+                        beg_x = re.search(r"(?<=(beg))[a-z]", bounds, re.IGNORECASE)
+                        if beg_x:
+                            end_x = re.search(r"(?<=(end))[a-z]", bounds, re.IGNORECASE)
+                            if beg_x.group() != end_x.group():
+                                print(
+                                    f"Error: subgrid differs {beg_x.group()} {end_x.group()}"
+                                )
+                                sys.exit(1)
+                            else:
+                                var_inst.subgrid = beg_x.group()
+
+                        member = {"active": False, "var": var_inst, "bounds": bounds}
+                        self.components.append(member)
+                        added_member_to_type[varname] = True
                 ln += 1
-        else:
-            self.components.append({"active": False, "var": var_inst, "bounds": None})
+
+        # member scalars:
+        for scalar in member_scalars.values():
+            self.components.append({"active": False, "var": scalar, "bounds": None})
 
         return None
 
@@ -190,7 +218,7 @@ class DerivedType(object):
         for v in self.instances:
             ofile.write(f"{v.type} {v.name} {v.declaration}\n")
         if long:
-            ofile.write("w/ components:")
+            ofile.write("w/ components:\n")
             for c in self.components:
                 status = c["active"]
                 var = c["var"]

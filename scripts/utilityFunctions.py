@@ -42,9 +42,6 @@ class Variable(object):
         * self.optional : optional arguments
         * self.subs : list of subroutines that use variable (not implemented)
     """
-
-    # NOTE: several fields rely on default values in most cases.
-    # Could delete from base class and create subclasses (i.e., GlobalVar, Argument)
     def __init__(
         self,
         type,
@@ -147,7 +144,9 @@ def removeBounds(line, verbose=False):
     non_greedy2D = re.compile(f"\({cc},{cc}\)")
     non_greedy3D = re.compile(f"\({cc},{cc},{cc}\)")
     non_greedy4D = re.compile(f"\({cc},{cc},{cc},{cc}\)")
+    regex_array_as_index = re.compile(r"\w+\s*\([,\w+\*-]+\)", re.IGNORECASE)
     newline = line
+    newline = regex_array_as_index.sub(":", newline)
 
     m1D = non_greedy1D.findall(newline)
     for bound in m1D:
@@ -166,8 +165,9 @@ def removeBounds(line, verbose=False):
         newline = newline.replace(bound, "")
 
     match_arrays = ng_regex_array.findall(newline)
-    # Check if an array is being assigned
     match_array_init = re.search(r"(\(/)(.+)(/\))", newline)
+    if match_array_init:
+        print(_bc.WARNING + "match array init::", match_array_init, _bc.ENDC)
     if match_arrays:
         # not all bounds could be removed.
         # Check if they are of the form arr(1,2) (no semicolon)
@@ -179,8 +179,13 @@ def removeBounds(line, verbose=False):
 
     match_arrays = ng_regex_array.findall(newline)
     if match_arrays:
-        print(f"removeBounds::Error - Coudln't remove array bounds completely")
-        print(f"line: {line}")
+        print("removeBounds::Error - Couldn't remove array bounds completely")
+        print("Remaining:", match_arrays)
+        print("#-------------------------------------------------------------------")
+        print(newline.split())
+        print("#-------------------------------------------------------------------")
+        match_arr_newline = regex_array_as_index.sub(":", line)
+        print("subbed line:", match_arr_newline)
         sys.exit(1)
 
     return newline
@@ -209,7 +214,6 @@ def getArguments(l, verbose=False):
         return args
     args = m.group()
 
-    # Remove bounds from arrays so that only argument names are comma separated
     newargs = removeBounds(args, verbose)
 
     args = newargs.split(",")
