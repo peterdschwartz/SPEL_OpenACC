@@ -64,6 +64,8 @@ def get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=Fa
     )
     output = sp.getoutput(cmd)
 
+    regex_paren = re.compile(r"\((.+)\)")
+    #
     # Each element in output should have the format:
     # <filepath> : <ln> : type(<type_name>) :: <instance_name>
     instance_list = []
@@ -78,6 +80,8 @@ def get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=Fa
             mod_ln, module_name = get_module_name_from_file(filepath)
 
             dim = inst_name.count(":")
+            inst_name = regex_paren.sub("", inst_name)
+
             inst_var = Variable(
                 type=type_name,
                 name=inst_name,
@@ -107,9 +111,9 @@ class DerivedType(object):
     ):
         self.type_name = type_name
         if fpath:
-            self.mod = fpath
+            self.filepath = fpath
         else:
-            self.mod = ""
+            self.filepath = ""
             cmd = f'find {ELM_SRC}  \( -path "*external_models*" \) -prune -o  -name "{vmod}.F90" '
             output = sp.getoutput(cmd)
             if not output:
@@ -118,8 +122,8 @@ class DerivedType(object):
                 output = output.split("\n")
                 for el in output:
                     if "external_models" not in el:
-                        self.mod = el
-        if not self.mod:
+                        self.filepath = el
+        if not self.filepath:
             sys.exit(
                 f"Couldn't find file for {type_name}\ncmd:{cmd}\n" f"output: {output}\n"
             )
@@ -214,7 +218,7 @@ class DerivedType(object):
         Function to print info on the user derived type
         """
         ofile.write("Derived Type:" + self.type_name + "\n")
-        ofile.write("from Mod:" + self.mod + "\n")
+        ofile.write("from Mod:" + self.filepath + "\n")
         for v in self.instances:
             ofile.write(f"{v.type} {v.name} {v.declaration}\n")
         if long:
@@ -325,9 +329,20 @@ class DerivedType(object):
         Function that generates pragmas for manual deepcopy of members
         """
         chunksize = 3
+        tabs = " " * 3
+        depth = 1
         for inst in self.instances:
-            ofile.write(f"!$acc enter data copyin({inst.name})\n")
-            ofile.write("!$acc enter data copyin(&\n")
+            inst_name = inst.name
+            ofile.write(tabs * depth + f"!$acc enter data copyin({inst_name})\n")
+            if inst.dim == 1:
+                ofile.write(tabs * depth + f"N = size({inst.name})\n")
+                ofile.write(tabs * depth + "do i = 1, N\n")
+                inst_name = inst.name + "(i)"
+                depth += 1
+            elif inst.dim > 1:
+                print("Error: multi-dimensional Array of Structs found: ", inst)
+                sys.exit(1)
+            ofile.write(tabs * depth + "!$acc enter data copyin(&\n")
             for num, comp in enumerate(self.components):
                 member = comp["var"]
                 dim_string = ""
@@ -336,13 +351,16 @@ class DerivedType(object):
                     dim_string = ",".join(dim_li)
                     dim_string = f"({dim_string})"
 
-                name = inst.name + "%" + member.name + dim_string
-                ofile.write(f"!$acc& {name}")
+                name = inst_name + "%" + member.name + dim_string
+                ofile.write(tabs * depth + f"!$acc& {name}")
                 final_num = bool(num == len(self.components) - 1)
                 if not final_num:
                     ofile.write(",&\n")
                 else:
-                    ofile.write(")\n")
+                    ofile.write(")")
             ofile.write("\n")
+            depth -= 1
+            if inst.dim == 1:
+                ofile.write(tabs * depth + "end do\n")
 
         return None

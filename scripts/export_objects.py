@@ -1,10 +1,17 @@
 import pickle
 import sys
 
+from analyze_subroutines import Subroutine
+from DerivedType import DerivedType
+from fortran_modules import FortranModule
 from mod_config import E3SM_SRCROOT
 
 
-def pickle_unit_test(mod_dict, sub_dict, type_dict):
+def pickle_unit_test(
+    mod_dict: dict[str, FortranModule],
+    sub_dict: dict[str, Subroutine],
+    type_dict: dict[str, DerivedType],
+):
     """
     Function to dump SPEL's output as pickled objects.
     """
@@ -22,6 +29,9 @@ def pickle_unit_test(mod_dict, sub_dict, type_dict):
     output[1] = output[1][0:7]
     commit = output[1]
 
+    for mod in mod_dict.values():
+        mod.filepath = mod.filepath.replace(E3SM_SRCROOT, "")
+
     dbfile = open(f"mod_dict-{commit}.pkl", "ab")
     pickle.dump(mod_dict, dbfile)
     dbfile.close()
@@ -32,6 +42,9 @@ def pickle_unit_test(mod_dict, sub_dict, type_dict):
     dbfile = open(f"sub_dict-{commit}.pkl", "ab")
     pickle.dump(sub_dict, dbfile)
     dbfile.close()
+
+    for dtype in type_dict.values():
+        dtype.filepath = dtype.filepath.replace(E3SM_SRCROOT, "")
 
     dbfile = open(f"type_dict-{commit}.pkl", "ab")
     pickle.dump(type_dict, dbfile)
@@ -47,6 +60,9 @@ def unpickle_unit_test(commit):
     mod_dict = pickle.load(dbfile)
     dbfile.close()
 
+    for mod in mod_dict.values():
+        mod.filepath = E3SM_SRCROOT + mod.filepath
+
     dbfile = open(f"sub_dict{commit}.pkl", "rb")
     sub_dict = pickle.load(dbfile)
     dbfile.close()
@@ -57,6 +73,8 @@ def unpickle_unit_test(commit):
     dbfile = open(f"type_dict{commit}.pkl", "rb")
     type_dict = pickle.load(dbfile)
     dbfile.close()
+    for dtype in type_dict.values():
+        dtype.filepath = E3SM_SRCROOT + dtype.filepath
 
     return mod_dict, sub_dict, type_dict
 
