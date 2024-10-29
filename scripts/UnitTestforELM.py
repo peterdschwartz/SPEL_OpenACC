@@ -49,12 +49,12 @@ def main() -> None:
 
     # List of subroutines to be analyzed
     # sub_name_list = ["LakeTemperature", "SoilTemperature"]
-    # sub_name_list = [
-    #     "Allocation1_PlantNPDemand",
-    #     "Allocation2_ResolveNPLimit",
-    #     "Allocation3_PlantCNPAlloc",
-    # ]
-    sub_name_list = ["SoilLittVertTransp"]
+    sub_name_list = [
+        "Allocation1_PlantNPDemand",
+        "Allocation2_ResolveNPLimit",
+        "Allocation3_PlantCNPAlloc",
+    ]
+    # sub_name_list = ["SoilLittVertTransp"]
     if args.sub_names:
         sub_name_list = [s.lower() for s in args.sub_names]
 
@@ -83,6 +83,7 @@ def main() -> None:
         if args.keep:
             preprocess = False
         else:
+            os.system("rm *.pkl")
             preprocess = True
 
     # Initialize dictionary that will hold instance of all subroutines encountered.
@@ -360,7 +361,8 @@ def main() -> None:
         if var in read_types:
             read_types.remove(var)
 
-    determine_global_variable_status(mod_dict, subroutines)
+    # type_dict["conctransporttype"].manual_deep_copy()
+    active_global_vars = determine_global_variable_status(mod_dict, subroutines)
 
     # Generate/modify FORTRAN files needed to initialize and run Unit Test
     # main.F90
