@@ -48,8 +48,15 @@ def check_global_vars(regex_variables, sub) -> list:
     return active_vars
 
 
-def determine_global_variable_status(mod_dict, subroutines) -> None:
-    """ """
+def determine_global_variable_status(mod_dict, subroutines) -> dict[str, Variable]:
+    """
+    Function that goes through the list of subroutines and returns the non-derived type
+    global variables that are used inside those subroutines
+
+    Arguments:
+        * mod_dict : dictionary of unit test modules
+        * subroutines : list of Subroutine objects
+    """
     func_name = "determine_global_variables_status"
     all_subs = {}
     for sub in subroutines.values():
@@ -95,8 +102,6 @@ def determine_global_variable_status(mod_dict, subroutines) -> None:
                         variables[gv.name] = gv
 
     # Create regex from the possible variables
-    # NOTE: Further "simplification" would be to have variables be
-    # a dict depending on modules?
     var_string = "|".join(variables.keys())
     regex_variables = re.compile(r"\b({})\b".format(var_string), re.IGNORECASE)
 
@@ -112,4 +117,4 @@ def determine_global_variable_status(mod_dict, subroutines) -> None:
                 )
                 variables[var].active = True
 
-    return None
+    return variables

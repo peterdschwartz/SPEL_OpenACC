@@ -32,18 +32,33 @@ def main() -> None:
     )
     parser = argparse.ArgumentParser(prog="SPEL", description=desc)
     parser.add_argument("-u", action="store_true", required=False, dest="keep")
+    parser.add_argument("-c", required=False, dest="casename")
+    parser.add_argument("-s", nargs="+", required=False, dest="sub_names")
     args = parser.parse_args()
 
     # Define name of function for logging.
     func_name = "main"
 
     # Note unittests_dir is a location to make unit tests directories named {casename}
-    casename = "canflux"
+    if args.casename:
+        casename = args.casename
+    else:
+        casename = "canflux"
+
     case_dir = unittests_dir + casename
 
     # List of subroutines to be analyzed
     # sub_name_list = ["LakeTemperature", "SoilTemperature"]
-    sub_name_list = ["CanopyFluxes"]
+    sub_name_list = [
+        "Allocation1_PlantNPDemand",
+        "Allocation2_ResolveNPLimit",
+        "Allocation3_PlantCNPAlloc",
+    ]
+    # sub_name_list = ["SoilLittVertTransp"]
+    if args.sub_names:
+        sub_name_list = [s.lower() for s in args.sub_names]
+
+    print(f"Creating UnitTest {casename} || {' '.join(sub_name_list)}")
 
     # Determines if SPEL should run to make optimizations
     opt = False
@@ -68,6 +83,7 @@ def main() -> None:
         if args.keep:
             preprocess = False
         else:
+            os.system("rm *.pkl")
             preprocess = True
 
     # Initialize dictionary that will hold instance of all subroutines encountered.
@@ -345,7 +361,12 @@ def main() -> None:
         if var in read_types:
             read_types.remove(var)
 
-    determine_global_variable_status(mod_dict, subroutines)
+    # type_dict["conctransporttype"].manual_deep_copy()
+    active_global_vars = determine_global_variable_status(mod_dict, subroutines)
+
+    # Subroutine analysis should be complete. Store info in main_sub_dict
+    for sub in subroutines.values():
+        main_sub_dict[sub.name] = sub
 
     # Generate/modify FORTRAN files needed to initialize and run Unit Test
     # main.F90

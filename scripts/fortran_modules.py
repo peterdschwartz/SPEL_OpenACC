@@ -152,6 +152,7 @@ class FortranModule:
         self.ln = ln  # line number of start module block
         self.defined_types = {}  # user types defined in the module
         self.modified = False  # if module has been through modify_file or not.
+        self.variables_sorted = False
 
     def print_module_info(self, ofile=sys.stdout):
         """
@@ -197,6 +198,9 @@ class FortranModule:
         replace their string name with their variable instance.
         """
         func_name = "sort_used_vars"
+        # return early if already called
+        if self.variables_sorted:
+            return None
         for used_mod_name, only_clause in self.modules.items():
             used_mod = mod_dict[used_mod_name]
             # go through `only` clause and check if any are global vars
@@ -212,4 +216,5 @@ class FortranModule:
                             print(
                                 f"{func_name}::{objname} from {used_mod_name} -- not Variable"
                             )
+        self.variables_sorted = True
         return None

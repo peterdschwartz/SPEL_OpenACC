@@ -8,6 +8,7 @@
 *.so
 *.mod
 *.pyc
+*.pkl
 
 # Packages #
 ############
