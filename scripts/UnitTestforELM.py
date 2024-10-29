@@ -364,6 +364,10 @@ def main() -> None:
     # type_dict["conctransporttype"].manual_deep_copy()
     active_global_vars = determine_global_variable_status(mod_dict, subroutines)
 
+    # Subroutine analysis should be complete. Store info in main_sub_dict
+    for sub in subroutines.values():
+        main_sub_dict[sub.name] = sub
+
     # Generate/modify FORTRAN files needed to initialize and run Unit Test
     # main.F90
     wr.clean_main(aggregated_elmtypes_list, files=needed_mods, case_dir=case_dir)
