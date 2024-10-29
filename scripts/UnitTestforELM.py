@@ -32,18 +32,33 @@ def main() -> None:
     )
     parser = argparse.ArgumentParser(prog="SPEL", description=desc)
     parser.add_argument("-u", action="store_true", required=False, dest="keep")
+    parser.add_argument("-c", required=False, dest="casename")
+    parser.add_argument("-s", nargs="+", required=False, dest="sub_names")
     args = parser.parse_args()
 
     # Define name of function for logging.
     func_name = "main"
 
     # Note unittests_dir is a location to make unit tests directories named {casename}
-    casename = "canflux"
+    if args.casename:
+        casename = args.casename
+    else:
+        casename = "canflux"
+
     case_dir = unittests_dir + casename
 
     # List of subroutines to be analyzed
     # sub_name_list = ["LakeTemperature", "SoilTemperature"]
-    sub_name_list = ["CanopyFluxes"]
+    # sub_name_list = [
+    #     "Allocation1_PlantNPDemand",
+    #     "Allocation2_ResolveNPLimit",
+    #     "Allocation3_PlantCNPAlloc",
+    # ]
+    sub_name_list = ["SoilLittVertTransp"]
+    if args.sub_names:
+        sub_name_list = [s.lower() for s in args.sub_names]
+
+    print(f"Creating UnitTest {casename} || {' '.join(sub_name_list)}")
 
     # Determines if SPEL should run to make optimizations
     opt = False
