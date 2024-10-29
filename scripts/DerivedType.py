@@ -126,7 +126,7 @@ class DerivedType(object):
 
         self.declaration = vmod
         self.components = []
-        self.instances = []
+        self.instances: list[Variable] = []
         # Flag to see if Derived Type has been analyzed
         self.analyzed = False
         self.active = False
@@ -319,3 +319,30 @@ class DerivedType(object):
                     str2 = "if (errcode .ne. 0) stop\n"
                     ofile.write(tab + str1)
                     ofile.write(tab + str2)
+
+    def manual_deep_copy(self, ofile=sys.stdout):
+        """
+        Function that generates pragmas for manual deepcopy of members
+        """
+        chunksize = 3
+        for inst in self.instances:
+            ofile.write(f"!$acc enter data copyin({inst.name})\n")
+            ofile.write("!$acc enter data copyin(&\n")
+            for num, comp in enumerate(self.components):
+                member = comp["var"]
+                dim_string = ""
+                if member.dim > 0:
+                    dim_li = [":" for i in range(0, member.dim)]
+                    dim_string = ",".join(dim_li)
+                    dim_string = f"({dim_string})"
+
+                name = inst.name + "%" + member.name + dim_string
+                ofile.write(f"!$acc& {name}")
+                final_num = bool(num == len(self.components) - 1)
+                if not final_num:
+                    ofile.write(",&\n")
+                else:
+                    ofile.write(")\n")
+            ofile.write("\n")
+
+        return None
