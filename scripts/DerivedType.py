@@ -129,7 +129,7 @@ class DerivedType(object):
             )
 
         self.declaration = vmod
-        self.components = []
+        self.components = {}
         self.instances: list[Variable] = []
         # Flag to see if Derived Type has been analyzed
         self.analyzed = False
@@ -157,7 +157,7 @@ class DerivedType(object):
         regex_alloc = re.compile(
             r"^(allocate)\s*(.+)\b({})\b(\s*\()".format(member_match_string)
         )
-        regex_ptr_init = re.compile(r"({})\s*(=>)(.+)".format(member_match_string))
+        regex_ptr_init = re.compile(r"({})\b\s*(=>)(.+)".format(member_match_string))
         regex_member_name = re.compile(r"\b({})\b".format(member_match_string))
 
         member_scalars = {var.name: var for var in member_list if var.dim == 0}
@@ -172,13 +172,27 @@ class DerivedType(object):
                 match_ptrinit = regex_ptr_init.search(full_line)
                 if match_ptrinit:
                     member_name = match_ptrinit.groups()[0].replace("%", "")
+                    target = match_ptrinit.groups()[2].strip()
                     if added_member_to_type[member_name]:
+                        var_inst = self.components[member_name]["var"]
+                        if target not in var_inst.pointer:
+                            var_inst.pointer.append(target)
+                            self.components[member_name]["var"] = var_inst
                         ln += 1
                         continue
                     else:
                         var_inst = member_arr_or_ptr[member_name]
+                        if var_inst.pointer:
+                            print("Error there should not be any targets yet!!")
+                            print(full_line)
+                            print("member: ", member_name, "target", target)
+                            print(f"Exising targets: {var_inst.pointer}")
+                            print(member_arr_or_ptr)
+                            print(member_arr_or_ptr[member_name])
+                            sys.exit(0)
+                        var_inst.pointer.append(target)
                         member = {"active": False, "var": var_inst, "bounds": None}
-                        self.components.append(member)
+                        self.components[var_inst.name] = member
                         added_member_to_type[member_name] = True
 
                 elif match_alloc:
@@ -203,13 +217,17 @@ class DerivedType(object):
                                 var_inst.subgrid = beg_x.group()
 
                         member = {"active": False, "var": var_inst, "bounds": bounds}
-                        self.components.append(member)
+                        self.components[var_inst.name] = member
                         added_member_to_type[varname] = True
                 ln += 1
 
         # member scalars:
         for scalar in member_scalars.values():
-            self.components.append({"active": False, "var": scalar, "bounds": None})
+            self.components[scalar.name] = {
+                "active": False,
+                "var": scalar,
+                "bounds": None,
+            }
 
         return None
 
@@ -223,24 +241,27 @@ class DerivedType(object):
             ofile.write(f"{v.type} {v.name} {v.declaration}\n")
         if long:
             ofile.write("w/ components:\n")
-            for c in self.components:
+            for c in self.components.values():
                 status = c["active"]
                 var = c["var"]
                 if var.dim > 0:
                     bounds = c["bounds"]
                 else:
                     bounds = ""
-                str_ = f"  {status} {var.type} {var.name} {bounds} {str(var.dim)}-D"
+                if not var.pointer:
+                    str_ = f"  {status} {var.type} {var.name} {bounds} {str(var.dim)}-D"
+                else:
+                    targets = "|".join(var.pointer)
+                    str_ = f"  {status} {var.type} {var.name} => {var.pointer}"
                 ofile.write(str_ + "\n")
 
     def create_write_read_functions(self, rw, ofile, gpu=False):
         #
-        # This function will write two .F90 functions
-        # that write read and write statements for all
+        # This function will write two .F90 functions that write read and write statements for all
         # components of the derived type
-        #
         # rw is a variable that holds either read or write mode
         #
+
         fates_list = ["veg_pp%is_veg", "veg_pp%is_bareground", "veg_pp%wt_ed"]
         for var in self.instances:
             if not var.active:
@@ -257,12 +278,10 @@ class DerivedType(object):
                 if gpu:
                     ofile.write(tab + "!$acc update self(& \n")
 
-                # Any component of the derived type accessed by the Unit Test
-                # should have been toggled active at this point.
-                # Go through the instance of this derived type and write I/O
-                # for any active components.
+                # Any component of the derived type accessed by the Unit Test should have been toggled active at this point.
+                # Go through the instance of this derived type and write I/O for any active components.
                 vars = []
-                for n, component in enumerate(self.components):
+                for component in self.components.values():
                     active = component["active"]
                     field_var = component["var"]
                     if not active:
@@ -302,7 +321,7 @@ class DerivedType(object):
                 # should have been toggled active at this point.
                 # Go through the instance of this derived type and write I/O
                 # for any active components.
-                for component in self.components:
+                for component in self.components.values():
                     active = component["active"]
                     field_var = component["var"]
                     bounds = component["bounds"]
@@ -343,7 +362,7 @@ class DerivedType(object):
                 print("Error: multi-dimensional Array of Structs found: ", inst)
                 sys.exit(1)
             ofile.write(tabs * depth + "!$acc enter data copyin(&\n")
-            for num, comp in enumerate(self.components):
+            for num, comp in enumerate(self.components.values()):
                 member = comp["var"]
                 dim_string = ""
                 if member.dim > 0:
@@ -353,7 +372,7 @@ class DerivedType(object):
 
                 name = inst_name + "%" + member.name + dim_string
                 ofile.write(tabs * depth + f"!$acc& {name}")
-                final_num = bool(num == len(self.components) - 1)
+                final_num = bool(num == len(self.components.keys()) - 1)
                 if not final_num:
                     ofile.write(",&\n")
                 else:

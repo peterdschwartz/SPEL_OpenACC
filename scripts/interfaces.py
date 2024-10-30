@@ -74,7 +74,7 @@ def resolve_interface(sub, iname, args, dtype_dict, sub_dict, verbose=False):
         if "%" in arg:
             vname, compname = arg.split("%")
             if vname in sub.Arguments:
-                for field in dtype_dict[vname].components:
+                for field in dtype_dict[vname].components.values():
                     fieldname = field["var"].name
                     if compname == fieldname:
                         l_args.append(field["var"])
@@ -83,7 +83,7 @@ def resolve_interface(sub, iname, args, dtype_dict, sub_dict, verbose=False):
 
         if arg in sub.associate_vars:
             vname, compname = sub.associate_vars[arg].split("%")
-            for field in dtype_dict[vname].components:
+            for field in dtype_dict[vname].components.values():
                 fieldname = field["var"].name
                 if compname == fieldname:
                     l_args.append(field["var"])
