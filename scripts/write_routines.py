@@ -328,7 +328,7 @@ def duplicate_clumps(typedict):
         if dtype.active and type_name in PHYSICAL_PROP_TYPE_LIST:
             for var in dtype.instances:
                 if var.active:
-                    for c in dtype.components:
+                    for c in dtype.components.values():
                         active = c["active"]
                         field_var = c["var"]
                         bounds = c["bounds"]
@@ -372,7 +372,7 @@ def duplicate_clumps(typedict):
             for var in dtype.instances:
                 if not var.active:
                     continue
-                for c in dtype.components:
+                for c in dtype.components.values():
                     active = c["active"]
                     field_var = c["var"]
                     bounds = c["bounds"]

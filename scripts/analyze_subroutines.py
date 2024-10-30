@@ -155,11 +155,6 @@ class Subroutine(object):
             + _bc.ENDC
         )
 
-        # Variable Declaration
-        # ofile.write(
-        #     _bc.WARNING+f"{tab} Variable Declaration: L{self.var_declaration_startl}-{self.var_declaration_endl}\n"
-        # )
-
         ofile.write(_bc.WARNING + "Has Arguments:\n" + _bc.ENDC)
         for arg in self.Arguments.values():
             if arg.optional:

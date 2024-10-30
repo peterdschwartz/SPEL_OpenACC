@@ -42,6 +42,7 @@ class Variable(object):
         * self.optional : optional arguments
         * self.subs : list of subroutines that use variable (not implemented)
     """
+
     def __init__(
         self,
         type,
@@ -54,6 +55,7 @@ class Variable(object):
         optional=False,
         keyword="",
         active=False,
+        pointer=[],
         private=False,
     ):
         self.type = type
@@ -76,6 +78,7 @@ class Variable(object):
         self.active = active
         self.private = private
         self.default_value = None
+        self.pointer = pointer.copy()
 
     # Define equality for comparison of two Variables
     def __eq__(self, other):

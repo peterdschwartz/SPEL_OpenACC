@@ -1,3 +1,7 @@
+from DerivedType import DerivedType
+from helper_functions import replace_ptr_with_targets
+
+
 def main() -> None:
     """
     Edit case_dir and sub_name_list to create a Functional Unit Test
@@ -161,10 +165,22 @@ def main() -> None:
         for f in file_list:
             ofile.write(f + "\n")
 
-    type_dict = {}
+    type_dict: dict[str, DerivedType] = {}
     for mod in mod_dict.values():
         for utype, dtype in mod.defined_types.items():
             type_dict[utype] = dtype
+
+    instance_to_user_type = {}
+    for type_name, dtype in type_dict.items():
+        if "bounds" in type_name:
+            continue
+        # All instances should have been found so throw an error
+        if not dtype.instances:
+            print(
+                _bc.WARNING + f"Warning: no instances found for {type_name}" + _bc.ENDC
+            )
+        for instance in dtype.instances:
+            instance_to_user_type[instance.name] = type_name
 
     # 'main_sub_dict' contains Subroutine instances for all subroutines
     # in any needed modules. Next, each subroutine within the call trees of the user
@@ -183,36 +199,48 @@ def main() -> None:
             dtype_dict=type_dict, main_sub_dict=main_sub_dict, verbose=False
         )
 
-        print(_bc.OKGREEN + f"Derived Type Analysis for {subroutines[s].name}")
+    for sub in subroutines.values():
+
+        sub.elmtype_r = replace_ptr_with_targets(
+            sub.elmtype_r, type_dict, instance_to_user_type
+        )
+        sub.elmtype_w = replace_ptr_with_targets(
+            sub.elmtype_w, type_dict, instance_to_user_type
+        )
+        sub.elmtype_rw = replace_ptr_with_targets(
+            sub.elmtype_rw, type_dict, instance_to_user_type
+        )
+
+        print(_bc.OKGREEN + f"Derived Type Analysis for {sub.name}")
         print(f"{func_name}::Read-Only")
-        for key in subroutines[s].elmtype_r.keys():
-            print(key, subroutines[s].elmtype_r[key])
+        for key in sub.elmtype_r.keys():
+            print(key, sub.elmtype_r[key])
         print(f"{func_name}::Write-Only")
-        for key in subroutines[s].elmtype_w.keys():
-            print(key, subroutines[s].elmtype_w[key])
+        for key in sub.elmtype_w.keys():
+            print(key, sub.elmtype_w[key])
         print(f"{func_name}::Read-Write")
-        for key in subroutines[s].elmtype_rw.keys():
-            print(key, subroutines[s].elmtype_rw[key])
+        for key in sub.elmtype_rw.keys():
+            print(key, sub.elmtype_rw[key])
         print(_bc.ENDC)
 
-        for key in list(subroutines[s].elmtype_r.keys()):
+        for key in list(sub.elmtype_r.keys()):
             c13c14 = bool("c13" in key or "c14" in key)
             if c13c14:
-                del subroutines[s].elmtype_r[key]
+                del sub.elmtype_r[key]
                 continue
             read_types.append(key)
 
-        for key in list(subroutines[s].elmtype_w.keys()):
+        for key in list(sub.elmtype_w.keys()):
             c13c14 = bool("c13" in key or "c14" in key)
             if c13c14:
-                del subroutines[s].elmtype_w[key]
+                del sub.elmtype_w[key]
                 continue
             write_types.append(key)
 
-        for key in list(subroutines[s].elmtype_rw.keys()):
+        for key in list(sub.elmtype_rw.keys()):
             c13c14 = bool("c13" in key or "c14" in key)
             if c13c14:
-                del subroutines[s].elmtype_rw[key]
+                del sub.elmtype_rw[key]
                 continue
             write_types.append(key)
 
@@ -244,18 +272,6 @@ def main() -> None:
         if dtype_inst not in aggregated_elmtypes_list:
             aggregated_elmtypes_list.append(dtype_inst)
 
-    instance_to_user_type = {}
-    for type_name, dtype in type_dict.items():
-        if "bounds" in type_name:
-            continue
-        # All instances should have been found so throw an error
-        if not dtype.instances:
-            print(
-                _bc.WARNING + f"Warning: no instances found for {type_name}" + _bc.ENDC
-            )
-        for instance in dtype.instances:
-            instance_to_user_type[instance.name] = type_name
-
     dtype_info_list = []
 
     for s in sub_name_list:
@@ -272,12 +288,13 @@ def main() -> None:
     # Will need to read in physical properties type
     # so set all components to True
     for type_name, dtype in type_dict.items():
-        instances = [inst.name for inst in dtype.instances]
-        for varname in instances:
-            if varname in ["veg_pp", "lun_pp", "col_pp", "grc_pp", "top_pp"]:
+        for var in dtype.instances:
+            if var.name in ["veg_pp", "lun_pp", "col_pp", "grc_pp", "top_pp"]:
                 dtype.active = True
-                for c in dtype.components:
+                var.active = True
+                for c in dtype.components.values():
                     c["active"] = True
+
     for el in write_types:
         if el not in read_types:
             read_types.append(el)
@@ -416,7 +433,7 @@ def set_active_variables(type_dict, type_lookup, variable_list, dtype_info_list)
         type_name = type_lookup[dtype]
         type_dict[type_name].active = True
         # Set which components of derived type are active
-        for c in type_dict[type_name].components:
+        for c in type_dict[type_name].components.values():
             field_var = c["var"]
             if field_var.name == component and not c["active"]:
                 c["active"] = True

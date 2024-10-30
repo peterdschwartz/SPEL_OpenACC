@@ -274,3 +274,38 @@ def replace_elmtype_arg(passed_args, elmtype):
             elmtype[new_var] = elmtype.pop(global_var)
 
     return elmtype
+
+
+def replace_ptr_with_targets(elmtype, type_dict, insts_to_type_dict, use_c13c14=False):
+    """
+    Function that replaces any pointers with their potential targets
+    Arguments:
+        * elmtype : dictionary of inst%member : status
+        * type_dict : dictionary of type definitions
+        * insts_to_type_dict : dict to map udt instance name to type
+    """
+
+    if not use_c13c14:
+        c13c14 = re.compile(r"(c13|c14)")
+    else:
+        print("Warning need to double c13/c14 consistency!")
+        sys.exit(0)
+
+    for gv in list(elmtype.keys()):
+        inst_name, member_name = gv.split("%")
+        if "bounds" in inst_name:
+            continue
+        type_name = insts_to_type_dict[inst_name]
+        dtype = type_dict[type_name]
+        member = dtype.components[member_name]
+        if member["var"].pointer:
+            status = elmtype.pop(gv)
+            if not use_c13c14:
+                targets_to_add = {
+                    target: status
+                    for target in member["var"].pointer
+                    if not c13c14.search(target)
+                }
+                elmtype.update(targets_to_add)
+
+    return elmtype
