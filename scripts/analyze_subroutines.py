@@ -14,7 +14,7 @@ from mod_config import _bc, spel_dir
 from process_associate import getAssociateClauseVars
 from utilityFunctions import (find_file_for_subroutine, get_interface_list,
                               getArguments, getLocalVariables, line_unwrapper)
-from fortran_modules import get_module_name_from_file
+
 
 class Subroutine(object):
     """
@@ -141,39 +141,6 @@ class Subroutine(object):
 
     def __repr__(self) -> str:
         return f"Subroutine({self.name})"
-    
-    def export_subroutine_info(self, ofile=sys.stdout):
-        filename = home_dir + self.filepath.split("/", 6)[-1]
-        mod = get_module_name_from_file(filename)[1]
-        ofile.write(f"ParentSub: {self.name}\n")
-        ofile.write(f" Mod: {mod}\n")
-        
-        ofile.write(f" Args: \n")
-        if not self.Arguments:
-            ofile.write("  - None\n")
-        else:
-            for args in self.Arguments.values():
-                ofile.write(f"  - {args}\n")
-                
-        ofile.write(f"  Local Array:\n")
-        local_array = self.LocalVariables["arrays"]
-        if not local_array:
-            ofile.write("   l: None\n")
-        else:
-            for arr in local_array:
-                ofile.write(f"   l: {local_array[arr]}\n")
-                
-        ofile.write(f"  ChildSub:\n")
-        if not self.child_Subroutine:
-            ofile.write("   c: None\n")
-        else:
-            for c in self.child_Subroutine.values():
-                ofile.write(f"   c: {c.name}\n")
-            
-        
-            
-        
-        
 
     def print_subroutine_info(self, ofile=sys.stdout, long=False):
         """
@@ -818,13 +785,13 @@ class Subroutine(object):
                 branch=el, tree_to_write=tree_to_write
             )
 
-        # ofile = open(f"{casename}/{self.name}CallTree.txt", "w")
+        ofile = open(f"{casename}/{self.name}CallTree.txt", "w")
         for branch in tree_to_write:
             level = branch[1]
             sub = branch[0]
             print(level * "|---->" + sub)
-            # ofile.write(level * "|---->" + sub + "\n")
-        # ofile.close()
+            ofile.write(level * "|---->" + sub + "\n")
+        ofile.close()
 
     def generate_update_directives(self, elmvars_dict, verify_vars):
         """

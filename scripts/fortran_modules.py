@@ -1,6 +1,6 @@
 import subprocess as sp
 import sys
-import csv
+
 from mod_config import ELM_SRC, SHR_SRC, _bc
 
 
@@ -28,16 +28,12 @@ class PointerAlias:
 
 
 def get_module_name_from_file(fpath) -> tuple[int, str]:
-    fpath = fpath.split("/",7)[-1]
-    fpath = "/mnt/c/Users/mungs/Desktop/SPEL_OpenACC/scripts/../../" + fpath
-    print(fpath)
     """
     Given a file path, returns the name of the module
     """
     cmd = f'grep -rin -E "^[[:space:]]*module [[:space:]]*[[:alnum:]]+" {fpath}'
     # the module declaration will be the first one. Any others will be interfaces
     module_name = sp.getoutput(cmd).split("\n")[0]
-    print(module_name)
     # grep will have pattern <line_number>:module <module_name>
     linenumber, module_name = module_name.split(":")
     # split by space and get the module name
@@ -156,82 +152,42 @@ class FortranModule:
         self.ln = ln  # line number of start module block
         self.defined_types = {}  # user types defined in the module
         self.modified = False  # if module has been through modify_file or not.
-        
-    def export_module_info(self, ofile=sys.stdout):
-        ofile.write(f'Module: {self.name}\n')
-        if not (self.modules.items()):
-            ofile.write(" -> None\n")
-        else:
-            for module, onlyclause in self.modules.items():
-                if ofile:
-                    ofile.write(f" -> {module}\n")
-                    if onlyclause == "all":
-                        ofile.write("   - All\n")
-                    elif not onlyclause:
-                        ofile.write("   - None\n")
-                    else:
-                        for obj in onlyclause:
-                            # obj = obj.split()
-                            ofile.write(f"   - {obj}\n")
-        
-        ofile.write("Variables:\n")
-        if len(self.global_vars) ==0:
-            ofile.write("   v: NONE\n")
-        for variable in self.global_vars:
-            ofile.write(f"   v: {variable}\n")
-            
-        ofile.write("User Types:\n")
-        if len(self.defined_types) ==0:
-            ofile.write("   u: NONE\n")
-        for type in self.defined_types:
-            ofile.write(f"   u: {self.defined_types[type]}\n")
-            
-            
 
     def print_module_info(self, ofile=sys.stdout):
         """
         Function to print summary of FortranModule object
         """
         base_fn = "/".join(self.filepath.split("/")[-2:])
-        # ofile.write(
-            # _bc.BOLD + _bc.HEADER + f"Modulegi Name: {self.name} {base_fn}\n" + _bc.ENDC
-        # )
-        # ofile.write(_bc.WARNING + "Module Depedencies:\n" + _bc.ENDC)
-        ofile.write(f"MOD {self.name}\n")
-        if len(self.modules.items()) == 0: 
-            ofile.write(" NONE\n")
+        ofile.write(
+            _bc.BOLD + _bc.HEADER + f"Module Name: {self.name} {base_fn}\n" + _bc.ENDC
+        )
+        ofile.write(_bc.WARNING + "Module Depedencies:\n" + _bc.ENDC)
+
         for module, onlyclause in self.modules.items():
             if ofile:
-                ofile.write( f" {module}  \n")
-                # ofile.write(
-                #     _bc.WARNING
-                #     + "use "
-                #     + _bc.ENDC
-                #     + _bc.OKCYAN
-                #     + f"{module}"
-                #     + _bc.ENDC
-                # )
+                ofile.write(
+                    _bc.WARNING
+                    + "use "
+                    + _bc.ENDC
+                    + _bc.OKCYAN
+                    + f"{module}"
+                    + _bc.ENDC
+                )
                 if onlyclause == "all":
-                    ofile.write("  all\n")
-                    # ofile.write("-> all\n")
-                elif len(onlyclause) == 0:
-                    ofile.write(" NONE\n")
+                    ofile.write("-> all\n")
                 else:
-                    
+                    ofile.write("->")
                     for ptrobj in onlyclause:
-                        # ofile.write(_bc.OKGREEN + f" {ptrobj.obj}," + _bc.ENDC)
-                        ofile.write(f"  {ptrobj}  \n")
-                    # ofile.write("\n")
+                        ofile.write(_bc.OKGREEN + f" {ptrobj.obj}," + _bc.ENDC)
+                    ofile.write("\n")
 
-        # ofile.write(_bc.BOLD + _bc.WARNING + "Variables:\n" + _bc.ENDC)
-        # if len(self.global_vars) ==0:
-        #     ofile.write(" NONE\n")
-        # for variable in self.global_vars:
-        #     ofile.write(f"{variable}\n")
+        ofile.write(_bc.BOLD + _bc.WARNING + "Variables:\n" + _bc.ENDC)
+        for variable in self.global_vars:
+            print(_bc.OKGREEN + f"{variable}" + _bc.ENDC)
 
-        # ofile.write(_bc.WARNING + "User Types:\n" + _bc.ENDC)
-        # for utype in self.defined_types:
-            # ofile.write(_bc.OKGREEN + f"{self.defined_types[utype]}\n" + _bc.ENDC)
+        ofile.write(_bc.WARNING + "User Types:\n" + _bc.ENDC)
+        for utype in self.defined_types:
+            ofile.write(_bc.OKGREEN + f"{self.defined_types[utype]}\n" + _bc.ENDC)
 
         return None
 
