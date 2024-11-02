@@ -61,20 +61,23 @@ def unpickle_unit_test(commit):
     return mod_dict, sub_dict, type_dict
 
 
-def create_dataframe(sub_dict):
+def create_dataframe(sub_dict, filename):
     import pandas as pd
-
+    main_data_dict = {"subroutine": [],
+                      "variable names": [],
+                      "status": []}
     # Create dataframe for subroutine's readwrite variable status:
-    subname = "SoilTemperature".lower()
-    sub = sub_dict[subname]
-    # combine each dictionary
-    status_dict = sub.elmtype_r | sub.elmtype_rw | sub.elmtype_w
-    # flip the dicitonary to dataframe format:
-    data_dict = {
-        "variable names": [key for key in status_dict.keys()],
-        "status": [val for val in status_dict.values()],
-    }
-    df = pd.DataFrame(data_dict)
+    for subname in sub_dict.keys():
+        sub = sub_dict[subname]
+
+        status_dict = sub.elmtype_r | sub.elmtype_rw | sub.elmtype_w
+
+        main_data_dict["subroutine"].extend([subname ] * len(status_dict))
+        main_data_dict["variable names"].extend([key for key in status_dict.keys()])
+        main_data_dict["status"].extend([val for val in status_dict.values()])
+
+    df = pd.DataFrame(main_data_dict)
+    df.to_csv(f"{filename}.csv")
     return df
 
 

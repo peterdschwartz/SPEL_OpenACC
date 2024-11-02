@@ -75,6 +75,7 @@ class Variable(object):
             self.declaration = ""
         self.active = active
         self.private = private
+        self.default_value = None
 
     # Define equality for comparison of two Variables
     def __eq__(self, other):
