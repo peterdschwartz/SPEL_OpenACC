@@ -1,4 +1,5 @@
 from django.urls import path
+
 from . import views
 
 urlpatterns = [
@@ -8,6 +9,5 @@ urlpatterns = [
     path("table/<str:table>", views.view_table, name="view_table"),
     path("query/<str:table>", views.fake, name="spec"),
     path("query", views.query, name="query"),
-  
-    
 ]
+

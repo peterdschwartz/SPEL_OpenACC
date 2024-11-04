@@ -1,0 +1,88 @@
+/* styles.css */
+table,
+th,
+td {
+    border: 1px solid black;
+    border-collapse: collapse;
+    text-align: center;
+}
+
+tr:nth-child(even) {
+    background-color: #D6EEEE;
+}
+/* Common button styles */
+.button,
+.sort-button {
+    display: inline-block;
+    padding: 5px 5px; 
+    border: none;
+    border-radius: 5px; 
+    cursor: pointer;
+    color: black;
+    text-decoration: none; 
+}
+.button:hover {
+    background-color: #0056b3;
+}
+
+.sort-button {
+    color : black;
+    background-color: #a8a
+    font-size: 1rem; 
+    transition: background-color 0.3s;
+}
+
+.sort-button:hover {
+    background-color: #dddddd; 
+}
+
+/* Active sorting button style */
+.sort-button.active {
+    font-weight: bold;
+    background-color: #00aaaa; 
+}
+
+/* Styling for return link in the header */
+.return-link {
+    font-size: 0.7em;        /* Slightly smaller font size than the h1 */
+    color: #007acc;          /* Blue color to indicate it's a link */
+    text-decoration: none;   /* Remove underline */
+    margin-left: 10px;       /* Space between the title and the link */
+    border-raidus: 5px;
+}
+
+.return-link:hover {
+    text-decoration: underline; /* Underline on hover to indicate it's clickable */
+}
+
+.child {
+    margin-left: 20px;
+    display: none;
+    /* Initially hide children */
+}
+
+.toggle {
+    cursor: pointer;
+    color: black;
+    text-decoration: underline;
+    margin-right: 5px;
+}
+
+.arrow {
+    cursor: pointer;
+    color: blue;
+    margin-right: 5px;
+}
+
+.vl {
+    border-left: 2px solid black;
+    height: 500px;
+    position: absolute;
+    left: 50%;
+    margin-left: -3px;
+    top: 10px;
+}
+
+.left-align {
+text-align: left;
+}

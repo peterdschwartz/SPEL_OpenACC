@@ -1,26 +1,16 @@
+{% load static %}
 <!DOCTYPE html>
 <html>
 
 <head>
-    <title>Home</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>elm_db</title>
+    <link rel="stylesheet" href="{% static 'css/styles.css' %}">
 </head>
 
 <body>
-    <style>
-        table,
-        th,
-        td {
-            border: 1px solid black;
-            border-collapse: collapse;
-            text-align: center;
-        }
-
-        tr:nth-child(even) {
-            background-color: #D6EEEE;
-        }
-    </style>
-    <h1>All Objects</h1>
-
+    <h1>ELM Type Definition Table  <a href="{% url 'home' %}" class="return-link">Return</a></h1>
     <table>
         <tr>
             <th>ID</th>
@@ -30,18 +20,16 @@
             <th>Member_Type</th>
             <th>Dimensions</th>
             <th>Bounds</th>
-            <th>Active</th>
         </tr>
         {% for obj in all_objects %}
         <tr>
-            <td>{{ obj.id }}</td>
-            <td>{{ obj.module }}</td>
-            <td>{{ obj.type_name }}</td>
-            <td>{{ obj.member }}</td>
+            <td>{{ obj.define_id }}</td>
+            <td>{{ obj.module.module_name }}</td>
+            <td>{{ obj.user_type.user_type_name }}</td>
             <td>{{ obj.member_type }}</td>
+            <td>{{ obj.member_name }}</td>
             <td>{{ obj.dim }}</td>
             <td>{{ obj.bounds }}</td>
-            <td>{{ obj.active }}</td>
         </tr>
         {% endfor %}
     </table>

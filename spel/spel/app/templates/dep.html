@@ -1,26 +1,16 @@
+{% load static %}
 <!DOCTYPE html>
 <html>
 
 <head>
-    <title>Home</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>table_dependency</title>
+    <link rel="stylesheet" href="{% static 'css/styles.css' %}">
 </head>
 
 <body>
-    <style>
-        table,
-        th,
-        td {
-            border: 1px solid black;
-            border-collapse: collapse;
-            text-align: center;
-        }
-
-        tr:nth-child(even) {
-            background-color: #D6EEEE;
-        }
-
-    </style>
-    <h1>All Objects</h1>
+    <h1>Modules Dependencies Table<a href="{% url 'home' %}" class="return-link">Return</a></h1>
 
     <table>
         <tr>
@@ -28,15 +18,13 @@
             <th>Module</th>
             <th>Dependency</th>
             <th>Object_Used</th>
-
         </tr>
         {% for obj in all_objects %}
         <tr>
-            <td>{{ obj.id }}</td>
-            <td>{{ obj.module_name }}</td>
-            <td>{{ obj.dependency }}</td>
+            <td>{{ obj.dependency_id }}</td>
+            <td>{{ obj.module.module_name }}</td>
+            <td>{{ obj.dep_module.module_name }}</td>
             <td>{{ obj.object_used }}</td>
-
         </tr>
         {% endfor %}
     </table>

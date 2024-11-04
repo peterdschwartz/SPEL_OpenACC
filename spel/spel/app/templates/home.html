@@ -1,48 +1,21 @@
+{% load static %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>6 Buttons Page</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            background-color: #f0f0f0;
-        }
-        .button-container {
-            display: grid;
-            grid-template-columns: repeat(3, 100px);
-            gap: 20px;
-        }
-        .button-container button {
-            padding: 10px;
-            font-size: 16px;
-            cursor: pointer;
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            transition: background-color 0.3s ease;
-        }
-        .button-container button:hover {
-            background-color: #45a049;
-        }
-    </style>
+    <title>E3SM Land Model Database</title>
+    <link rel="stylesheet" href="{% static 'css/styles.css' %}">
 </head>
 <body>
 
+
 <div class="button-container">
-    <a href="{% url 'view_table' table='subroutine_variables' %}">  <button>Subroutine Variables</button></a>
+    <a href="{% url 'view_table' table='subroutine_calltree' %}">  <button>Subroutine CallTree</button></a>
     <a href="{% url 'view_table' table='types' %}">  <button>  User Types</button></a>
     <a href="{% url 'view_table' table='dependency' %}">  <button>  Module Dependency</button></a>
     <a href="{% url 'view_table' table='variables' %}">  <button>  Variables</button></a>
-    
-
+    <a href="{% url 'view_table' table='instances' %}">  <button>  Type Instances</button></a>
     <a href="{% url 'home' %}">go </a>
 </div>
 

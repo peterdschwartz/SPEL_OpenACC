@@ -13,29 +13,29 @@ class AuthGroup(models.Model):
 
     class Meta:
         managed = False
-        db_table = 'auth_group'
+        db_table = "auth_group"
 
 
 class AuthGroupPermissions(models.Model):
     id = models.BigAutoField(primary_key=True)
     group = models.ForeignKey(AuthGroup, models.DO_NOTHING)
-    permission = models.ForeignKey('AuthPermission', models.DO_NOTHING)
+    permission = models.ForeignKey("AuthPermission", models.DO_NOTHING)
 
     class Meta:
         managed = False
-        db_table = 'auth_group_permissions'
-        unique_together = (('group', 'permission'),)
+        db_table = "auth_group_permissions"
+        unique_together = (("group", "permission"),)
 
 
 class AuthPermission(models.Model):
     name = models.CharField(max_length=255)
-    content_type = models.ForeignKey('DjangoContentType', models.DO_NOTHING)
+    content_type = models.ForeignKey("DjangoContentType", models.DO_NOTHING)
     codename = models.CharField(max_length=100)
 
     class Meta:
         managed = False
-        db_table = 'auth_permission'
-        unique_together = (('content_type', 'codename'),)
+        db_table = "auth_permission"
+        unique_together = (("content_type", "codename"),)
 
 
 class AuthUser(models.Model):
@@ -52,7 +52,7 @@ class AuthUser(models.Model):
 
     class Meta:
         managed = False
-        db_table = 'auth_user'
+        db_table = "auth_user"
 
 
 class AuthUserGroups(models.Model):
@@ -62,8 +62,8 @@ class AuthUserGroups(models.Model):
 
     class Meta:
         managed = False
-        db_table = 'auth_user_groups'
-        unique_together = (('user', 'group'),)
+        db_table = "auth_user_groups"
+        unique_together = (("user", "group"),)
 
 
 class AuthUserUserPermissions(models.Model):
@@ -73,8 +73,8 @@ class AuthUserUserPermissions(models.Model):
 
     class Meta:
         managed = False
-        db_table = 'auth_user_user_permissions'
-        unique_together = (('user', 'permission'),)
+        db_table = "auth_user_user_permissions"
+        unique_together = (("user", "permission"),)
 
 
 class DjangoAdminLog(models.Model):
@@ -83,12 +83,14 @@ class DjangoAdminLog(models.Model):
     object_repr = models.CharField(max_length=200)
     action_flag = models.PositiveSmallIntegerField()
     change_message = models.TextField()
-    content_type = models.ForeignKey('DjangoContentType', models.DO_NOTHING, blank=True, null=True)
+    content_type = models.ForeignKey(
+        "DjangoContentType", models.DO_NOTHING, blank=True, null=True
+    )
     user = models.ForeignKey(AuthUser, models.DO_NOTHING)
 
     class Meta:
         managed = False
-        db_table = 'django_admin_log'
+        db_table = "django_admin_log"
 
 
 class DjangoContentType(models.Model):
@@ -97,8 +99,8 @@ class DjangoContentType(models.Model):
 
     class Meta:
         managed = False
-        db_table = 'django_content_type'
-        unique_together = (('app_label', 'model'),)
+        db_table = "django_content_type"
+        unique_together = (("app_label", "model"),)
 
 
 class DjangoMigrations(models.Model):
@@ -109,7 +111,7 @@ class DjangoMigrations(models.Model):
 
     class Meta:
         managed = False
-        db_table = 'django_migrations'
+        db_table = "django_migrations"
 
 
 class DjangoSession(models.Model):
@@ -119,18 +121,24 @@ class DjangoSession(models.Model):
 
     class Meta:
         managed = False
-        db_table = 'django_session'
+        db_table = "django_session"
 
 
 class ModuleDependency(models.Model):
     dependency_id = models.AutoField(primary_key=True)
-    module = models.ForeignKey('Modules', models.DO_NOTHING, blank=True, null=True)
-    dep_module = models.ForeignKey('Modules', models.DO_NOTHING, related_name='moduledependency_dep_module_set', blank=True, null=True)
+    module = models.ForeignKey("Modules", models.DO_NOTHING, blank=True, null=True)
+    dep_module = models.ForeignKey(
+        "Modules",
+        models.DO_NOTHING,
+        related_name="moduledependency_dep_module_set",
+        blank=True,
+        null=True,
+    )
     object_used = models.CharField(max_length=100, blank=True, null=True)
 
     class Meta:
         managed = False
-        db_table = 'module_dependency'
+        db_table = "module_dependency"
 
 
 class Modules(models.Model):
@@ -139,53 +147,59 @@ class Modules(models.Model):
 
     class Meta:
         managed = False
-        db_table = 'modules'
+        db_table = "modules"
 
 
 class SubroutineActiveGlobalVars(models.Model):
     variable_id = models.AutoField(primary_key=True)
-    subroutine = models.ForeignKey('Subroutines', models.DO_NOTHING)
-    instance = models.ForeignKey('UserTypeInstances', models.DO_NOTHING, blank=True, null=True)
-    member = models.ForeignKey('TypeDefinitions', models.DO_NOTHING)
+    subroutine = models.ForeignKey("Subroutines", models.DO_NOTHING)
+    instance = models.ForeignKey(
+        "UserTypeInstances", models.DO_NOTHING, blank=True, null=True
+    )
+    member = models.ForeignKey("TypeDefinitions", models.DO_NOTHING)
     status = models.CharField(max_length=2)
 
     class Meta:
         managed = False
-        db_table = 'subroutine_active_global_vars'
-        unique_together = (('instance', 'member', 'subroutine'),)
+        db_table = "subroutine_active_global_vars"
+        unique_together = (("instance", "member", "subroutine"),)
 
 
 class SubroutineArgs(models.Model):
     arg_id = models.AutoField(primary_key=True)
-    subroutine = models.ForeignKey('Subroutines', models.DO_NOTHING)
+    subroutine = models.ForeignKey("Subroutines", models.DO_NOTHING)
     arg_type = models.CharField(max_length=100)
     arg_name = models.CharField(max_length=100)
     dim = models.IntegerField()
 
     class Meta:
         managed = False
-        db_table = 'subroutine_args'
+        db_table = "subroutine_args"
 
 
 class SubroutineCalltree(models.Model):
     parent_id = models.AutoField(primary_key=True)
-    parent_subroutine = models.ForeignKey('Subroutines', models.DO_NOTHING)
-    child_subroutine = models.ForeignKey('Subroutines', models.DO_NOTHING, related_name='subroutinecalltree_child_subroutine_set')
+    parent_subroutine = models.ForeignKey("Subroutines", models.DO_NOTHING)
+    child_subroutine = models.ForeignKey(
+        "Subroutines",
+        models.DO_NOTHING,
+        related_name="subroutinecalltree_child_subroutine_set",
+    )
 
     class Meta:
         managed = False
-        db_table = 'subroutine_calltree'
+        db_table = "subroutine_calltree"
 
 
 class SubroutineLocalArrays(models.Model):
     local_arry_id = models.AutoField(primary_key=True)
-    subroutine = models.ForeignKey('Subroutines', models.DO_NOTHING)
+    subroutine = models.ForeignKey("Subroutines", models.DO_NOTHING)
     array_name = models.CharField(max_length=100)
     dim = models.IntegerField()
 
     class Meta:
         managed = False
-        db_table = 'subroutine_local_arrays'
+        db_table = "subroutine_local_arrays"
 
 
 class Subroutines(models.Model):
@@ -195,13 +209,13 @@ class Subroutines(models.Model):
 
     class Meta:
         managed = False
-        db_table = 'subroutines'
+        db_table = "subroutines"
 
 
 class TypeDefinitions(models.Model):
     define_id = models.AutoField(primary_key=True)
     module = models.ForeignKey(Modules, models.DO_NOTHING)
-    user_type = models.ForeignKey('UserTypes', models.DO_NOTHING)
+    user_type = models.ForeignKey("UserTypes", models.DO_NOTHING)
     member_type = models.CharField(max_length=100)
     member_name = models.CharField(max_length=100)
     dim = models.IntegerField()
@@ -210,18 +224,18 @@ class TypeDefinitions(models.Model):
 
     class Meta:
         managed = False
-        db_table = 'type_definitions'
-        unique_together = (('user_type', 'member_type', 'member_name', 'module'),)
+        db_table = "type_definitions"
+        unique_together = (("user_type", "member_type", "member_name", "module"),)
 
 
 class UserTypeInstances(models.Model):
     instance_id = models.AutoField(primary_key=True)
-    instance_type = models.ForeignKey('UserTypes', models.DO_NOTHING)
+    instance_type = models.ForeignKey("UserTypes", models.DO_NOTHING)
     instance_name = models.CharField(max_length=100)
 
     class Meta:
         managed = False
-        db_table = 'user_type_instances'
+        db_table = "user_type_instances"
 
 
 class UserTypes(models.Model):
@@ -231,4 +245,4 @@ class UserTypes(models.Model):
 
     class Meta:
         managed = False
-        db_table = 'user_types'
+        db_table = "user_types"

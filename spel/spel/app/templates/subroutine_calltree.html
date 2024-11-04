@@ -1,71 +1,23 @@
-<!-- my_template.html -->
+{% load static %}
 <!DOCTYPE html>
-<html lang="en">
+<html>
 
 <head>
+    <script src="https://unpkg.com/htmx.org@2.0.3" integrity="sha384-0895/pl2MU10Hqc6jd4RvrthNlDiE9U1tWmX7WRESftEDRosgxNsQG/Ze9YMRzHq" crossorigin="anonymous"></script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Unravel Nested Dictionary with Arrow Buttons</title>
-    <style>
-        .child {
-            margin-left: 20px;
-            display: none;
-            /* Initially hide children */
-        }
-
-        .toggle {
-            cursor: pointer;
-            color: black;
-            text-decoration: underline;
-            margin-right: 5px;
-        }
-
-        .arrow {
-            cursor: pointer;
-            color: blue;
-            margin-right: 5px;
-        }
-
-        .vl {
-            border-left: 2px solid black;
-            height: 500px;
-            position: absolute;
-            left: 50%;
-            margin-left: -3px;
-            top: 10px;
-        }
-        table,
-        th,
-        td {
-            width: 100%;
-            border: 1px solid black;
-            border-collapse: collapse;
-            text-align: center;
-            margin-left: 10px;
-            padding: 10px; /* Add padding to make it more readable */
-            border: 1px solid black; /* Optional: Add borders to the table cells */
-        }
-
-        tr:nth-child(even) {
-            background-color: #D6EEEE;
-        }
-
-        .left-align {
-        text-align: left;
-    }
-    </style>
+    <title>active_variables</title>
+    <link rel="stylesheet" href="{% static 'css/styles.css' %}">
 </head>
 
 
-<body>
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+    <h1>Search Subroutines for Variable <a href="{% url 'home' %}" class="return-link">Return</a></h1>
     <br />
     <form action="{% url 'subroutine_calltree' %}" method="post">
         {% csrf_token %}
-        <label for="instance">Derived Data Type (Instance):</label>
-        <input type="text" id="instance" name="instance">
-        <br />
-        <label for="member">Member:</label>
-        <input type="text" id="member" name="member">
+        <label for="Variable">Enter Global Variable (inst%member):</label>
+        <input type="text" id="Variable" name="Variable">
         <br />
         <button type="submit">Submit</button>
     </form>
@@ -89,9 +41,7 @@
                 <th>Instance</th>
                 <th>Member</th>
                 <th>Status</th>
-              
             </tr>
-        
             {% for obj in all %}
             <tr>
                 {% for o in obj %}
@@ -104,15 +54,10 @@
         {% endif %}
     </div>
 
-
-
-
     <script>
         // Read the dictionary from Django context
 
         const n = {{ tree | safe }}; // Use the safe filter to prevent escaping
-
-
 
         // Recursive function to create HTML structure
 
