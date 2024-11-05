@@ -2,37 +2,6 @@
 {% block body %}
 <h1>Derived Type Instances <a href="{% url 'home' %}" class="return-link">Return</a></h1>
 
-<table>
-  <tr>
-    <th>
-    <button class="sort-button {% if request.POST.sort_by == 'instance_id' %}active{% endif %}"
-      hx-post="{% url 'view_table' 'instances' %}" 
-      hx-vals='{"sort_by": "instance_id"}'
-      hx-target="closest table"
-      hx-swap="outerHTML">
-      ID
-    </button>
-    </th>
-    <th>module</th>
-    <th>type</th>
-    <th>
-    <button class="sort-button {% if request.POST.sort_by == 'instance_name' %}active{% endif %}"
-      hx-post="{% url 'view_table' 'instances' %}" 
-      hx-vals='{"sort_by": "instance_name"}'
-      hx-target="closest table"
-      hx-swap="outerHTML">
-      Inst Name 
-    </button>
-    </th>
-  </tr>
-  {% for obj in all_objects %}
-  <tr>
-    <td>{{ obj.instance_id }}</td>
-    <td>{{ obj.instance_type.module.module_name }}</td>
-    <td>{{ obj.instance_type.user_type_name }}</td>
-    <td>{{ obj.instance_name }}</td>
-  </tr>
-  {% endfor %}
-</table>
+{% include "partials/dynamic_table.html"  with table_name=table_name %}
 
 {% endblock %}

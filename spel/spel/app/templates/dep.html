@@ -1,33 +1,7 @@
-{% load static %}
-<!DOCTYPE html>
-<html>
+{% extends "base.html" %}
+{% block body %}
+<h1>Module Dependency Table <a href="{% url 'home' %}" class="return-link">Return</a></h1>
 
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>table_dependency</title>
-    <link rel="stylesheet" href="{% static 'css/styles.css' %}">
-</head>
+{% include "partials/dynamic_table.html"  with table_name=table_name %}
 
-<body>
-    <h1>Modules Dependencies Table<a href="{% url 'home' %}" class="return-link">Return</a></h1>
-
-    <table>
-        <tr>
-            <th>ID</th>
-            <th>Module</th>
-            <th>Dependency</th>
-            <th>Object_Used</th>
-        </tr>
-        {% for obj in all_objects %}
-        <tr>
-            <td>{{ obj.dependency_id }}</td>
-            <td>{{ obj.module.module_name }}</td>
-            <td>{{ obj.dep_module.module_name }}</td>
-            <td>{{ obj.object_used }}</td>
-        </tr>
-        {% endfor %}
-    </table>
-</body>
-
-</html>
+{% endblock %}

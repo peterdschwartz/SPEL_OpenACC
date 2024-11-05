@@ -1,3 +1,4 @@
+from django import template
 from django.db import connection, models
 from django.shortcuts import HttpResponse, render
 from django.views.decorators.http import require_http_methods
@@ -12,6 +13,7 @@ from .models import (
     UserTypeInstances,
 )
 
+register = template.Library()
 # import module_calltree
 TYPE_DEFAULT_DICT = {
     "id": "",
@@ -54,25 +56,63 @@ TABLE_NAME_LOOKUP = {
 }
 
 VIEWS_TABLE_DICT = {
+    "subroutines": {
+        "name": Subroutines,
+        "html": "subroutines.html",
+        "fields": [
+            "subroutine_id",
+            "module.module_name",
+        ],
+    },
     "modules": {
         "name": Modules,
         "html": "modules.html",
+        "fields": [
+            "module_id",
+            "module_name",
+        ],
     },
     "subroutine_calltree": {
         "name": SubroutineCalltree,
         "html": "subroutine_calltree.html",
+        "fields": [
+            "parent_id",
+            "parent_subroutine.subroutine_name",
+            "child_subroutine.subroutine_name",
+        ],
     },
     "types": {
         "name": TypeDefinitions,
         "html": "types.html",
+        "fields": [
+            "define_id",
+            "module.module_name",
+            "user_type.user_type_name",
+            "member_type",
+            "member_name",
+            "dim",
+            "bounds",
+        ],
     },
     "dependency": {
         "name": ModuleDependency,
         "html": "dep.html",
+        "fields": [
+            "dependency_id",
+            "module.module_name",
+            "dep_module.module_name",
+            "object_used",
+        ],
     },
     "instances": {
         "name": UserTypeInstances,
         "html": "instances.html",
+        "fields": [
+            "instance_id",
+            "instance_type.module.module_name",
+            "instance_type.user_type_name",
+            "instance_name",
+        ],
     },
 }
 
@@ -124,12 +164,18 @@ def subroutine_calltree(request):
 
 
 @require_http_methods(["GET", "POST"])
-def view_table(request, table):
+def view_table(request, table_name):
+    """
+    Generic Function for printing an SQL table, substituting
+    the foreign keys with as specifcied in the table definiton
+    """
 
-    table = VIEWS_TABLE_DICT[table]
+    table = VIEWS_TABLE_DICT[table_name]
     if not table:
         return HttpResponse(b"Table not found", status=404)
+
     model = table["name"]
+    display_fields = table["fields"]
     if request.method == "POST":
         print(request.headers)
         sort_by = request.POST.get("sort_by", None)
@@ -143,15 +189,34 @@ def view_table(request, table):
     ]
     all_objects = model.objects.select_related(*foreign_keys).all()
 
-    if sort_by in [field.name for field in model._meta.get_fields()]:
-        all_objects = all_objects.order_by(sort_by)
+    # Handle sorting with dot notation for related fields
+    if sort_by in display_fields:
+        all_objects = all_objects.order_by(sort_by.replace(".", "__"))
 
-        # Check if the request is coming from HTMX (for partial table response)
-        if request.headers.get("HX-Request"):
-            # Render only the table rows template for HTMX requests
-            return render(request, "partial_table.html", {"all_objects": all_objects})
+    rows = []
+    for obj in all_objects:
+        row = []
+        for field_name in display_fields:
+            parts = field_name.split(".")
+            value = getattr(obj, parts[0], None)
+            if len(parts) > 1:
+                for attr in parts[1:]:
+                    value = getattr(value, attr, None)
 
-    return render(request, table["html"], {"all_objects": all_objects})
+            row.append(value)
+        rows.append(row)
+
+    # titles = [f.split(".")[-1].replace("_", " ").title() for f in display_fields]
+    context = {
+        "all_objects": rows,
+        "field_names": display_fields,
+        "table_name": table_name,
+    }
+    # Check if the request is coming from HTMX (for partial table response)
+    if request.headers.get("HX-Request"):
+        return render(request, "partials/dynamic_table.html", context)
+
+    return render(request, table["html"], context)
 
 
 def home(request):
