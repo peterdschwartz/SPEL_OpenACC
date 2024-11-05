@@ -5,8 +5,18 @@ from collections import namedtuple
 from log_functions import list_print
 from mod_config import _bc
 
+
 # Declare namedtuple for readwrite status of variables:
-ReadWrite = namedtuple("ReadWrite", ["status", "ln"])
+class ReadWrite(object):
+    def __init__(self, status, ln):
+        self.status = status
+        self.ln = ln
+
+    def __eq__(self, other):
+        return self.status == other.status and self.ln == other.ln
+
+    def __repr__(self):
+        return f"{self.status}@L{self.ln}"
 
 
 # namedtuple to log the subroutines called and their arguments
@@ -38,8 +48,13 @@ def determine_variable_status(
     find_variables = re.search(
         r"^(class\s*\(|type\s*\(|integer|real|logical|character)", line
     )
+    vars_added = {}
     # Loop through each derived type and determine rw status.
     for dtype in matched_variables:
+        if dtype in vars_added:
+            continue
+        else:
+            vars_added[dtype] = True
         if find_variables:
             rw_status = ReadWrite("r", ct)
             dtype_accessed.setdefault(dtype, []).append(rw_status)
@@ -194,31 +209,15 @@ def summarize_read_write_status(var_access, map_names=[]):
     """
     summary = {}
     for varname, values in var_access.items():
-        # read-only: all values are 'r'
-        # write-only: all values are 'w'
-        # read-write: mixture of 'r' and 'w'
         status_list = [v.status for v in values]
         num_uses = len(status_list)
         num_reads = status_list.count("r")
         num_writes = status_list.count("w")
-        # NOTE: This code section
-        # Allow for multiple variables to correspond to the same gv
-        # var_name_list = []
-        # if key in ptrname_list:
-        #     if isinstance(self.associate_vars[key], list):
-        #         var_name_list = self.associate_vars[key].copy()
-        #     else:
-        #         var_name_list.append(self.associate_vars[key])
-        # else:
-        #     var_name_list.append(key)
         if num_uses == num_reads:
-            # read-only
             summary[varname] = "r"
         elif num_uses == num_writes:
-            # write-only
             summary[varname] = "w"
         else:
-            # read-write
             summary[varname] = "rw"
 
     return summary

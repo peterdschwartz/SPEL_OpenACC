@@ -127,7 +127,6 @@ def main() -> None:
             # NOTE: direct assignment here means that changes to subroutines[s] object
             #       below will be reflected immediately in main_sub_dict. Make explicit instead?
             subroutines[s] = main_sub_dict[s]
-            subroutines[s].print_subroutine_info()
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
     # examineLoops performs adjustments that go beyond the "naive"                  #
@@ -158,8 +157,6 @@ def main() -> None:
     if not mod_dict:
         print(f"{func_name}::Error didn't find any modules related to subroutines")
         sys.exit(1)
-
-    # print_spel_module_dependencies(mod_dict=mod_dict,subs=subroutines)
 
     with open(f"{case_dir}/source_files_needed.txt", "w") as ofile:
         for f in file_list:
@@ -202,27 +199,20 @@ def main() -> None:
     for sub in subroutines.values():
 
         sub.elmtype_r = replace_ptr_with_targets(
-            sub.elmtype_r, type_dict, instance_to_user_type
+            sub.elmtype_r,
+            type_dict,
+            instance_to_user_type,
         )
         sub.elmtype_w = replace_ptr_with_targets(
-            sub.elmtype_w, type_dict, instance_to_user_type
+            sub.elmtype_w,
+            type_dict,
+            instance_to_user_type,
         )
         sub.elmtype_rw = replace_ptr_with_targets(
-            sub.elmtype_rw, type_dict, instance_to_user_type
+            sub.elmtype_rw,
+            type_dict,
+            instance_to_user_type,
         )
-
-        print(_bc.OKGREEN + f"Derived Type Analysis for {sub.name}")
-        print(f"{func_name}::Read-Only")
-        for key in sub.elmtype_r.keys():
-            print(key, sub.elmtype_r[key])
-        print(f"{func_name}::Write-Only")
-        for key in sub.elmtype_w.keys():
-            print(key, sub.elmtype_w[key])
-        print(f"{func_name}::Read-Write")
-        for key in sub.elmtype_rw.keys():
-            print(key, sub.elmtype_rw[key])
-        print(_bc.ENDC)
-
         for key in list(sub.elmtype_r.keys()):
             c13c14 = bool("c13" in key or "c14" in key)
             if c13c14:
@@ -378,7 +368,6 @@ def main() -> None:
         if var in read_types:
             read_types.remove(var)
 
-    # type_dict["conctransporttype"].manual_deep_copy()
     active_global_vars = determine_global_variable_status(mod_dict, subroutines)
 
     # Subroutine analysis should be complete. Store info in main_sub_dict

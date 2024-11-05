@@ -63,7 +63,6 @@ class Subroutine(object):
             1) file for the subroutine is found if not given
             2) calltree is assigned
             3) the associate clause is processed.
-            5)
         """
 
         self.name = name
@@ -135,9 +134,9 @@ class Subroutine(object):
         self.child_Subroutine = {}
 
         self.acc_status = False
-        self.elmtypes = []
         self.DoLoops = []
         self.analyzed_child_subroutines = False
+        self.active_global_vars = {} # non-derived type variables used in the subroutine
 
     def __repr__(self) -> str:
         return f"Subroutine({self.name})"
@@ -1544,6 +1543,8 @@ class Subroutine(object):
         else:
             endline = self.endline
 
+        debug = False 
+
         args_accessed = {}
         line_num = startline
         while line_num < endline:
@@ -1600,12 +1601,16 @@ class Subroutine(object):
                     for arg_var in arg_to_dtype:
                         argname = arg_var.ptr
                         dtypename = arg_var.obj
-                        arg_status = child_sub.arguments_read_write[argname]
+                        arg_status = child_sub.arguments_read_write[argname].status
+                        if(isinstance(arg_status, ReadWrite)):
+                            print(f"ERROR:{argname} has nested ReadWrite from {child_sub.name}")
+                            sys.exit()
                         arg_status = ReadWrite(status=arg_status, ln=line_num)
                         args_accessed.setdefault(dtypename, []).append(arg_status)
             line_num += 1
 
         # All args should have been processed. Store information into Subroutine
+        print("Calling summarise for ",self.name)
         arg_status_summary = summarize_read_write_status(args_accessed)
         for arg, status in arg_status_summary.items():
             self.arguments_read_write[arg] = ReadWrite(status, -999)
@@ -1615,3 +1620,21 @@ class Subroutine(object):
             print(f"{func_name}::ERROR: Failed to analyze arguments for {self.name}")
             sys.exit(1)
         return None
+    
+    def print_elmtype_access(self):
+        """
+        Function to print the read/write status of all derived type members
+        """
+        func_name = "print_elmtype_access"
+        print(_bc.OKGREEN + f"Derived Type Analysis for {self.name}")
+        print(f"{func_name}::Read-Only")
+        for key in self.elmtype_r.keys():
+            print(key, self.elmtype_r[key])
+        print(f"{func_name}::Write-Only")
+        for key in self.elmtype_w.keys():
+            print(key, self.elmtype_w[key])
+        print(f"{func_name}::Read-Write")
+        for key in self.elmtype_rw.keys():
+            print(key, self.elmtype_rw[key])
+        print(_bc.ENDC)
+        return None 

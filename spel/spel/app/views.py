@@ -59,60 +59,60 @@ VIEWS_TABLE_DICT = {
     "subroutines": {
         "name": Subroutines,
         "html": "subroutines.html",
-        "fields": [
-            "subroutine_id",
-            "module.module_name",
-        ],
+        "fields": {
+            "Id": "subroutine_id",
+            "Module": "module.module_name",
+        },
     },
     "modules": {
         "name": Modules,
         "html": "modules.html",
-        "fields": [
-            "module_id",
-            "module_name",
-        ],
+        "fields": {
+            "Id": "module_id",
+            "Module": "module_name",
+        },
     },
     "subroutine_calltree": {
         "name": SubroutineCalltree,
         "html": "subroutine_calltree.html",
-        "fields": [
-            "parent_id",
-            "parent_subroutine.subroutine_name",
-            "child_subroutine.subroutine_name",
-        ],
+        "fields": {
+            "Id": "parent_id",
+            "Parent Sub": "parent_subroutine.subroutine_name",
+            "Child Sub": "child_subroutine.subroutine_name",
+        },
     },
     "types": {
         "name": TypeDefinitions,
         "html": "types.html",
-        "fields": [
-            "define_id",
-            "module.module_name",
-            "user_type.user_type_name",
-            "member_type",
-            "member_name",
-            "dim",
-            "bounds",
-        ],
+        "fields": {
+            "Id": "define_id",
+            "Module": "module.module_name",
+            "Type Name": "user_type.user_type_name",
+            "Member Type": "member_type",
+            "Member Name": "member_name",
+            "Dim": "dim",
+            "Bounds": "bounds",
+        },
     },
     "dependency": {
         "name": ModuleDependency,
         "html": "dep.html",
-        "fields": [
-            "dependency_id",
-            "module.module_name",
-            "dep_module.module_name",
-            "object_used",
-        ],
+        "fields": {
+            "Id": "dependency_id",
+            "Module": "module.module_name",
+            "Dependent Mod": "dep_module.module_name",
+            "Used object": "object_used",
+        },
     },
     "instances": {
         "name": UserTypeInstances,
         "html": "instances.html",
-        "fields": [
-            "instance_id",
-            "instance_type.module.module_name",
-            "instance_type.user_type_name",
-            "instance_name",
-        ],
+        "fields": {
+            "Id": "instance_id",
+            "Module": "instance_type.module.module_name",
+            "Type Name": "instance_type.user_type_name",
+            "Instance Name": "instance_name",
+        },
     },
 }
 
@@ -189,14 +189,14 @@ def view_table(request, table_name):
     ]
     all_objects = model.objects.select_related(*foreign_keys).all()
 
-    # Handle sorting with dot notation for related fields
-    if sort_by in display_fields:
-        all_objects = all_objects.order_by(sort_by.replace(".", "__"))
+    if sort_by:
+        sort_field = display_fields[sort_by]
+        all_objects = all_objects.order_by(sort_field.replace(".", "__"))
 
     rows = []
     for obj in all_objects:
         row = []
-        for field_name in display_fields:
+        for field_name in display_fields.values():
             parts = field_name.split(".")
             value = getattr(obj, parts[0], None)
             if len(parts) > 1:
@@ -206,7 +206,6 @@ def view_table(request, table_name):
             row.append(value)
         rows.append(row)
 
-    # titles = [f.split(".")[-1].replace("_", " ").title() for f in display_fields]
     context = {
         "all_objects": rows,
         "field_names": display_fields,

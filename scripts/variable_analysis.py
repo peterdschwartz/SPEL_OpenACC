@@ -1,11 +1,12 @@
 import re
 import sys
 
+from analyze_subroutines import Subroutine
 from fortran_modules import get_module_name_from_file
 from utilityFunctions import Variable
 
 
-def check_global_vars(regex_variables, sub) -> list:
+def check_global_vars(regex_variables, sub: Subroutine) -> list:
     """
     Function that checks sub for usage of any variables matched by
     regex_variables.
@@ -48,7 +49,9 @@ def check_global_vars(regex_variables, sub) -> list:
     return active_vars
 
 
-def determine_global_variable_status(mod_dict, subroutines) -> dict[str, Variable]:
+def determine_global_variable_status(
+    mod_dict, subroutines: dict[str, Subroutine]
+) -> dict[str, Variable]:
     """
     Function that goes through the list of subroutines and returns the non-derived type
     global variables that are used inside those subroutines
@@ -80,7 +83,6 @@ def determine_global_variable_status(mod_dict, subroutines) -> dict[str, Variabl
     variables = {}
     intrinsic_types = ["real", "integer", "logical", "character"]
     for mod in test_modules.values():
-        # Loop through used_mods and their only clause
         for used_modname, only_clause in mod.modules.items():
             # Check if only certain objects are specified
             if only_clause != "all":
@@ -108,13 +110,10 @@ def determine_global_variable_status(mod_dict, subroutines) -> dict[str, Variabl
     # Loop through the subroutines and check for variables used within.
     # `check_global_vars` loops through each sub and looks for any matches
     for sub in all_subs.values():
-        print(f"{ func_name } :: For subroutine { sub.name }")
         active_vars = check_global_vars(regex_variables, sub)
         if active_vars:
             for var in active_vars:
-                print(
-                    f"setting {var} active", variables[var], variables[var].declaration
-                )
                 variables[var].active = True
+                sub.active_global_vars[var] = variables[var]
 
     return variables

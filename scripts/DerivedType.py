@@ -150,15 +150,16 @@ class DerivedType(object):
             lines : lines of files containing type definition
             ln : line number to start with.
         """
+        debug = False
         member_arr_or_ptr = {var.name: var for var in member_list if var.dim > 0}
         _arrptr_names = ["%" + varname for varname in member_arr_or_ptr.keys()]
         member_match_string = "|".join(_arrptr_names)
 
         regex_alloc = re.compile(
-            r"^(allocate)\s*(.+)\b({})\b(\s*\()".format(member_match_string)
+            r"^(allocate)\s*(.+)({})\b(\s*\()".format(member_match_string)
         )
         regex_ptr_init = re.compile(r"({})\b\s*(=>)(.+)".format(member_match_string))
-        regex_member_name = re.compile(r"\b({})\b".format(member_match_string))
+        regex_member_name = re.compile(r"({})\b".format(member_match_string))
 
         member_scalars = {var.name: var for var in member_list if var.dim == 0}
 
@@ -198,6 +199,9 @@ class DerivedType(object):
                 elif match_alloc:
                     members_matched = regex_member_name.findall(full_line)
                     members_matched = list(set(members_matched))
+                    if debug:
+                        print("match_alloc:", match_alloc)
+                        print("Member matched:", members_matched)
                     for varname in members_matched:
                         varname = varname.replace("%", "")
                         if added_member_to_type[varname]:
@@ -228,6 +232,8 @@ class DerivedType(object):
                 "var": scalar,
                 "bounds": None,
             }
+        if debug:
+            sys.exit()
 
         return None
 

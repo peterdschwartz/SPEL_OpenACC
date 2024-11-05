@@ -897,7 +897,6 @@ def process_for_unit_test(
     # (NOTE: Could write a make file to do this instead and
     # read the results back into SPEL?)
     linenumber, unit_test_module = get_module_name_from_file(fpath=fname)
-    print(mod_dict.keys())
     file_list = sort_file_dependency(mod_dict, unit_test_module)
     for m in required_mods:
         file_list = sort_file_dependency(mod_dict, m.lower())
