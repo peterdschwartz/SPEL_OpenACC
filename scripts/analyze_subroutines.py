@@ -122,6 +122,14 @@ class Subroutine(object):
             self.dummy_args_list = self._get_dummy_args()
             getLocalVariables(self, verbose=verbose)
 
+        if self.Arguments:
+            if(self.name == "checkdates"):
+                print("self.Arguments:",self.Arguments)
+            sort_args = {}
+            for arg in self.dummy_args_list:
+                sort_args[arg] = self.Arguments[arg]
+            self.Arguments = sort_args.copy()
+
         # These 3 dictionaries will be summaries of ReadWrite Status for
         # the FUT subroutines as a whole
         self.elmtype_r = {}
@@ -385,7 +393,7 @@ class Subroutine(object):
                 # Transform args to list of PointerAlias with dummy_arg => passed_var
                 if not childsub.library:
                     args_matched = determine_arg_name(
-                        matched_vars=args, child_sub=childsub, args=args
+                        matched_vars=args, child_sub=childsub, args=args,
                     )
                     # Store the subroutine call information (name of parent and the arguments passed)
                     subcall = SubroutineCall(self.name, args_matched)
@@ -628,6 +636,9 @@ class Subroutine(object):
                 else:
                     var_name_list.append(key)
                 for varname in var_name_list:
+                    if(varname == "solarabs_vars%tlai_patch"):
+                        print(f"Subroutine {self.name} Adding {varname}:")
+                        sys.exit(0)
                     self.elmtype_access_by_ln[varname] = values
                     if "%" not in varname:
                         print(f"Adding { varname } to elmtype!")
@@ -732,6 +743,9 @@ class Subroutine(object):
             trace_derived_type_arguments(self, child_sub, verbose=verbose)
 
             for varname, status in child_sub.elmtype_r.items():
+                if(varname == "solarabs_vars%tlai_patch"):
+                    print(f"Child Subroutine {child_sub.name} Adding {varname}:")
+                    sys.exit(0)
                 if varname in self.elmtype_w.keys():
                     # Check if previously write-only and change to read-write
                     self.elmtype_rw[varname] = "rw"
@@ -1610,7 +1624,6 @@ class Subroutine(object):
             line_num += 1
 
         # All args should have been processed. Store information into Subroutine
-        print("Calling summarise for ",self.name)
         arg_status_summary = summarize_read_write_status(args_accessed)
         for arg, status in arg_status_summary.items():
             self.arguments_read_write[arg] = ReadWrite(status, -999)

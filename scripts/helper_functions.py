@@ -234,14 +234,13 @@ def trace_derived_type_arguments(parent_sub, child_sub, verbose=False):
         for subcall in child_sub.subroutine_call
         if subcall.subname == parent_sub.name
     ]
+
     passed_args = {}
     intrinsic_types = ["real", "integer", "character", "logical", "complex"]
     for subcall in subcalls_by_parent:
         for ptrobj in subcall.args:
             dummy_arg = ptrobj.ptr
             arg = ptrobj.obj
-            # if arg == dummy_arg:
-            #    continue
             temp = {
                 dummy_arg: var.name
                 for var in parent_sub.Arguments.values()

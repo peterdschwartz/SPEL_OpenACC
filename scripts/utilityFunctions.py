@@ -149,8 +149,10 @@ def removeBounds(line, verbose=False):
     non_greedy3D = re.compile(f"\({cc},{cc},{cc}\)")
     non_greedy4D = re.compile(f"\({cc},{cc},{cc},{cc}\)")
     regex_array_as_index = re.compile(r"\w+\s*\([,\w+\*-]+\)", re.IGNORECASE)
+    ng_array_ind = re.compile(r'(?<=\w)(\(.+?\))')
+
     newline = line
-    newline = regex_array_as_index.sub(":", newline)
+    newline = ng_array_ind.sub("",newline)
 
     m1D = non_greedy1D.findall(newline)
     for bound in m1D:
@@ -173,6 +175,7 @@ def removeBounds(line, verbose=False):
     if match_array_init:
         print(_bc.WARNING + "match array init::", match_array_init, _bc.ENDC)
     if match_arrays:
+        newline = regex_array_as_index.sub(":", newline)
         # not all bounds could be removed.
         # Check if they are of the form arr(1,2) (no semicolon)
         for arr in match_arrays:
@@ -209,7 +212,7 @@ def getArguments(l, verbose=False):
     track global variables passed as arguments.
     """
     if verbose:
-        print(_bc.WARNING + f"getArguments:: Processing {l}\n\n" + _bc.ENDC)
+        print(_bc.WARNING + f"getArguments:: Processing {l}" + _bc.ENDC)
     # Matches longest string between parentheses
     par = re.compile("(?<=\().+(?=\))")
     m = par.search(l)
@@ -219,10 +222,12 @@ def getArguments(l, verbose=False):
     args = m.group()
 
     newargs = removeBounds(args, verbose)
-
     args = newargs.split(",")
-    args = [x.strip() for x in args]
+    args = [x.strip().lower() for x in args]
+    args = [ x for x in args if x!=""]
 
+    if verbose:
+        print("Args Found:",args,"\n")
     return args
 
 
@@ -414,7 +419,6 @@ def getLocalVariables(sub, verbose=False, class_var=False):
     intrinsic_type = re.compile(r"^(integer|real|logical|character)", re.IGNORECASE)
     user_type = re.compile(r"^(class\s*\(|type\s*\()", re.IGNORECASE)
 
-    #
     ln = startline
     while ln < endline:
         line, ln = line_unwrapper(lines=lines, ct=ln)
@@ -429,8 +433,7 @@ def getLocalVariables(sub, verbose=False, class_var=False):
             # store everytime we find a variable declaration
             sub.var_declaration_endl = ln
             if "::" not in line:
-                # Repeated code here, could be simplified?
-                # Need to check if variable declarations w/o '::'
+                # Repeated code here, could be simplified? Need to check if variable declarations w/o '::'
                 # have more syntax restrictions.
                 m_type = intrinsic_type.search(line)
                 if m_type:
@@ -535,6 +538,7 @@ def getLocalVariables(sub, verbose=False, class_var=False):
                         data_type, var, "", ln, dim=0, parameter=parameter
                     )
         ln += 1
+
     return
 
 
@@ -1044,6 +1048,7 @@ def line_unwrapper(lines, ct, verbose=False):
     Function that takes code segment that has line continuations
     and returns it all on one line.
     """
+    beg_continuation = re.compile(r'^\s*(&)')
     simple_l = lines[ct].split("!")[0]  # remove comments
     # remove new line character
     simple_l = simple_l.rstrip("\n").strip()
@@ -1052,7 +1057,11 @@ def line_unwrapper(lines, ct, verbose=False):
     newct = ct
     while continuation:
         newct += 1
-        simple_l = lines[newct].split("!")[0]  # in case of inline comments
+        simple_l = lines[newct].split("!")[0].strip()  # in case of inline comments
+        match_beg_cont = beg_continuation.search(simple_l)
+        if(match_beg_cont):
+            simple_l = beg_continuation.sub("",simple_l)
+            simple_l = simple_l.strip()
         simple_l = simple_l.rstrip("\n")
         # Fortran allow empty lines in between line continuations
         if simple_l.isspace() or not simple_l:
