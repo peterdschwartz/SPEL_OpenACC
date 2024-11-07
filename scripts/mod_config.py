@@ -87,4 +87,17 @@ class BColors:
     UNDERLINE = "\033[4m"
 
 
+class EmptyColors:
+    HEADER = ""
+    OKBLUE = ""
+    OKCYAN = ""
+    OKGREEN = ""
+    WARNING = ""
+    FAIL = ""
+    ENDC = ""
+    BOLD = ""
+    UNDERLINE = ""
+
+
 _bc = BColors()
+_no_colors = EmptyColors()

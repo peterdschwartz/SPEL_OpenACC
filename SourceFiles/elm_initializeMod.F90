@@ -173,7 +173,7 @@ contains
       allocate (h2osno_col(begc:endc)); h2osno_col(:) = 0d0
       allocate (snow_depth_col(begc:endc)); snow_depth_col(:) = 0d0
 
-      print *, "allocating PP derived types"
+      print *, "allocating Physical Property derived types"
       call veg_pp%Init(begp, endp)
       call lun_pp%Init(begl, endl)
       call col_pp%Init(begc, endc)
@@ -195,7 +195,6 @@ contains
       call cnstate_vars%Init(bounds_proc)
       call soilstate_vars%Init(bounds_proc)
 
-      print *, "ALLOCATING Module derived types"
       call urbanparams_vars%Init(bounds_proc)
       call lun_es%Init(begl, endl)
       call grc_es%Init(begg, endg)
@@ -220,7 +219,6 @@ contains
       call top_as%Init(begt, endt)
       call top_af%Init(begt, endt)
 
-      print *, " allocating carbon state derived types "
       if (use_cn .or. use_fates) then
 
          call grc_cs%Init(begg, endg, carbon_type='c12')
@@ -256,7 +254,6 @@ contains
          end if
 
       end if
-      print *, "allocating Nitrogen State Types"
       if (use_cn) then
          call grc_ns%Init(begg, endg)
          call col_ns%Init(begc, endc, col_cs)

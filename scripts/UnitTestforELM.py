@@ -127,6 +127,7 @@ def main() -> None:
             # NOTE: direct assignment here means that changes to subroutines[s] object
             #       below will be reflected immediately in main_sub_dict. Make explicit instead?
             subroutines[s] = main_sub_dict[s]
+            subroutines[s].unit_test_function = True
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
     # examineLoops performs adjustments that go beyond the "naive"                  #
@@ -376,7 +377,14 @@ def main() -> None:
 
     # Generate/modify FORTRAN files needed to initialize and run Unit Test
     # main.F90
-    wr.clean_main(aggregated_elmtypes_list, files=needed_mods, case_dir=case_dir)
+    wr.prepare_unit_test_files(
+        inst_list=aggregated_elmtypes_list,
+        type_dict=type_dict,
+        files=needed_mods,
+        case_dir=case_dir,
+        global_vars=active_global_vars,
+        subroutines=subroutines,
+    )
     # elm_instMod.F90
     wr.write_elminstMod(type_dict, case_dir)
     # duplicateMod.F90

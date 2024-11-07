@@ -1,8 +1,13 @@
 import re
+import subprocess as sp
+import sys
 
+from analyze_subroutines import Subroutine
 from fortran_modules import get_module_name_from_file
 from mod_config import (
+    ELM_SRC,
     PHYSICAL_PROP_TYPE_LIST,
+    _bc,
     elm_dir_regex,
     preproc_list,
     shr_dir_regex,
@@ -10,7 +15,12 @@ from mod_config import (
     spel_output_dir,
     unit_test_files,
 )
-from utilityFunctions import comment_line
+from utilityFunctions import (
+    comment_line,
+    find_file_for_subroutine,
+    getArguments,
+    line_unwrapper,
+)
 
 
 def get_delta_from_dim(dim, delta):
@@ -197,15 +207,128 @@ def clean_use_statements(mod_list, file, case_dir):
         ofile.writelines(lines)
 
 
-def clean_main(type_list, files, case_dir):
+def find_parent_subroutine_call(subroutines):
     """
-    This function will clean the use lists of main, initializeParameters,
+    Function that for a list of Subroutines, finds a call signature to
+    insert into main.F90
+
+    Returns only one result, so if a function is used in several places,
+    manual modification may be required
+    """
+
+    search_file = ELM_SRC
+    calls = {}
+
+    for sub in subroutines.values():
+        name = sub.name
+        cmd = f'grep -rin -E "^[[:space:]]*(call[[:space:]]* {name})\\b" {search_file} | head -1'
+        output = sp.getoutput(cmd)
+        output = output.split(":")
+        filename = output[0]
+        call_ln = int(output[1]) - 1
+
+        ifile = open(filename, "r")
+        lines = ifile.readlines()
+        ifile.close()
+
+        ct = call_ln
+        call_string, ct = line_unwrapper(lines, ct)
+        args = getArguments(call_string)
+
+        delta_ln = ct - call_ln
+
+        # Seach backwards from subroutine call to get the calling subroutine :
+        subname = None
+        for ln in range(call_ln, -1, -1):
+            line = lines[ln]
+            match_sub = re.search(r"^\s*(subroutine)\s+", line)
+            if match_sub:
+                full_line, _ = line_unwrapper(lines, ln)
+                split_str = match_sub.group().strip()
+                subname = full_line.split(split_str)[1].split("(")[0].strip()
+                print("Found Subroutine:\n", subname)
+                break
+
+        if not subname:
+            print(f"Error::Couldn't find calling subroutine for {sub.name}")
+            sys.exit(1)
+        fn, startl, endl = find_file_for_subroutine(name=subname, fn=filename)
+        parent_sub = Subroutine(subname, fn, [""], start=startl, end=endl)
+
+        args_as_vars = {}
+        args_not_found = []
+        for arg in args:
+            if arg in parent_sub.Arguments:
+                args_as_vars[arg] = parent_sub.Arguments[arg]
+            elif arg in parent_sub.LocalVariables["arrays"]:
+                args_as_vars[arg] = parent_sub.LocalVariables["arrays"][arg]
+            elif arg in parent_sub.LocalVariables["scalars"]:
+                args_as_vars[arg] = parent_sub.LocalVariables["scalars"][arg]
+            else:
+                print(
+                    _bc.FAIL
+                    + _bc.BOLD
+                    + f"Couldn't find {arg} in {parent_sub.name} Arguments or Local Variables"
+                )
+                print("Could be global parameter?" + _bc.ENDC)
+                args_not_found.append(arg)
+        print("Args_as_vars:", args_as_vars)
+        print("Args not found:", args_not_found)
+    sys.exit(0)
+
+    return calls
+
+
+def prepare_main(subroutines):
+    """
+    Function to insert USE dependencies into main.F90 and subroutine calls for the FUT subs
+    """
+    regex_token = re.compile(r"^(!#USE_START)")
+    iofile = open(f"{spel_mods_dir}main.F90", "r")
+    lines = iofile.readlines()
+    iofile.close()
+
+    use_line = 0
+    found_token = False
+    ln = 0
+    while not found_token:
+        line = lines[ln]
+        m_token = regex_token.search(line)
+        if m_token:
+            use_line = ln
+            found_token = True
+        else:
+            ln += 1
+
+    if use_line == 0:
+        print("Error: could find '!#USE_START' in main.F90")
+        sys.exit(1)
+    modules_to_add = []
+    for s in subroutines.values():
+        _, mod = get_module_name_from_file(s.filepath)
+        modules_to_add.append(f"use {mod}\n")
+
+    for use in modules_to_add:
+        lines.insert(use_line + 1, use)
+
+    print("lines:\n", lines[use_line : use_line + len(modules_to_add) + 1])
+
+    call_signatures = find_parent_subroutine_call(subroutines)
+
+    return None
+
+
+def prepare_unit_test_files(
+    inst_list, type_dict, files, case_dir, global_vars, subroutines
+):
+    """
+    This function will prepare the use headers of main, initializeParameters,
     and readConstants.  It will also clean the variable initializations and
     declarations in main and elm_instMod
     """
+    prepare_main(subroutines)
     clean_use_statements(mod_list=files, file="readConstants", case_dir=case_dir)
     clean_use_statements(mod_list=files, file="initializeParameters", case_dir=case_dir)
-    clean_use_statements(mod_list=files, file="main", case_dir=case_dir)
     clean_use_statements(mod_list=files, file="elm_initializeMod", case_dir=case_dir)
     clean_use_statements(mod_list=files, file="update_accMod", case_dir=case_dir)
 
@@ -237,7 +360,7 @@ def clean_main(type_list, files, case_dir):
                 l = l.strip()
                 temp = l.split()[1].split("%")
                 varname = temp[0].lower()
-                if varname not in type_list:
+                if varname not in inst_list:
                     lines, ct = comment_line(lines=lines, ct=ct)
         ct += 1
     # write adjusted main to file in case dir

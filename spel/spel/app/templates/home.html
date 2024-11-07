@@ -24,8 +24,29 @@
                 <a href="{% url 'view_table' table_name='instances' %}">
                     <button class="styled-button">Type Instances</button>
                 </a>
+                <a href="{% url 'view_table' table_name='modules' %}">
+                    <button class="styled-button">Modules</button>
+                </a>
+                <a href="{% url 'view_table' table_name='subroutines' %}">
+                    <button class="styled-button">Subroutines</button>
+                </a>
+                <a href="{% url 'view_table' table_name='subroutineargs' %}">
+                    <button class="styled-button">Subroutine Arguments</button>
+                </a>
             </div>
         </div>
+
+         <!-- Button to load the subroutine_calltree content -->
+    <button hx-post="{% url 'subcall' %}" 
+              hx-vals='{"Variable": "bounds%begc" }' 
+            hx-target="#subroutine-container" 
+            hx-swap="innerHTML">
+        Load Subroutine Calltree
+    </button>
+
+    <div id="subroutine-container">
+            {% include "partials/subcall_partial.html"  with Variable="bounds%begc" %}
+    </div>
 
 </body>
 </html>

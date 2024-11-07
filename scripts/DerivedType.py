@@ -4,7 +4,7 @@ import sys
 
 import write_routines as wr
 from fortran_modules import get_module_name_from_file
-from mod_config import ELM_SRC
+from mod_config import ELM_SRC, _bc, _no_colors
 from utilityFunctions import Variable, line_unwrapper, parse_line_for_variables
 
 ## arrow and tab are strings for writing files or printing readable output
@@ -104,7 +104,7 @@ class DerivedType(object):
     def __init__(
         self,
         type_name,
-        vmod,  # name of type and module name
+        vmod,  # module name
         fpath=None,  # path to mod file
         components=None,  # list of type and component name
         instances=[],  # list of global variables with this type
@@ -134,6 +134,7 @@ class DerivedType(object):
         # Flag to see if Derived Type has been analyzed
         self.analyzed = False
         self.active = False
+        self.init_sub = None
 
     def __repr__(self):
         return f"DerivedType({self.type_name})"
@@ -165,13 +166,26 @@ class DerivedType(object):
 
         added_member_to_type = {var.name: False for var in member_arr_or_ptr.values()}
         if member_arr_or_ptr:
+            init_sub = None
+            subname = None
             ln = type_end
             while ln < len(lines):
                 full_line, ln = line_unwrapper(lines, ln)
                 full_line = full_line.strip().lower()
+                match_sub = re.search(
+                    r"(^\s*subroutine|function)\s+", full_line, re.IGNORECASE
+                )
+                if match_sub:
+                    split_str = match_sub.group().strip()
+                    subname = full_line.split(split_str)[1].split("(")[0]
+
                 match_alloc = regex_alloc.findall(full_line)
                 match_ptrinit = regex_ptr_init.search(full_line)
                 if match_ptrinit:
+                    if not subname:
+                        print(self.type_name)
+                        print(match_ptrinit)
+                    init_sub = subname
                     member_name = match_ptrinit.groups()[0].replace("%", "")
                     target = match_ptrinit.groups()[2].strip()
                     if added_member_to_type[member_name]:
@@ -197,6 +211,7 @@ class DerivedType(object):
                         added_member_to_type[member_name] = True
 
                 elif match_alloc:
+                    init_sub = subname
                     members_matched = regex_member_name.findall(full_line)
                     members_matched = list(set(members_matched))
                     if debug:
@@ -224,6 +239,15 @@ class DerivedType(object):
                         self.components[var_inst.name] = member
                         added_member_to_type[varname] = True
                 ln += 1
+            if not init_sub:
+                print(
+                    _bc.WARNING
+                    + f"No initialization routine found for {self.type_name}"
+                    + _bc.ENDC
+                )
+                print(member_arr_or_ptr)
+            else:
+                self.init_sub = init_sub
 
         # member scalars:
         for scalar in member_scalars.values():
@@ -237,14 +261,21 @@ class DerivedType(object):
 
         return None
 
-    def print_derived_type(self, ofile=sys.stdout, long=False):
+    def print_derived_type(self, ofile=sys.stdout, long=False) -> None:
         """
         Function to print info on the user derived type
         """
-        ofile.write("Derived Type:" + self.type_name + "\n")
-        ofile.write("from Mod:" + self.filepath + "\n")
+        if ofile == sys.stdout:
+            hl = _bc
+        else:
+            hl = _no_colors
+
+        ofile.write(hl.HEADER + "Derived Type:" + self.type_name + "\n" + hl.ENDC)
+        base_fn = "/".join(self.filepath.split("/")[-2:])
+        ofile.write(hl.HEADER + "from Mod: " + base_fn + "\n" + hl.ENDC)
         for v in self.instances:
-            ofile.write(f"{v.type} {v.name} {v.declaration}\n")
+            ofile.write(hl.OKBLUE + f"{v.type} {v.name} {v.declaration}\n" + hl.ENDC)
+        ofile.write(hl.WARNING + f"Initialized in {self.init_sub} \n" + hl.ENDC)
         if long:
             ofile.write("w/ components:\n")
             for c in self.components.values():
@@ -260,6 +291,7 @@ class DerivedType(object):
                     targets = "|".join(var.pointer)
                     str_ = f"  {status} {var.type} {var.name} => {var.pointer}"
                 ofile.write(str_ + "\n")
+        return None
 
     def create_write_read_functions(self, rw, ofile, gpu=False):
         #

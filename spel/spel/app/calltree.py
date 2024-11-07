@@ -180,9 +180,11 @@ def subroutine_calltree_helper():
 
 def get_subroutine_calltree(instance, member):
     res = []
-    subs = subroutine_active_table(instance, member)
-    all = subroutine_active_table_ALL(instance, member)
-    print(subs)
+    if instance != "" and member != "":
+        subs = subroutine_active_table(instance, member)
+        all = subroutine_active_table_ALL(instance, member)
+    else:
+        all = []
     for sub_name in subs:
         if sub_name == "Null":
             continue

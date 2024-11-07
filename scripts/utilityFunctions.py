@@ -290,7 +290,7 @@ def find_end_subroutine(fn, startline):
     return endline
 
 
-def find_file_for_subroutine(name, fn="", ignore_interface=False):
+def find_file_for_subroutine(name, fn="", ignore_interface=False,verbose=False):
     """
     finds file, start and end line numbers for subroutines
     find file and start of interface block for interfaces
@@ -310,6 +310,8 @@ def find_file_for_subroutine(name, fn="", ignore_interface=False):
         cmd_end = ""
 
     output = sp.getoutput(cmd)
+    if verbose:
+        print(f"{func_name}::output {output}")
     if not fn:
         file = output.split(":")[0]
         # Need to separate the file name and path

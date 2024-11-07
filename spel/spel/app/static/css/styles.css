@@ -125,3 +125,25 @@ text-align: left;
     background-color: #ddd; /* Change background on hover */
 }
 
+
+.split-container {
+    display: flex;
+    width: 100%; /* Or specify the width as needed */
+    height: 400px; /* Adjust height as necessary */
+    border: 1px solid #ccc; /* Optional border for visualization */
+}
+
+.left-panel, .right-panel {
+    flex: 1;
+    padding: 10px;
+    overflow-y: auto;
+}
+
+.left-panel {
+    background-color: #f0f0f0;
+    border-right: 2px solid #ddd; /* Divider between left and right */
+}
+
+.right-panel {
+    background-color: #e0e0e0;
+}

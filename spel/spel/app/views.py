@@ -7,6 +7,7 @@ from .calltree import get_module_calltree, get_subroutine_calltree
 from .models import (
     ModuleDependency,
     Modules,
+    SubroutineArgs,
     SubroutineCalltree,
     Subroutines,
     TypeDefinitions,
@@ -62,6 +63,7 @@ VIEWS_TABLE_DICT = {
         "fields": {
             "Id": "subroutine_id",
             "Module": "module.module_name",
+            "Subroutine": "subroutine_name",
         },
     },
     "modules": {
@@ -114,6 +116,17 @@ VIEWS_TABLE_DICT = {
             "Instance Name": "instance_name",
         },
     },
+    "subroutineargs": {
+        "name": SubroutineArgs,
+        "html": "subroutineargs.html",
+        "fields": {
+            "Id": "arg_id",
+            "Subroutine": "subroutine.subroutine_name",
+            "Arg Type": "arg_type",
+            "Arg Name": "arg_name",
+            "Dim": "dim",
+        },
+    },
 }
 
 
@@ -151,6 +164,19 @@ def modules_calltree(request):
         return render(request, "modules_calltree.html", {})
 
     return render(request, "modules_calltree.html", {"tree": tree})
+
+
+def subroutine_calltree_test(request):
+
+    if request.method == "POST":
+        variable = request.POST.get("Variable")
+        instance, member = variable.split("%")
+    else:
+        instance = ""
+        member = ""
+    tree, all = get_subroutine_calltree(instance, member)
+    print(f"CallTree with {instance}%{member}\n{tree}")
+    return render(request, "partials/subcall_partial.html", {"tree": tree, "all": all})
 
 
 def subroutine_calltree(request):

@@ -1,0 +1,8 @@
+{% for obj in all %}
+<tr>
+  {% for o in obj %}
+
+  <td class="{% if forloop.counter == 1  %}left-align{% endif %}">{{ o }}</td>
+  {% endfor %}
+</tr>
+{% endfor %}

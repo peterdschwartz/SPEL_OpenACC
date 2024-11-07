@@ -123,8 +123,6 @@ class Subroutine(object):
             getLocalVariables(self, verbose=verbose)
 
         if self.Arguments:
-            if(self.name == "checkdates"):
-                print("self.Arguments:",self.Arguments)
             sort_args = {}
             for arg in self.dummy_args_list:
                 sort_args[arg] = self.Arguments[arg]
@@ -145,6 +143,9 @@ class Subroutine(object):
         self.DoLoops = []
         self.analyzed_child_subroutines = False
         self.active_global_vars = {} # non-derived type variables used in the subroutine
+
+        # Flag that denotes subroutines that were user requested 
+        self.unit_test_function = False
 
     def __repr__(self) -> str:
         return f"Subroutine({self.name})"
@@ -782,7 +783,7 @@ class Subroutine(object):
 
         return None
 
-    def analyze_calltree(self, tree, casename):
+    def analyze_calltree(self, tree, casename=None):
         """
         returns unraveled calltree
         """
@@ -793,13 +794,14 @@ class Subroutine(object):
                 branch=el, tree_to_write=tree_to_write
             )
 
-        ofile = open(f"{casename}/{self.name}CallTree.txt", "w")
+        if(casename):
+            ofile = open(f"{casename}/{self.name}CallTree.txt", "w")
         for branch in tree_to_write:
             level = branch[1]
             sub = branch[0]
             print(level * "|---->" + sub)
-            ofile.write(level * "|---->" + sub + "\n")
-        ofile.close()
+            if(casename): ofile.write(level * "|---->" + sub + "\n")
+        if casename : ofile.close()
 
     def generate_update_directives(self, elmvars_dict, verify_vars):
         """
