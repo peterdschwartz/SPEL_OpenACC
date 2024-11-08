@@ -271,9 +271,9 @@ class Subroutine(object):
                 global_vars[argname] = dtype_dict[arg.type]
 
         for typename, dtype in dtype_dict.items():
-            for inst in dtype.instances:
-                if inst.name not in global_vars:
-                    global_vars[inst.name] = dtype
+            for inst in dtype.instances.keys():
+                if inst not in global_vars:
+                    global_vars[inst] = dtype
 
         # Loop through subroutine and find any child subroutines
         if self.cpp_startline:
@@ -684,9 +684,9 @@ class Subroutine(object):
                 global_vars[argname] = dtype_dict[arg.type]
 
         for typename, dtype in dtype_dict.items():
-            for inst in dtype.instances:
-                if inst.name not in global_vars:
-                    global_vars[inst.name] = dtype
+            for inst in dtype.instances.keys():
+                if inst not in global_vars:
+                    global_vars[inst] = dtype
 
         # Determine read/write status of variables
         self._analyze_variables(

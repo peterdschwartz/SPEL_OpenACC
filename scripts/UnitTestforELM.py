@@ -87,6 +87,7 @@ def main() -> None:
         if args.keep:
             preprocess = False
         else:
+            os.system(f"rm -rf {case_dir}/*")
             os.system("rm *.pkl")
             preprocess = True
 
@@ -177,7 +178,7 @@ def main() -> None:
             print(
                 _bc.WARNING + f"Warning: no instances found for {type_name}" + _bc.ENDC
             )
-        for instance in dtype.instances:
+        for instance in dtype.instances.values():
             instance_to_user_type[instance.name] = type_name
 
     # 'main_sub_dict' contains Subroutine instances for all subroutines
@@ -279,12 +280,13 @@ def main() -> None:
     # Will need to read in physical properties type
     # so set all components to True
     for type_name, dtype in type_dict.items():
-        for var in dtype.instances:
+        for var in dtype.instances.values():
             if var.name in ["veg_pp", "lun_pp", "col_pp", "grc_pp", "top_pp"]:
                 dtype.active = True
                 var.active = True
                 for c in dtype.components.values():
                     c["active"] = True
+                    c["var"].active = True
 
     for el in write_types:
         if el not in read_types:
@@ -313,7 +315,7 @@ def main() -> None:
 
     elmvars_dict = {}
     for dtype in type_dict.values():
-        for inst in dtype.instances:
+        for inst in dtype.instances.values():
             elmvars_dict[inst.name] = inst
 
     # create list of variables that should be used for verification.
@@ -384,6 +386,7 @@ def main() -> None:
         case_dir=case_dir,
         global_vars=active_global_vars,
         subroutines=subroutines,
+        instance_to_type=instance_to_user_type,
     )
     # elm_instMod.F90
     wr.write_elminstMod(type_dict, case_dir)
@@ -446,7 +449,7 @@ def set_active_variables(type_dict, type_lookup, variable_list, dtype_info_list)
             continue
         type_name = type_lookup[var]
         # Set which instances of the derived type are active
-        for inst in type_dict[type_name].instances:
+        for inst in type_dict[type_name].instances.values():
             if inst.name == var and not inst.active:
                 inst.active = True
 

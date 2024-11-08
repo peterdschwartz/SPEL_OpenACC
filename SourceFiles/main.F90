@@ -4,17 +4,16 @@ use shr_kind_mod, only: r8 => shr_kind_r8
 use update_accMod
 use elm_varctl
 use filterMod
-use decompMod, only: get_clump_bounds_gpu, gpu_clumps, gpu_procinfo
-use decompMod, only: get_proc_bounds, get_clump_bounds, procinfo, clumps, init_proc_clump_info
+!!use decompMod, only: get_clump_bounds_gpu, gpu_clumps, gpu_procinfo, init_proc_clump_info
+use decompMod, only: get_proc_bounds, get_clump_bounds, procinfo, clumps
 use verificationMod
+use decompMod, only: bounds_type
 #ifdef _CUDA
 use cudafor
 #endif
 use timeInfoMod
-use elm_instMod
 use elm_initializeMod
 !#USE_START
-!#USE_END
 
 !=======================================!
 implicit none
@@ -33,6 +32,9 @@ integer :: begg, endg
 real(r8) :: declin, declinp1
 real :: startt, stopt
 real(r8), allocatable :: icemask_dummy_arr(:)
+!#VAR_DECL
+
+
 !========================== Initialize/Allocate variables =======================!
 !First, make sure the right number of inputs have been provided
 IF (COMMAND_ARGUMENT_COUNT() == 1) THEN
@@ -55,6 +57,8 @@ step_count = 0
 nclumps = procinfo%nclumps
 print *, "number of clumps", nclumps
 print *, "step:", step_count
+
+#ifdef _OPENACC
 if (step_count == 0) then
    print *, "transferring data to GPU"
    call init_proc_clump_info()
@@ -87,7 +91,7 @@ if (step_count == 0) then
    print *, "Free1:", free1/1.E+9
 #endif
 end if
-
+#endif
 !$acc enter data copyin( doalb, declinp1, declin )
 !$acc update device(dtime_mod, dayspyr_mod, &
 !$acc    year_curr, mon_curr, day_curr, secs_curr, nstep_mod, thiscalday_mod &
@@ -105,10 +109,11 @@ declinp1 = -0.4023686267583503
 #define gpuflag 0
 #endif
 
-!#FUNC
+
 !$acc parallel loop independent gang vector default(present) private(bounds_clump)
 do nc = 1, nclumps
-   call get_clump_bounds_gpu(nc, bounds_clump)
+   call get_clump_bounds(nc, bounds_clump)
+!#CALL_SUB
 
 end do
 

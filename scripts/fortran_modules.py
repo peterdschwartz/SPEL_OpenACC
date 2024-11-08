@@ -42,7 +42,7 @@ def get_module_name_from_file(fpath) -> tuple[int, str]:
     return int(linenumber), module_name.lower()
 
 
-def get_filename_from_module(module_name, verbose=False) -> str | None:
+def get_filename_from_module(module_name, verbose=False):
     """
     Given a module name, returns the file path of the module
     """

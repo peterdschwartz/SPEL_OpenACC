@@ -406,9 +406,9 @@ def get_used_mods(ifile, mods, singlefile, mod_dict, verbose=False):
     list_type_names = [key for key in user_defined_types.keys()]
     for gvar in fort_mod.global_vars:
         if gvar.type in list_type_names:
-            if gvar not in user_defined_types[gvar.type].instances:
+            if gvar.name not in user_defined_types[gvar.type].instances:
                 print(f"Adding {gvar.name} to {gvar.type} instances")
-                user_defined_types[gvar.type].instances.append(gvar)
+                user_defined_types[gvar.type].instances[gvar.name] = gvar
 
     fort_mod.defined_types = user_defined_types
     mod_dict[fort_mod.name] = fort_mod

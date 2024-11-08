@@ -12,7 +12,7 @@ contains
       use readMod, only: read_vars, read_weights
       use elm_varsur, only: wt_lunit, urban_valid, wt_glc_mec
       use duplicateMod, only: duplicate_clumps, duplicate_weights
-      use readConstants, only: read_constants
+      use ReadConstantsMod, only: readConstants
       use initializeParameters
       use elm_varctl
       use filterMod
@@ -30,10 +30,10 @@ contains
       use elm_instMod
       use domainMod
       use landunit_varcon, only: max_lunit
+      use UnitTestAllocatorMod
 
       !#USE_START
       use elm_varorb
-      use lakeCon, only: LakeConInit
       use GridcellDataType
       use TopounitDataType
       use LandunitDataType
@@ -73,23 +73,21 @@ contains
 
       print *, "initializing parameters"
       call elm_varpar_init()
-      call read_constants(in_file_constants, mode=0)
+      call ReadConstants()
 
       call elm_varcon_init()
       call set_namelist_vars()
       call pftconrd()
 
-      call LakeConInit()
+      !#LAKECON
 
       call init_params(bounds_proc)
-      print *, "read_constants mode = 1"
-      call read_constants(in_file_constants, mode=1)
 
       print *, "nlevurb        ", nlevurb
       print *, "nlevlak        ", nlevlak
       print *, "nlevdecomp     ", nlevdecomp
       print *, "nlevdecomp_full", nlevdecomp_full
-      allocate (amask(ni*nj)); amask(:) = 1
+      allocate(amask(ni*nj)); amask(:) = 1
       print *, "calling decompInit_lnd"
       call decompInit_lnd(ni, nj, amask)
 
@@ -97,10 +95,11 @@ contains
       !NOTE: wt_lunit, urban_valid need to be updated to support
       !  multiple topounits if desired
       call get_proc_bounds(begg=begg, endg=endg)
-      allocate (wt_lunit(begg:endg, maxtunits, max_lunit)); wt_lunit(:, 1, :) = 0d0
+      allocate(wt_lunit(begg:endg, maxtunits, max_lunit)); wt_lunit(:, 1, :) = 0d0
+      allocate(urban_valid(begg:endg, maxtunits)); urban_valid(:, 1) = .true.
 
-      allocate (urban_valid(begg:endg, maxtunits)); urban_valid(:, 1) = .true.
-      allocate (wt_glc_mec(1, maxtunits, 1)); wt_glc_mec = reshape((/0D0/), shape(wt_glc_mec)) !reshape((/1.6127168011336070D-312/),shape(wt_glc_mec))
+      !reshape((/1.6127168011336070D-312/),shape(wt_glc_mec))
+      allocate(wt_glc_mec(1, maxtunits, 1)); wt_glc_mec = reshape((/0D0/), shape(wt_glc_mec)) 
       call read_weights(in_file_vars, numg=number_of_sites)
     !! Duplicate weights
       if (clump_input > 1) then
@@ -109,7 +108,6 @@ contains
          call duplicate_weights(number_of_sites, ni)
       end if
 
-      !allocate (wt_nat_patch (begg:endg, natpft_lb:natpft_ub ))
       print *, "calling decompinit_clumps"
       call decompInit_clumps()
 
@@ -188,111 +186,8 @@ contains
       end if
 
       call init_decomp_cascade_constants()
-      print *, "VAR_INIT_START"
 
       !#VAR_INIT_START
-      call veg_vp%Init()
-      call cnstate_vars%Init(bounds_proc)
-      call soilstate_vars%Init(bounds_proc)
-
-      call urbanparams_vars%Init(bounds_proc)
-      call lun_es%Init(begl, endl)
-      call grc_es%Init(begg, endg)
-      call col_es%Init(begc, endc)
-      call lun_ef%Init(begl, endl)
-
-      call veg_ef%Init(begp, endp)
-      call veg_es%Init(begp, endp)
-      call veg_wf%Init(begp, endp)
-      call veg_ws%Init(begp, endp)
-      call col_wf%Init(begc, endc)
-      call col_ef%Init(begc, endc)
-      call grc_ef%Init(begg, endg)
-
-      call lun_ws%Init(begl, endl)
-      allocate (dummy_2d_arr(begc:endc, 1:nlevgrnd))
-
-      call col_ws%Init(bounds_proc%begc_all, bounds_proc%endc_all, &
-                       h2osno_col(begc:endc), snow_depth_col(begc:endc), &
-                       dummy_2d_arr(begc:endc, 1:nlevgrnd))
-
-      call top_as%Init(begt, endt)
-      call top_af%Init(begt, endt)
-
-      if (use_cn .or. use_fates) then
-
-         call grc_cs%Init(begg, endg, carbon_type='c12')
-         call col_cs%Init(begc, endc, carbon_type='c12', ratio=1._r8)
-         call veg_cs%Init(begp, endp, carbon_type='c12', ratio=1._r8)
-
-         ! Note - always initialize the memory for the c13_carbonflux_vars and
-         ! c14_carbonflux_vars data structure so that they can be used in
-         ! associate statements (nag compiler complains otherwise)
-
-         call grc_cf%Init(begg, endg, carbon_type='c12')
-         call col_cf%Init(begc, endc, carbon_type='c12')
-         call veg_cf%Init(begp, endp, carbon_type='c12')
-
-         if (use_c13) then
-            call c13_grc_cf%Init(begg, endg, carbon_type='c13')
-            call c13_col_cf%Init(begc, endc, carbon_type='c13')
-            call c13_veg_cf%Init(begp, endp, carbon_type='c13')
-            call c13_grc_cs%Init(begg, endg, carbon_type='c13')
-            call c13_col_cs%Init(begc, endc, carbon_type='c13', ratio=c13ratio, &
-                                 c12_carbonstate_vars=col_cs)
-            call c13_veg_cs%Init(begp, endp, carbon_type='c13', ratio=c13ratio)
-         end if
-
-         if (use_c14) then
-            call c14_grc_cf%Init(begg, endg, carbon_type='c14')
-            call c14_col_cf%Init(begc, endc, carbon_type='c14')
-            call c14_veg_cf%Init(begp, endp, carbon_type='c14')
-            call c14_grc_cs%Init(begg, endg, carbon_type='c14')
-            call c14_col_cs%Init(begc, endc, carbon_type='c14', ratio=c14ratio, &
-                                 c12_carbonstate_vars=col_cs)
-            call c14_veg_cs%Init(begp, endp, carbon_type='c14', ratio=c14ratio)
-         end if
-
-      end if
-      if (use_cn) then
-         call grc_ns%Init(begg, endg)
-         call col_ns%Init(begc, endc, col_cs)
-         call veg_ns%Init(begp, endp, veg_cs)
-
-         call grc_nf%Init(begg, endg)
-         call col_nf%Init(begc, endc)
-         call veg_nf%Init(begp, endp)
-
-         call grc_ps%Init(begg, endg)
-         call col_ps%Init(begc, endc, col_cs)
-         call veg_ps%Init(begp, endp, veg_cs)
-
-         call grc_pf%Init(begg, endg)
-         call col_pf%Init(begc, endc)
-         call veg_pf%Init(begp, endp)
-         call crop_vars%Init(bounds_proc)
-
-      end if
-
-      call grc_ws%Init(begg, endg)
-      call grc_wf%Init(begg, endg, bounds_proc)
-      call drydepvel_vars%Init(bounds_proc)
-      call frictionvel_vars%Init(bounds_proc)
-      call lakestate_vars%Init(bounds_proc)
-      call atm2lnd_vars%Init(bounds_proc)
-      call lnd2atm_vars%Init(bounds_proc)
-      call glc2lnd_vars%Init(bounds_proc)
-      call photosyns_vars%Init(bounds_proc)
-      call canopystate_vars%Init(bounds_proc)
-      call dust_vars%Init(bounds_proc)
-      call aerosol_vars%Init(bounds_proc)
-      call ch4_vars%Init(bounds_proc, cellorg_col=dummy_2d_arr(begc:endc, 1:nlevgrnd))
-      call solarabs_vars%Init(bounds_proc)
-      call surfalb_vars%Init(bounds_proc)
-      call surfrad_vars%Init(bounds_proc)
-      call energyflux_vars%init(bounds_proc, col_es%t_grnd(begc:endc))
-      call soilhydrology_vars%Init(bounds_proc)
-      !#VAR_INIT_STOP
 
       if (use_century_decomp) then
 #ifdef DECOMPCASCADEBGCMOD
@@ -332,7 +227,7 @@ contains
          call get_clump_bounds(nc, bounds_clump)
          call setFilters(bounds_clump, icemask_grc)
       end do
-      call createProcessorFilter(nclumps, bounds_proc, proc_filter, icemask_grc)
+      !! call createProcessorFilter(nclumps, bounds_proc, proc_filter, icemask_grc)
 #ifdef DYNSUBGRID
       print *, "dynSubgrid _init:"
       call init_subgrid_weights_mod(bounds_proc)

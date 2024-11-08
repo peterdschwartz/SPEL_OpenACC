@@ -38,10 +38,17 @@ def get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=Fa
             m = data_type.search(full_line)
             if m:
                 datatype = m.group()
+                match_pointer = re.search(r"\b(pointer)\b", full_line)
+                if match_pointer:
+                    pot_ptr = True
+                else:
+                    pot_ptr = False
                 lprime = re.sub(r"(?<={})(.+)(?=::)".format(datatype), "", full_line)
 
                 lprime = re.sub(r"(\s*=>\s*null\(\))", "", lprime)
-                variable_list = parse_line_for_variables(ifile=ifile, l=lprime, ln=ct)
+                variable_list = parse_line_for_variables(
+                    ifile=ifile, l=lprime, ln=ct, ptr=pot_ptr
+                )
                 if verbose:
                     print(f"variable list : {variable_list}")
                 member_list.extend(variable_list)
@@ -68,7 +75,7 @@ def get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=Fa
     #
     # Each element in output should have the format:
     # <filepath> : <ln> : type(<type_name>) :: <instance_name>
-    instance_list = []
+    instance_list = {}
     if output:
         output = output.split("\n")
         for el in output:
@@ -90,12 +97,12 @@ def get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=Fa
                 dim=dim,
                 declaration=module_name,
             )
-            if inst_var not in instance_list:
-                instance_list.append(inst_var)
+            if inst_var.name not in instance_list:
+                instance_list[inst_var.name] = inst_var
                 if verbose:
                     print(f"Adding instance {type_name} {inst_name},{dim}")
 
-    user_derived_type.instances = instance_list[:]
+    user_derived_type.instances = instance_list.copy()
 
     return user_derived_type, ct
 
@@ -107,7 +114,7 @@ class DerivedType(object):
         vmod,  # module name
         fpath=None,  # path to mod file
         components=None,  # list of type and component name
-        instances=[],  # list of global variables with this type
+        instances={},
     ):
         self.type_name = type_name
         if fpath:
@@ -130,7 +137,7 @@ class DerivedType(object):
 
         self.declaration = vmod
         self.components = {}
-        self.instances: list[Variable] = []
+        self.instances: dict[str, Variable] = {}
         # Flag to see if Derived Type has been analyzed
         self.analyzed = False
         self.active = False
@@ -273,7 +280,7 @@ class DerivedType(object):
         ofile.write(hl.HEADER + "Derived Type:" + self.type_name + "\n" + hl.ENDC)
         base_fn = "/".join(self.filepath.split("/")[-2:])
         ofile.write(hl.HEADER + "from Mod: " + base_fn + "\n" + hl.ENDC)
-        for v in self.instances:
+        for v in self.instances.values():
             ofile.write(hl.OKBLUE + f"{v.type} {v.name} {v.declaration}\n" + hl.ENDC)
         ofile.write(hl.WARNING + f"Initialized in {self.init_sub} \n" + hl.ENDC)
         if long:
@@ -294,14 +301,14 @@ class DerivedType(object):
         return None
 
     def create_write_read_functions(self, rw, ofile, gpu=False):
-        #
-        # This function will write two .F90 functions that write read and write statements for all
-        # components of the derived type
-        # rw is a variable that holds either read or write mode
-        #
+        """
+        This function will write two .F90 functions that write read and write statements for all
+        components of the derived type
+        rw is a variable that holds either read or write mode
+        """
 
         fates_list = ["veg_pp%is_veg", "veg_pp%is_bareground", "veg_pp%wt_ed"]
-        for var in self.instances:
+        for var in self.instances.values():
             if not var.active:
                 continue
             if rw.lower() == "write" or rw.lower() == "w":
@@ -355,10 +362,8 @@ class DerivedType(object):
                 )
                 ofile.write(tab + "\n")
 
-                # Any component of the derived type accessed by the Unit Test
-                # should have been toggled active at this point.
-                # Go through the instance of this derived type and write I/O
-                # for any active components.
+                # Any component of the derived type accessed by the Unit Test should have been toggled active at this point.
+                # Go through the instance of this derived type and write I/O for any active components.
                 for component in self.components.values():
                     active = component["active"]
                     field_var = component["var"]
@@ -388,7 +393,7 @@ class DerivedType(object):
         chunksize = 3
         tabs = " " * 3
         depth = 1
-        for inst in self.instances:
+        for inst in self.instances.values():
             inst_name = inst.name
             ofile.write(tabs * depth + f"!$acc enter data copyin({inst_name})\n")
             if inst.dim == 1:
