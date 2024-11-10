@@ -1,7 +1,7 @@
 /* styles.css */
-table,
-th,
-td {
+.schema-table table,
+.schema-table th,
+.schema-table td {
     border: 1px solid black;
     border-collapse: collapse;
     text-align: center;
@@ -27,7 +27,7 @@ tr:nth-child(even) {
 
 .sort-button {
     color : black;
-    background-color: #a8a
+    background-color: #a8a;
     font-size: 1rem; 
     transition: background-color 0.3s;
 }
@@ -146,4 +146,12 @@ text-align: left;
 
 .right-panel {
     background-color: #e0e0e0;
+}
+
+.right-panel table th,
+.right-panel table td {
+    padding : 8px !important; 
+}
+.right-panel table {
+    width : 100%;
 }

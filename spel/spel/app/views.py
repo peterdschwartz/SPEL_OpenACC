@@ -166,17 +166,23 @@ def modules_calltree(request):
     return render(request, "modules_calltree.html", {"tree": tree})
 
 
-def subroutine_calltree_test(request):
-
+def subcall(request):
     if request.method == "POST":
         variable = request.POST.get("Variable")
         instance, member = variable.split("%")
     else:
-        instance = ""
-        member = ""
+        instance = "bounds"
+        member = "begc"
     tree, all = get_subroutine_calltree(instance, member)
     print(f"CallTree with {instance}%{member}\n{tree}")
-    return render(request, "partials/subcall_partial.html", {"tree": tree, "all": all})
+
+    context = {
+        "tree": tree,
+        "all": all,
+    }
+    if request.method == "POST":
+        return render(request, "partials/table_subcall.html", context)
+    return render(request, "partials/subcall_partial.html", context)
 
 
 def subroutine_calltree(request):

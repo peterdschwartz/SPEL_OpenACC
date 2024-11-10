@@ -1,13 +1,5 @@
-{% load static %}
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>E3SM Land Model Database</title>
-    <link rel="stylesheet" href="{% static 'css/styles.css' %}">
-</head>
-<body>
+{% extends "base.html" %}
+{% block body %}
 
         <div class="button-container">
             <h2>Tables in the database:</h2>
@@ -37,16 +29,12 @@
         </div>
 
          <!-- Button to load the subroutine_calltree content -->
-    <button hx-post="{% url 'subcall' %}" 
-              hx-vals='{"Variable": "bounds%begc" }' 
-            hx-target="#subroutine-container" 
-            hx-swap="innerHTML">
-        Load Subroutine Calltree
-    </button>
-
-    <div id="subroutine-container">
-            {% include "partials/subcall_partial.html"  with Variable="bounds%begc" %}
+    <div id="subroutine-container"
+         hx-get="{% url 'subcall' %}"
+         hx-trigger="load"
+         hx-target="this"
+         hx-swap="innerHTML">
+            Loading...
     </div>
 
-</body>
-</html>
+{% endblock %}
