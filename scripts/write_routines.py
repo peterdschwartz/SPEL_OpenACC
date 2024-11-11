@@ -12,6 +12,20 @@ from utilityFunctions import (comment_line, find_file_for_subroutine,
                               getArguments, line_unwrapper)
 
 TAB_WIDTH = 2
+indent = 1
+
+
+def set_indent(mode):
+    global indent
+    global TAB_WIDTH
+    match mode:
+        case "shift":
+            indent += 1
+        case "unshift":
+            indent -= 1
+        case "reset":
+            indent = 1
+    return " " * TAB_WIDTH * indent
 
 
 def get_delta_from_dim(dim, delta):
@@ -364,6 +378,7 @@ def prepare_main(subroutines, type_dict, instance_to_type, casedir):
 
     return None
 
+
 def prepare_unit_test_files(
     inst_list,
     type_dict,
@@ -379,23 +394,28 @@ def prepare_unit_test_files(
     declarations in main and elm_instMod
     """
     prepare_main(subroutines, type_dict, instance_to_type, case_dir)
-    create_constants_io(mode='r',global_vars=global_vars,casedir=case_dir)
-    create_constants_io(mode='w',global_vars=global_vars,casedir=case_dir)
+    create_constants_io(mode="r", global_vars=global_vars, casedir=case_dir)
+    create_constants_io(mode="w", global_vars=global_vars, casedir=case_dir)
     clean_use_statements(mod_list=files, file="initializeParameters", case_dir=case_dir)
     clean_use_statements(mod_list=files, file="elm_initializeMod", case_dir=case_dir)
     clean_use_statements(mod_list=files, file="update_accMod", case_dir=case_dir)
-    allocations_to_add = create_type_allocators(type_dict,case_dir)
+    allocations_to_add = create_type_allocators(type_dict, case_dir)
 
     ifile = open(f"{case_dir}/elm_initializeMod.F90", "r")
     lines = ifile.readlines()
     ifile.close()
 
     type_init_token = "!#VAR_INIT_START"
-    lines = insert_at_token(lines=lines, token=type_init_token, lines_to_add=allocations_to_add)
+    lines = insert_at_token(
+        lines=lines, token=type_init_token, lines_to_add=allocations_to_add
+    )
 
     # write adjusted main to file in case dir
     with open(f"{case_dir}/elm_initializeMod.F90", "w") as of:
         of.writelines(lines)
+
+    # Write DeepCopyMod for UnitTest
+    create_deepcopy_module(type_dict,case_dir)
 
     return
 
@@ -563,24 +583,24 @@ def create_constants_io(mode, global_vars, casedir):
     lines.append("implicit None\n")
     lines.append("contains\n")
     sub_name = mod_name.replace("Mod", "")
-    tabs = tab*indent
+    tabs = tab * indent
     lines.append(f"{tabs}subroutine {sub_name}()\n")
 
-    indent +=1
-    tabs += tab*indent
+    indent += 1
+    tabs += tab * indent
     for gv in global_vars.values():
-        if gv.parameter :
+        if gv.parameter:
             continue
         lines.append(f"{tabs}use {gv.declaration}, only : {gv.name}\n")
     lines.append(tabs + "use fileio_mod, only : fio_open, fio_close\n")
-    if mode == 'r':
+    if mode == "r":
         lines.append(tabs + "use fileio_mod, only : fio_read\n")
     lines.append(tabs + "integer :: fid, errcode=0\n")
     lines.append(tabs + 'character(len=64) :: ofile = "E3SM_constants.txt"\n')
     lines.append(tabs + "fid = 23\n")
     lines.append(tabs + "call fio_open(fid,ofile, 2)\n\n")
     for gv in global_vars.values():
-        if gv.parameter :
+        if gv.parameter:
             continue
         if mode != "r":
             lines.append(f'{tabs}write(fid,"(A)") "{gv.name}"\n')
@@ -593,11 +613,11 @@ def create_constants_io(mode, global_vars, casedir):
 
     lines.append(f"{tabs}call fio_close(fid)\n")
     indent -= 1
-    tabs = tab*indent
+    tabs = tab * indent
     lines.append(f"{tabs}end subroutine {sub_name}\n")
     lines.append(f"end module {mod_name}")
 
-    with open(f"{casedir}/{filename}",'w') as ofile:
+    with open(f"{casedir}/{filename}", "w") as ofile:
         ofile.writelines(lines)
 
     return None
@@ -776,26 +796,27 @@ def create_read_vars(typedict):
     ofile.write("end module\n")
     ofile.close()
 
-def create_type_sub(lines,dtype, all_active=False):
+
+def create_type_sub(lines, dtype, all_active=False):
     """
-    Functiion that creates a subroutine to allocate 
+    Functiion that creates a subroutine to allocate
     the active members of dtype
     Arguments:
         * lines : lines corresponding to the Module to be written (ie. Read/WriteConstantsMod)
         * dtype : DerivedType obj of type to allocate
         * all_active : Allocate all members regardless of use in UnitTest
     Note: Not taking into acount arrays of derived types YET
-        since the filters/clumps are included by default and their 
+        since the filters/clumps are included by default and their
         are no other use cases i can think of now
 
     """
-    tab = " "*TAB_WIDTH
-    indent = 1 
-    tabs = tab*indent
+    tab = " " * TAB_WIDTH
+    indent = 1
+    tabs = tab * indent
 
     lines.append(f"{tabs}subroutine allocate_{dtype.type_name}(bounds,this_type)\n")
-    indent += 1 
-    tabs = tab*indent
+    indent += 1
+    tabs = tab * indent
     lines.append(f"{tabs}type(bounds_type), intent(in) :: bounds\n")
     lines.append(f"{tabs}type({dtype.type_name}), intent(inout) :: this_type\n")
     lines.append(tabs + "integer :: begp, endp\n")
@@ -803,12 +824,12 @@ def create_type_sub(lines,dtype, all_active=False):
     lines.append(tabs + "integer :: begl, endl\n")
     lines.append(tabs + "integer :: begt, endt\n")
     lines.append(tabs + "integer :: begg, endg\n")
-    lines.append(tabs +"!------------------------------------\n")
-    lines.append(tabs+"begp = bounds%begp; endp = bounds%endp\n")
-    lines.append(tabs+"begc = bounds%begc; endc = bounds%endc\n")
-    lines.append(tabs+"begl = bounds%begl; endl = bounds%endl\n")
-    lines.append(tabs+"begg = bounds%begg; endg = bounds%endg\n")
-    lines.append(tabs+"begt = bounds%begt; endt = bounds%endt\n")
+    lines.append(tabs + "!------------------------------------\n")
+    lines.append(tabs + "begp = bounds%begp; endp = bounds%endp\n")
+    lines.append(tabs + "begc = bounds%begc; endc = bounds%endc\n")
+    lines.append(tabs + "begl = bounds%begl; endl = bounds%endl\n")
+    lines.append(tabs + "begg = bounds%begg; endg = bounds%endg\n")
+    lines.append(tabs + "begt = bounds%begt; endt = bounds%endt\n")
 
     for member in dtype.components.values():
         member_var = member["var"]
@@ -819,8 +840,6 @@ def create_type_sub(lines,dtype, all_active=False):
                 dim_li = [":" for i in range(0, member_var.dim)]
                 dim_string = ",".join(dim_li)
                 dim_string = f"({dim_string})"
-
-            if(member_var.dim>0):
                 bounds = member["bounds"]
                 statement = f"{tabs}allocate(this_type%{member_var.name}{bounds});"
                 lines.append(statement)
@@ -828,7 +847,7 @@ def create_type_sub(lines,dtype, all_active=False):
                 statement = f"{tabs}allocate(this_type%{member_var.name});"
                 lines.append(statement)
 
-            #After allocating (if necessary), assign default value:
+            # After allocating (if necessary), assign default value:
             init_val = None
             match member_var.type:
                 case "real":
@@ -848,40 +867,45 @@ def create_type_sub(lines,dtype, all_active=False):
 
     # End subroutine:
     indent -= 1
-    tabs = tab*indent
+    tabs = tab * indent
     lines.append(f"end subroutine allocate_{dtype.type_name}\n\n")
     return lines
 
-def create_type_allocators(type_dict,casedir):
+
+def create_type_allocators(type_dict, casedir):
     """
     function to creates a fortran module to allocate the active
     members of derived types
     """
 
-    filename = "UnitTestAllocatorMod.F90"
+    filename = "UnitTestAllocatorMod"
     lines = []
     indent = 0
-    tab = " "*TAB_WIDTH
+    tab = " " * TAB_WIDTH
     indent += 1
-    tabs = tab*indent
+    tabs = tab * indent
 
-    skip_types = ["clumpfilter", 
-                "vegetation_physical_properties",
-                "column_physical_properties",
-                "landunit_physical_properties",
-                "gridcell_physical_properties_type",
-                "topounit_physical_properties",
-                  "soillittverttranspparamstype",
-                  ]
-    lines.append("module UnitTestAllocatorMod\n")
+    skip_types = [
+        "clumpfilter",
+        "vegetation_physical_properties",
+        "column_physical_properties",
+        "landunit_physical_properties",
+        "gridcell_physical_properties_type",
+        "topounit_physical_properties",
+        "soillittverttranspparamstype",
+    ]
+    lines.append(f"module {filename}\n")
     lines.append(f"{tabs}use elm_varcon\n")
     lines.append(f"{tabs}use elm_varpar\n")
     lines.append(f"{tabs}use decompMod ,only : bounds_type\n")
 
-
-    active_instances = { inst_var.name :inst_var for dtype in type_dict.values()
-        for inst_var in dtype.instances.values() if inst_var.active}
-    active_types = {inst_var.type : True for inst_var in active_instances.values() }
+    active_instances = {
+        inst_var.name: inst_var
+        for dtype in type_dict.values()
+        for inst_var in dtype.instances.values()
+        if inst_var.active
+    }
+    active_types = {inst_var.type: True for inst_var in active_instances.values()}
 
     for type_name in active_types:
         if type_name in skip_types:
@@ -905,18 +929,18 @@ def create_type_allocators(type_dict,casedir):
         if type_name in skip_types:
             continue
         dtype = type_dict[type_name]
-        lines = create_type_sub(lines,dtype)
+        lines = create_type_sub(lines, dtype)
 
-    lines.append("end module UnitTestAllocatorMod\n")
+    lines.append(f"end module {filename}")
 
-    with open(f"{casedir}/UnitTestAllocatorMod.F90",'w') as ofile:
+    with open(f"{casedir}/{filename}.F90", "w") as ofile:
         ofile.writelines(lines)
 
     # Return list of subroutine calls to be inserted in elm_init
     allocations = []
-    tabs = " "*6
+    tabs = " " * 6
     for inst in active_instances.values():
-        if(inst.type in skip_types or "c13" in inst.name or "c14" in inst.name):
+        if inst.type in skip_types or "c13" in inst.name or "c14" in inst.name:
             continue
         statement = f"{tabs}call allocate_{inst.type}(bounds_proc,{inst.name})\n"
         if statement not in allocations:
@@ -925,5 +949,121 @@ def create_type_allocators(type_dict,casedir):
     return allocations
 
 
+def create_deepcopy_subroutine(lines, dtype, all_active=False):
+    """
+    Function to generate a subroutine for dtype that manually
+    copies over the active members of dtype.
+        if all_active = True, all members are considered active
+    """
+    tabs = set_indent("reset")
+    array1d = False
+    scalar = False
+    for inst in dtype.instances.values():
+        if inst.dim == 0:
+            scalar = True
+        elif inst.dim == 1:
+            array1d = True
+        else:
+            print(_bc.WARNING + f"WARNING:Instance dim > 1D: {inst}" + _bc.ENDC)
+
+    members_to_copy = [comp["var"] for comp in dtype.components.values()
+                                if comp['active'] or all_active]
+    if scalar:
+        subname = f"deepcopy_{dtype.type_name}"
+        lines.append(f"{tabs}subroutine {subname}(this_type)\n")
+        tabs = set_indent("shift")
+        lines.append(f"{tabs}type({dtype.type_name}), intent(inout) :: this_type\n")
+        lines.append(f"{tabs}!$acc enter data copyin(this_type)\n")
+        lines.append(f"{tabs}!$acc enter data copyin(&\n")
+        for num, member in enumerate(members_to_copy):
+            dim_string = ""
+            if member.dim > 0:
+                dim_li = [":" for i in range(0, member.dim)]
+                dim_string = ",".join(dim_li)
+                dim_string = f"({dim_string})"
+
+            name = "this_type" + "%" + member.name + dim_string
+            lines.append(f"{tabs}!$acc& {name}")
+            final_num = bool(num == len(members_to_copy) - 1)
+            if not final_num:
+                lines.append(",&\n")
+            else:
+                lines.append(")")
+        lines.append("\n")
+        tabs = set_indent("unshift")
+        lines.append(f"{tabs}end subroutine {subname}\n")
+
+    if array1d:
+        subname = f"deepcopy_{dtype.type_name}_array"
+        lines.append(f"{tabs}subroutine {subname}(this_type)\n")
+        tabs = set_indent("shift")
+        lines.append(f"{tabs}type({dtype.type_name}), intent(inout) :: this_type(:)\n")
+        lines.append(f"{tabs}integer :: i,N\n")
+        lines.append(f"{tabs}N=size(this_type)\n")
+        lines.append(f"{tabs}!$acc enter data copyin(this_type(:))\n")
+        lines.append(tabs + "do i = 1, N\n")
+        tabs = set_indent("shift")
+
+        inst_name = "this_type(i)"
+        lines.append(f"{tabs}!$acc enter data copyin(&\n")
+        for num, member in enumerate(members_to_copy):
+            dim_string = ""
+            if member.dim > 0:
+                dim_li = [":" for i in range(0, member.dim)]
+                dim_string = ",".join(dim_li)
+                dim_string = f"({dim_string})"
+
+            name = inst_name + "%" + member.name + dim_string
+            lines.append(f"{tabs}!$acc& {name}")
+            final_num = bool(num == len(members_to_copy) - 1)
+            if not final_num:
+                lines.append(",&\n")
+            else:
+                lines.append(")")
+        lines.append("\n")
+        tabs = set_indent("unshift")
+        lines.append("end do\n")
+        tabs = set_indent("unshift")
+        lines.append(f"{tabs}end subroutine {subname}\n")
+        
+    return lines
 
 
+def create_deepcopy_module(type_dict, casedir):
+    """
+    Function to create subroutine(s) for performing a manual deepcopy
+    """
+    tabs = set_indent("reset")
+    lines = []
+
+    lines.append("module DeepCopyMod\n")
+
+    active_instances = {
+        inst_var.name: inst_var
+        for dtype in type_dict.values()
+        for inst_var in dtype.instances.values()
+        if inst_var.active
+    }
+    active_types = {inst_var.type: True for inst_var in active_instances.values()}
+
+    for type_name in active_types:
+        dtype = type_dict[type_name]
+        statement = f"{tabs}use {dtype.declaration},only: {type_name}\n"
+        if statement not in lines:
+            lines.append(statement)
+    lines.append(f"{tabs}implicit none\n")
+
+    for type_name in active_types:
+        statement = f"{tabs} public :: deepcopy_{type_name}\n"
+        lines.append(statement)
+    lines.append("contains\n\n")
+
+    for type_name in active_types:
+        dtype = type_dict[type_name]
+        lines = create_deepcopy_subroutine(lines, dtype)
+
+    lines.append("end module DeepCopyMod")
+
+    with open(f"{casedir}/DeepCopyMod.F90",'w') as ofile:
+        ofile.writelines(lines)
+    return None
