@@ -64,10 +64,11 @@ unit_test_files = [
     "decompInitMod.o",
     "elm_instMod.o",
     "fileio_mod.o",
-    "readConstants.o",
+    "ReadConstantsMod.o",
     "update_accMod.o",
     "readMod.o",
     "initializeParameters.o",
+    "UnitTestAllocatorMod.o",
     "duplicateMod.o",
     "verificationMod.o",
     "elm_initializeMod.o",
@@ -87,4 +88,17 @@ class BColors:
     UNDERLINE = "\033[4m"
 
 
+class EmptyColors:
+    HEADER = ""
+    OKBLUE = ""
+    OKCYAN = ""
+    OKGREEN = ""
+    WARNING = ""
+    FAIL = ""
+    ENDC = ""
+    BOLD = ""
+    UNDERLINE = ""
+
+
 _bc = BColors()
+_no_colors = EmptyColors()

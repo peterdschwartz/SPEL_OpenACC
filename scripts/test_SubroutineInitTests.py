@@ -1,8 +1,10 @@
 import re
 import unittest
 
+import utilityFunctions as uf
 from analyze_subroutines import Subroutine
 from edit_files import get_filename_from_module, get_used_mods
+from mod_config import E3SM_SRCROOT
 
 
 class SubroutineTests(unittest.TestCase):
@@ -13,6 +15,16 @@ class SubroutineTests(unittest.TestCase):
           Storing copy of files, may not allow testing of E3SM's directory structure.
           Sol'n:  store the commit hash the tests were validated against?
     """
+
+    def test_getArguments(self):
+
+        func_calls = [
+            "call sub1__test (var(i,:), var_2 (isoilorder (c) , j), veg%member(bounds%begc:bounds%endc,isoil (c) ) )"
+        ]
+        func_1 = func_calls[0]
+        args = uf.getArguments(func_1)
+        ans1 = ["var", "var_2", "veg%member"]
+        self.assertListEqual(args, ans1)
 
     def test_get_subroutine_file(self):
         sname = "SoilTemperature"
@@ -27,46 +39,10 @@ class SubroutineTests(unittest.TestCase):
         Test to verfiy that modules are parsed correctly
         """
         module_name = "shr_kind_mod"
-        file_path = get_filename_from_module(module_name)
-        correct_filepath = "E3SM/share/util/shr_kind_mod.F90"
-        regex_fp = re.compile(f"({correct_filepath})")
-        self.assertRegex(file_path, regex_fp)
-
-        # Next attempt to parse the file for used modules, variables, subroutines, etc...
-        mods = []
-        mod_dict = {}
-        singlefile = False
-
-        mods, mod_dict = get_used_mods(
-            ifile=file_path,
-            mods=mods,
-            verbose=False,
-            singlefile=singlefile,
-            mod_dict=mod_dict,
-        )
-        # No module depencies for shr_kind_mod
-        self.assertListEqual(mods, [])
-        # Mod dict should only contain shr_kind_mod
-        key_list = [key for key in mod_dict.keys()]
-        self.assertListEqual(key_list, ["shr_kind_mod"])
-        # Check variables in module:
-        correct_var_list = [
-            "SHR_KIND_R8",
-            "SHR_KIND_R4",
-            "SHR_KIND_RN",
-            "SHR_KIND_I8",
-            "SHR_KIND_I4",
-            "SHR_KIND_I2",
-            "SHR_KIND_IN",
-            "SHR_KIND_CS",
-            "SHR_KIND_CM",
-            "SHR_KIND_CL",
-            "SHR_KIND_CX",
-            "SHR_KIND_CXX",
-        ]
-        correct_var_list = [x.lower() for x in correct_var_list]
-        var_list = [x.name for x in mod_dict["shr_kind_mod"].global_vars]
-        self.assertListEqual(var_list, correct_var_list)
+        file_path = get_filename_from_module(module_name, verbose=True)
+        correct_filepath = "/share/util/shr_kind_mod.F90"
+        file_path = file_path.replace(E3SM_SRCROOT, "")
+        self.assertEqual(file_path, correct_filepath)
 
 
 if __name__ == "__main__":

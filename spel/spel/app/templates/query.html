@@ -37,10 +37,10 @@
 <body>
 
 <div class="button-container">
-    <a href="{% url 'view_table' table='subroutine_variables' %}">  <button>Subroutine Variables</button></a>
-    <a href="{% url 'view_table' table='types' %}">  <button>  User Types</button></a>
-    <a href="{% url 'view_table' table='dependency' %}">  <button>  Module Dependency</button></a>
-    <a href="{% url 'view_table' table='variables' %}">  <button>  Variables</button></a>
+    <a href="{% url 'view_table' table_name='subroutine_variables' %}">  <button>Subroutine Variables</button></a>
+    <a href="{% url 'view_table' table_name='types' %}">  <button>  User Types</button></a>
+    <a href="{% url 'view_table' table_name='dependency' %}">  <button>  Module Dependency</button></a>
+    <a href="{% url 'view_table' table_name='variables' %}">  <button>  Variables</button></a>
     
 
     <a href="{% url 'home' %}">go </a>

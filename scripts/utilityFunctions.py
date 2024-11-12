@@ -42,6 +42,7 @@ class Variable(object):
         * self.optional : optional arguments
         * self.subs : list of subroutines that use variable (not implemented)
     """
+
     def __init__(
         self,
         type,
@@ -54,7 +55,10 @@ class Variable(object):
         optional=False,
         keyword="",
         active=False,
+        pointer=[],
         private=False,
+        bounds="",
+        ptrscalar=False,
     ):
         self.type = type
         self.name = name
@@ -76,6 +80,9 @@ class Variable(object):
         self.active = active
         self.private = private
         self.default_value = None
+        self.pointer = pointer.copy()
+        self.bounds = bounds
+        self.ptrscalar = ptrscalar
 
     # Define equality for comparison of two Variables
     def __eq__(self, other):
@@ -90,10 +97,16 @@ class Variable(object):
 
     # Override __str__ for easy printing
     def __str__(self):
-        return f"{self.type} {self.name} {self.dim}-D {self.active}"
+        if self.dim > 0:
+            return f"{self.type} {self.name} {self.bounds}"
+        else:
+            return f"{self.type} {self.name}"
 
     def __repr__(self):
-        return f"Variable({self.type} {self.name} {self.dim})"
+        if self.dim > 0:
+            return f"Variable({self.type} {self.name} {self.bounds})"
+        else:
+            return f"Variable({self.type} {self.name})"
 
     def printVariable(self, ofile=sys.stdout):
         ofile.write(f"{self}\n")
@@ -137,8 +150,13 @@ def comment_line(lines, ct, mode="normal", verbose=False):
 
 def removeBounds(line, verbose=False):
     """
-    This function matches (:,:,:) and removes it from the line
+    This function to remove any array accesses from
+    subroutine calls so that the input arguments to subrtouines
+    can be split by commas.
 
+    NOTE: Since there are use cases with nested parenthesis,
+    this may be better off using a tokenizer and parser for the
+    parenthesis.
     """
     cc = "[ a-zA-Z0-9%\-\+]*?:[ a-zA-Z0-9%\-\+]*?"
     non_greedy1D = re.compile(f"\({cc}\)")
@@ -146,30 +164,33 @@ def removeBounds(line, verbose=False):
     non_greedy3D = re.compile(f"\({cc},{cc},{cc}\)")
     non_greedy4D = re.compile(f"\({cc},{cc},{cc},{cc}\)")
     regex_array_as_index = re.compile(r"\w+\s*\([,\w+\*-]+\)", re.IGNORECASE)
+    # ng_array_ind = re.compile(r'(?<=\w)\s*(\(.+?\))')
+    ng_array_ind = re.compile(r"(?<=\w)\s*\(([^()]*|(?:\([^()]*\))*)\)")
+
     newline = line
-    newline = regex_array_as_index.sub(":", newline)
 
-    m1D = non_greedy1D.findall(newline)
-    for bound in m1D:
-        newline = newline.replace(bound, "")
+    newline = non_greedy1D.sub("", newline)
+    newline = non_greedy2D.sub("", newline)
+    newline = non_greedy3D.sub("", newline)
 
-    m2D = non_greedy2D.findall(newline)
-    for bound in m2D:
-        newline = newline.replace(bound, "")
+    max_count = 20
+    loop_count = 0
+    m_ = ng_array_ind.search(newline)
+    while m_ and loop_count < max_count:
+        newline = ng_array_ind.sub("", newline)
+        m_ = ng_array_ind.search(newline)
+        loop_count += 1
 
-    m3D = non_greedy3D.findall(newline)
-    for bound in m3D:
-        newline = newline.replace(bound, "")
-
-    m4D = non_greedy4D.findall(newline)
-    for bound in m4D:
-        newline = newline.replace(bound, "")
+    if loop_count == max_count:
+        print(_bc.FAIL + _bc.BOLD + f"MAX LOOP COUNT EXCEEDED for {line}")
+        sys.exit(1)
 
     match_arrays = ng_regex_array.findall(newline)
     match_array_init = re.search(r"(\(/)(.+)(/\))", newline)
     if match_array_init:
         print(_bc.WARNING + "match array init::", match_array_init, _bc.ENDC)
     if match_arrays:
+        newline = regex_array_as_index.sub(":", newline)
         # not all bounds could be removed.
         # Check if they are of the form arr(1,2) (no semicolon)
         for arr in match_arrays:
@@ -206,7 +227,7 @@ def getArguments(l, verbose=False):
     track global variables passed as arguments.
     """
     if verbose:
-        print(_bc.WARNING + f"getArguments:: Processing {l}\n\n" + _bc.ENDC)
+        print(_bc.WARNING + f"getArguments:: Processing {l}" + _bc.ENDC)
     # Matches longest string between parentheses
     par = re.compile("(?<=\().+(?=\))")
     m = par.search(l)
@@ -216,10 +237,12 @@ def getArguments(l, verbose=False):
     args = m.group()
 
     newargs = removeBounds(args, verbose)
-
     args = newargs.split(",")
-    args = [x.strip() for x in args]
+    args = [x.strip().lower() for x in args]
+    args = [x for x in args if x != ""]
 
+    if verbose:
+        print("Args Found:", args, "\n")
     return args
 
 
@@ -282,7 +305,7 @@ def find_end_subroutine(fn, startline):
     return endline
 
 
-def find_file_for_subroutine(name, fn="", ignore_interface=False):
+def find_file_for_subroutine(name, fn="", ignore_interface=False, verbose=False):
     """
     finds file, start and end line numbers for subroutines
     find file and start of interface block for interfaces
@@ -302,6 +325,8 @@ def find_file_for_subroutine(name, fn="", ignore_interface=False):
         cmd_end = ""
 
     output = sp.getoutput(cmd)
+    if verbose:
+        print(f"{func_name}::output {output}")
     if not fn:
         file = output.split(":")[0]
         # Need to separate the file name and path
@@ -374,7 +399,6 @@ def getLocalVariables(sub, verbose=False, class_var=False):
     this function will retrieve  the local variables from
     the subroutine at startline, endline in the given file
 
-    Note: currently only looks at type declaration for class object
     """
     func_name = "getLocalVariables"
 
@@ -391,7 +415,7 @@ def getLocalVariables(sub, verbose=False, class_var=False):
         print(f"{func_name}::{filename},{subname} at L{startline}-{endline}")
     cc = "."
     # non-greedy capture
-    ng_regex_array = re.compile(f"\w+?\s*\({cc}+?\)")
+    ng_regex_array = re.compile(r"\w+?\s*\({}+?\)".format(cc))
     if args_present:
         arg_string = "|".join(sub.dummy_args_list)
         find_arg = re.compile(r"\b({})\b".format(arg_string), re.IGNORECASE)
@@ -410,8 +434,8 @@ def getLocalVariables(sub, verbose=False, class_var=False):
     # test for intrinsic data types or user defined
     intrinsic_type = re.compile(r"^(integer|real|logical|character)", re.IGNORECASE)
     user_type = re.compile(r"^(class\s*\(|type\s*\()", re.IGNORECASE)
+    ng_array_ind = re.compile(r"(?<=\w)\s*(\(.+?\))")
 
-    #
     ln = startline
     while ln < endline:
         line, ln = line_unwrapper(lines=lines, ct=ln)
@@ -426,8 +450,7 @@ def getLocalVariables(sub, verbose=False, class_var=False):
             # store everytime we find a variable declaration
             sub.var_declaration_endl = ln
             if "::" not in line:
-                # Repeated code here, could be simplified?
-                # Need to check if variable declarations w/o '::'
+                # Repeated code here, could be simplified? Need to check if variable declarations w/o '::'
                 # have more syntax restrictions.
                 m_type = intrinsic_type.search(line)
                 if m_type:
@@ -469,6 +492,7 @@ def getLocalVariables(sub, verbose=False, class_var=False):
             match_arrays = ng_regex_array.findall(temp_vars)
             if match_arrays:
                 for arr in match_arrays:
+                    bounds = ng_array_ind.search(arr).group()
                     varname = regex_var.search(arr).group()
                     index = regex_subgrid_index.search(arr)
                     if index:
@@ -499,7 +523,13 @@ def getLocalVariables(sub, verbose=False, class_var=False):
                         )
                     else:
                         sub.LocalVariables["arrays"][varname] = Variable(
-                            data_type, varname, subgrid, ln, dim, parameter
+                            data_type,
+                            varname,
+                            subgrid,
+                            ln,
+                            dim,
+                            parameter,
+                            bounds=bounds,
                         )
                         sub.LocalVariables["arrays"][varname].declaration = line
                     # This removes the array from the list of variables
@@ -532,6 +562,7 @@ def getLocalVariables(sub, verbose=False, class_var=False):
                         data_type, var, "", ln, dim=0, parameter=parameter
                     )
         ln += 1
+
     return
 
 
@@ -1041,6 +1072,7 @@ def line_unwrapper(lines, ct, verbose=False):
     Function that takes code segment that has line continuations
     and returns it all on one line.
     """
+    beg_continuation = re.compile(r"^\s*(&)")
     simple_l = lines[ct].split("!")[0]  # remove comments
     # remove new line character
     simple_l = simple_l.rstrip("\n").strip()
@@ -1049,7 +1081,11 @@ def line_unwrapper(lines, ct, verbose=False):
     newct = ct
     while continuation:
         newct += 1
-        simple_l = lines[newct].split("!")[0]  # in case of inline comments
+        simple_l = lines[newct].split("!")[0].strip()  # in case of inline comments
+        match_beg_cont = beg_continuation.search(simple_l)
+        if match_beg_cont:
+            simple_l = beg_continuation.sub("", simple_l)
+            simple_l = simple_l.strip()
         simple_l = simple_l.rstrip("\n")
         # Fortran allow empty lines in between line continuations
         if simple_l.isspace() or not simple_l:
@@ -1100,7 +1136,7 @@ def insert_header_for_unittest(file_list, casedir, mod_dict):
     return None
 
 
-def parse_line_for_variables(ifile, l, ln, verbose=False):
+def parse_line_for_variables(ifile, l, ln, ptr=False, verbose=False):
     """
     Function that takes a line of code and returns the variables
     that are declared in it.
@@ -1172,6 +1208,7 @@ def parse_line_for_variables(ifile, l, ln, verbose=False):
             # NOTE: similar to note above for arrays, this skips over
             #       initialization for other variables. May change if
             #       desired use case wants initial values.
+            ptrscalar = False
             if "=" in var:
                 var = var.split("=")[0].strip()
             # Check if current variable is an array
@@ -1193,8 +1230,11 @@ def parse_line_for_variables(ifile, l, ln, verbose=False):
             else:
                 subgrid = ""
                 dim = 0
+                if ptr:
+                    ptrscalar = True
             parameter = bool("parameter" in temp_decl.lower())
             private = bool("private" in temp_decl.lower())
+
             variable_list.append(
                 Variable(
                     data_type,
@@ -1204,6 +1244,7 @@ def parse_line_for_variables(ifile, l, ln, verbose=False):
                     dim,
                     parameter=parameter,
                     private=private,
+                    ptrscalar=ptrscalar,
                 )
             )
 

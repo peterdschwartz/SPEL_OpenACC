@@ -1,39 +1,8 @@
-<!DOCTYPE html>
-<html>
 
-<head>
-    <title>Home</title>
-</head>
+{% extends "base.html" %}
+{% block body %}
+<h1>Modules Table<a href="{% url 'home' %}" class="return-link">Return</a></h1>
 
-<body>
-    <style>
-        table,
-        th,
-        td {
-            border: 1px solid black;
-            border-collapse: collapse;
-            text-align: center;
-        }
+{% include "partials/dynamic_table.html"  with table_name=table_name %}
 
-        tr:nth-child(even) {
-            background-color: #D6EEEE;
-        }
-    </style>
-    <h1>All Objects</h1>
-
-    <table>
-        <tr>
-            <th>ID</th>
-            <th>Module</th>
-          
-        </tr>
-        {% for obj in all_objects %}
-        <tr>
-            <td>{{ obj.module_id }}</td>
-            <td>{{ obj.module_name }}</td>
-        </tr>
-        {% endfor %}
-    </table>
-</body>
-
-</html>
+{% endblock %}

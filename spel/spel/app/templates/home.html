@@ -1,50 +1,40 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>6 Buttons Page</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            background-color: #f0f0f0;
-        }
-        .button-container {
-            display: grid;
-            grid-template-columns: repeat(3, 100px);
-            gap: 20px;
-        }
-        .button-container button {
-            padding: 10px;
-            font-size: 16px;
-            cursor: pointer;
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 5px;
-            transition: background-color 0.3s ease;
-        }
-        .button-container button:hover {
-            background-color: #45a049;
-        }
-    </style>
-</head>
-<body>
+{% extends "base.html" %}
+{% block body %}
 
-<div class="button-container">
-    <a href="{% url 'view_table' table='subroutine_variables' %}">  <button>Subroutine Variables</button></a>
-    <a href="{% url 'view_table' table='types' %}">  <button>  User Types</button></a>
-    <a href="{% url 'view_table' table='dependency' %}">  <button>  Module Dependency</button></a>
-    <a href="{% url 'view_table' table='variables' %}">  <button>  Variables</button></a>
-    
+        <div class="button-container">
+            <h2>Tables in the database:</h2>
+            <div class="button-group">
+                <a href="{% url 'view_table' table_name='subroutine_calltree' %}">
+                    <button class="styled-button">Subroutine CallTree</button>
+                </a>
+                <a href="{% url 'view_table' table_name='types' %}">
+                    <button class="styled-button">User Types</button>
+                </a>
+                <a href="{% url 'view_table' table_name='dependency' %}">
+                    <button class="styled-button">Module Dependency</button>
+                </a>
+                <a href="{% url 'view_table' table_name='instances' %}">
+                    <button class="styled-button">Type Instances</button>
+                </a>
+                <a href="{% url 'view_table' table_name='modules' %}">
+                    <button class="styled-button">Modules</button>
+                </a>
+                <a href="{% url 'view_table' table_name='subroutines' %}">
+                    <button class="styled-button">Subroutines</button>
+                </a>
+                <a href="{% url 'view_table' table_name='subroutineargs' %}">
+                    <button class="styled-button">Subroutine Arguments</button>
+                </a>
+            </div>
+        </div>
 
-    <a href="{% url 'home' %}">go </a>
-</div>
+         <!-- Button to load the subroutine_calltree content -->
+    <div id="subroutine-container"
+         hx-get="{% url 'subcall' %}"
+         hx-trigger="load"
+         hx-target="this"
+         hx-swap="innerHTML">
+            Loading...
+    </div>
 
-</body>
-</html>
+{% endblock %}

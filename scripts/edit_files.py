@@ -406,9 +406,9 @@ def get_used_mods(ifile, mods, singlefile, mod_dict, verbose=False):
     list_type_names = [key for key in user_defined_types.keys()]
     for gvar in fort_mod.global_vars:
         if gvar.type in list_type_names:
-            if gvar not in user_defined_types[gvar.type].instances:
+            if gvar.name not in user_defined_types[gvar.type].instances:
                 print(f"Adding {gvar.name} to {gvar.type} instances")
-                user_defined_types[gvar.type].instances.append(gvar)
+                user_defined_types[gvar.type].instances[gvar.name] = gvar
 
     fort_mod.defined_types = user_defined_types
     mod_dict[fort_mod.name] = fort_mod
@@ -897,7 +897,6 @@ def process_for_unit_test(
     # (NOTE: Could write a make file to do this instead and
     # read the results back into SPEL?)
     linenumber, unit_test_module = get_module_name_from_file(fpath=fname)
-    print(mod_dict.keys())
     file_list = sort_file_dependency(mod_dict, unit_test_module)
     for m in required_mods:
         file_list = sort_file_dependency(mod_dict, m.lower())

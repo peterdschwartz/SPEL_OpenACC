@@ -1,3 +1,7 @@
+from DerivedType import DerivedType
+from helper_functions import replace_ptr_with_targets
+
+
 def main() -> None:
     """
     Edit case_dir and sub_name_list to create a Functional Unit Test
@@ -32,18 +36,33 @@ def main() -> None:
     )
     parser = argparse.ArgumentParser(prog="SPEL", description=desc)
     parser.add_argument("-u", action="store_true", required=False, dest="keep")
+    parser.add_argument("-c", required=False, dest="casename")
+    parser.add_argument("-s", nargs="+", required=False, dest="sub_names")
     args = parser.parse_args()
 
     # Define name of function for logging.
     func_name = "main"
 
     # Note unittests_dir is a location to make unit tests directories named {casename}
-    casename = "canflux"
+    if args.casename:
+        casename = args.casename
+    else:
+        casename = "canflux"
+
     case_dir = unittests_dir + casename
 
     # List of subroutines to be analyzed
     # sub_name_list = ["LakeTemperature", "SoilTemperature"]
-    sub_name_list = ["CanopyFluxes"]
+    sub_name_list = [
+        "Allocation1_PlantNPDemand",
+        "Allocation2_ResolveNPLimit",
+        "Allocation3_PlantCNPAlloc",
+    ]
+    # sub_name_list = ["SoilLittVertTransp"]
+    if args.sub_names:
+        sub_name_list = [s.lower() for s in args.sub_names]
+
+    print(f"Creating UnitTest {casename} || {' '.join(sub_name_list)}")
 
     # Determines if SPEL should run to make optimizations
     opt = False
@@ -68,6 +87,8 @@ def main() -> None:
         if args.keep:
             preprocess = False
         else:
+            os.system(f"rm -rf {case_dir}/*")
+            os.system("rm *.pkl")
             preprocess = True
 
     # Initialize dictionary that will hold instance of all subroutines encountered.
@@ -107,7 +128,7 @@ def main() -> None:
             # NOTE: direct assignment here means that changes to subroutines[s] object
             #       below will be reflected immediately in main_sub_dict. Make explicit instead?
             subroutines[s] = main_sub_dict[s]
-            subroutines[s].print_subroutine_info()
+            subroutines[s].unit_test_function = True
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
     # examineLoops performs adjustments that go beyond the "naive"                  #
@@ -139,16 +160,26 @@ def main() -> None:
         print(f"{func_name}::Error didn't find any modules related to subroutines")
         sys.exit(1)
 
-    # print_spel_module_dependencies(mod_dict=mod_dict,subs=subroutines)
-
     with open(f"{case_dir}/source_files_needed.txt", "w") as ofile:
         for f in file_list:
             ofile.write(f + "\n")
 
-    type_dict = {}
+    type_dict: dict[str, DerivedType] = {}
     for mod in mod_dict.values():
         for utype, dtype in mod.defined_types.items():
             type_dict[utype] = dtype
+
+    instance_to_user_type = {}
+    for type_name, dtype in type_dict.items():
+        if "bounds" in type_name:
+            continue
+        # All instances should have been found so throw an error
+        if not dtype.instances:
+            print(
+                _bc.WARNING + f"Warning: no instances found for {type_name}" + _bc.ENDC
+            )
+        for instance in dtype.instances.values():
+            instance_to_user_type[instance.name] = type_name
 
     # 'main_sub_dict' contains Subroutine instances for all subroutines
     # in any needed modules. Next, each subroutine within the call trees of the user
@@ -167,36 +198,41 @@ def main() -> None:
             dtype_dict=type_dict, main_sub_dict=main_sub_dict, verbose=False
         )
 
-        print(_bc.OKGREEN + f"Derived Type Analysis for {subroutines[s].name}")
-        print(f"{func_name}::Read-Only")
-        for key in subroutines[s].elmtype_r.keys():
-            print(key, subroutines[s].elmtype_r[key])
-        print(f"{func_name}::Write-Only")
-        for key in subroutines[s].elmtype_w.keys():
-            print(key, subroutines[s].elmtype_w[key])
-        print(f"{func_name}::Read-Write")
-        for key in subroutines[s].elmtype_rw.keys():
-            print(key, subroutines[s].elmtype_rw[key])
-        print(_bc.ENDC)
+    for sub in subroutines.values():
 
-        for key in list(subroutines[s].elmtype_r.keys()):
+        sub.elmtype_r = replace_ptr_with_targets(
+            sub.elmtype_r,
+            type_dict,
+            instance_to_user_type,
+        )
+        sub.elmtype_w = replace_ptr_with_targets(
+            sub.elmtype_w,
+            type_dict,
+            instance_to_user_type,
+        )
+        sub.elmtype_rw = replace_ptr_with_targets(
+            sub.elmtype_rw,
+            type_dict,
+            instance_to_user_type,
+        )
+        for key in list(sub.elmtype_r.keys()):
             c13c14 = bool("c13" in key or "c14" in key)
             if c13c14:
-                del subroutines[s].elmtype_r[key]
+                del sub.elmtype_r[key]
                 continue
             read_types.append(key)
 
-        for key in list(subroutines[s].elmtype_w.keys()):
+        for key in list(sub.elmtype_w.keys()):
             c13c14 = bool("c13" in key or "c14" in key)
             if c13c14:
-                del subroutines[s].elmtype_w[key]
+                del sub.elmtype_w[key]
                 continue
             write_types.append(key)
 
-        for key in list(subroutines[s].elmtype_rw.keys()):
+        for key in list(sub.elmtype_rw.keys()):
             c13c14 = bool("c13" in key or "c14" in key)
             if c13c14:
-                del subroutines[s].elmtype_rw[key]
+                del sub.elmtype_rw[key]
                 continue
             write_types.append(key)
 
@@ -228,18 +264,6 @@ def main() -> None:
         if dtype_inst not in aggregated_elmtypes_list:
             aggregated_elmtypes_list.append(dtype_inst)
 
-    instance_to_user_type = {}
-    for type_name, dtype in type_dict.items():
-        if "bounds" in type_name:
-            continue
-        # All instances should have been found so throw an error
-        if not dtype.instances:
-            print(
-                _bc.WARNING + f"Warning: no instances found for {type_name}" + _bc.ENDC
-            )
-        for instance in dtype.instances:
-            instance_to_user_type[instance.name] = type_name
-
     dtype_info_list = []
 
     for s in sub_name_list:
@@ -256,12 +280,14 @@ def main() -> None:
     # Will need to read in physical properties type
     # so set all components to True
     for type_name, dtype in type_dict.items():
-        instances = [inst.name for inst in dtype.instances]
-        for varname in instances:
-            if varname in ["veg_pp", "lun_pp", "col_pp", "grc_pp", "top_pp"]:
+        for var in dtype.instances.values():
+            if var.name in ["veg_pp", "lun_pp", "col_pp", "grc_pp", "top_pp"]:
                 dtype.active = True
-                for c in dtype.components:
+                var.active = True
+                for c in dtype.components.values():
                     c["active"] = True
+                    c["var"].active = True
+
     for el in write_types:
         if el not in read_types:
             read_types.append(el)
@@ -289,7 +315,7 @@ def main() -> None:
 
     elmvars_dict = {}
     for dtype in type_dict.values():
-        for inst in dtype.instances:
+        for inst in dtype.instances.values():
             elmvars_dict[inst.name] = inst
 
     # create list of variables that should be used for verification.
@@ -345,11 +371,23 @@ def main() -> None:
         if var in read_types:
             read_types.remove(var)
 
-    determine_global_variable_status(mod_dict, subroutines)
+    active_global_vars = determine_global_variable_status(mod_dict, subroutines)
+
+    # Subroutine analysis should be complete. Store info in main_sub_dict
+    for sub in subroutines.values():
+        main_sub_dict[sub.name] = sub
 
     # Generate/modify FORTRAN files needed to initialize and run Unit Test
     # main.F90
-    wr.clean_main(aggregated_elmtypes_list, files=needed_mods, case_dir=case_dir)
+    wr.prepare_unit_test_files(
+        inst_list=aggregated_elmtypes_list,
+        type_dict=type_dict,
+        files=needed_mods,
+        case_dir=case_dir,
+        global_vars=active_global_vars,
+        subroutines=subroutines,
+        instance_to_type=instance_to_user_type,
+    )
     # elm_instMod.F90
     wr.write_elminstMod(type_dict, case_dir)
     # duplicateMod.F90
@@ -395,7 +433,7 @@ def set_active_variables(type_dict, type_lookup, variable_list, dtype_info_list)
         type_name = type_lookup[dtype]
         type_dict[type_name].active = True
         # Set which components of derived type are active
-        for c in type_dict[type_name].components:
+        for c in type_dict[type_name].components.values():
             field_var = c["var"]
             if field_var.name == component and not c["active"]:
                 c["active"] = True
@@ -411,7 +449,7 @@ def set_active_variables(type_dict, type_lookup, variable_list, dtype_info_list)
             continue
         type_name = type_lookup[var]
         # Set which instances of the derived type are active
-        for inst in type_dict[type_name].instances:
+        for inst in type_dict[type_name].instances.values():
             if inst.name == var and not inst.active:
                 inst.active = True
 
