@@ -290,8 +290,17 @@ class Subroutine(object):
             else:
                 ct = self.associate_end
             endline = self.endline
+        
+        if self.associate_vars: 
+            no_associate = False
+        else:
+            no_associate = True
 
         # Loop through the routine and find any child subroutines
+        if not no_associate:
+            ptrname_list = [key for key in self.associate_vars.keys()]
+            ptrname_str = "|".join(ptrname_list)
+            regex_ptr_assoc = re.compile(r"\w+\s*(=>)\s*({})".format(ptrname_str))
 
         while ct < endline:
             line = lines[ct]
@@ -309,6 +318,15 @@ class Subroutine(object):
                 ptrname = ptrname.strip()
                 gv = gv.strip()
                 self.associate_vars.setdefault(ptrname, []).append(gv)
+            if not no_associate:
+                m_ptr_to_associate = regex_ptr_assoc.search(line)
+                if m_ptr_to_associate:
+                    ptrname, gv_alias = m_ptr_to_associate.group().split("=>")
+                    ptrname = ptrname.strip()
+                    gv_alias = gv_alias.strip()
+                    gv = self.associate_vars[gv_alias]
+                    print(_bc.WARNING+f"Adding {ptrname} as associating with {gv}"+_bc.ENDC)
+                    self.associate_vars.setdefault(ptrname, []).append(gv)
 
             match_call = re.search(r"^call ", line.strip())
             if match_call:
@@ -476,9 +494,14 @@ class Subroutine(object):
             regex_associated_ptr = re.compile(
                 r"\b({})\b".format(ptrname_str), re.IGNORECASE
             )
+            # regex_ptr_assoc = re.compile(r"\w+\s*(=>)\s*({})".format(ptrname_str))
+
 
         regex_dtype_var =  re.compile(r"\w+(?:\(\w+\))?%\w+")
         regex_paren = re.compile(r"\((.+)\)")
+        # regex_ptr_member = re.compile(r"\w+\s*(=>)\s*\w+(%)\w+")
+        # Checks for local variables used as targets
+        regex_ptr_simple = re.compile(f"\w+\s*(=>)\s*\w+")
 
         # dtype_accessed is a dictonary to keep track of derived type vars accessed in the subroutine.
         #        {'inst%component' : [ list of ReadWrite ] }
@@ -492,7 +515,7 @@ class Subroutine(object):
 
             # match subroutine call
             match_call = re.search(r"^\s*(call) ", line)
-            # Get list of all global variables used in this line and for array of structs, remove index
+            # Get list of all global variables used in this line and for arrays, remove index
             match_var = regex_dtype_var.findall(line)
             arr_of_structs = [regex_paren.sub('',mvar) for mvar in match_var]
 
@@ -502,10 +525,8 @@ class Subroutine(object):
             match_var = arr_of_structs.copy()
 
             if not match_call:
-                # There are derived types to analyze!
                 if match_var:
                     match_var = list(set(match_var))
-
                     this_var = [v for v in match_var if "this" in v]
                     if this_var:
                         split_map = map(lambda v: v.split("%")[0], match_var)
@@ -516,14 +537,19 @@ class Subroutine(object):
                         }
                         user_type_args.update(temp)
 
-                    dtype_accessed = determine_variable_status(
-                        match_var, line, ct, dtype_accessed, verbose=verbose
-                    )
+                    m_ptr_local = regex_ptr_simple.search(line)
+                    if(m_ptr_local):
+                        print(_bc.OKGREEN+f"Line is assoicating ptr - Do not parse"+_bc.ENDC)
+                    else:
+                        dtype_accessed = determine_variable_status(
+                            match_var, line, ct, dtype_accessed, verbose=verbose
+                        )
 
                 # Do the same for any variables in the associate clause
                 if not no_associate:
                     match_ptrs = regex_associated_ptr.findall(line)
-                    if match_ptrs:
+                    m_ptr_local = regex_ptr_simple.search(line)
+                    if match_ptrs and not m_ptr_local:
                         dtype_accessed = determine_variable_status(
                             match_ptrs, line, ct, dtype_accessed
                         )
@@ -619,7 +645,6 @@ class Subroutine(object):
                 var_to_replace = key.split("%")[0]
                 for sub_val in passed_args[var_to_replace]:
                     new_key = key.replace(var_to_replace, sub_val)
-                    print(key, "=>", new_key)
                     dtype_accessed[new_key] = save_val
 
         if dtype_accessed:
@@ -636,13 +661,16 @@ class Subroutine(object):
                         var_name_list.append(self.associate_vars[key])
                 else:
                     var_name_list.append(key)
+
                 for varname in var_name_list:
-                    if(varname == "solarabs_vars%tlai_patch"):
-                        print(f"Subroutine {self.name} Adding {varname}:")
-                        sys.exit(0)
-                    self.elmtype_access_by_ln[varname] = values
+                    if varname in self.elmtype_access_by_ln:
+                        self.elmtype_access_by_ln[varname].extend(values)
+                    else:
+                        self.elmtype_access_by_ln[varname] = values
                     if "%" not in varname:
-                        print(f"Adding { varname } to elmtype!")
+                        print(_bc.FAIL+f"ERROR: Adding { varname } to elmtype!"+_bc.ENDC)
+                        print(self.name,values)
+                        continue
                     if num_uses == num_reads:
                         # read-only
                         self.elmtype_r[varname] = "r"
@@ -744,9 +772,6 @@ class Subroutine(object):
             trace_derived_type_arguments(self, child_sub, verbose=verbose)
 
             for varname, status in child_sub.elmtype_r.items():
-                if(varname == "solarabs_vars%tlai_patch"):
-                    print(f"Child Subroutine {child_sub.name} Adding {varname}:")
-                    sys.exit(0)
                 if varname in self.elmtype_w.keys():
                     # Check if previously write-only and change to read-write
                     self.elmtype_rw[varname] = "rw"
@@ -1558,8 +1583,6 @@ class Subroutine(object):
             endline = self.cpp_endline
         else:
             endline = self.endline
-
-        debug = False 
 
         args_accessed = {}
         line_num = startline

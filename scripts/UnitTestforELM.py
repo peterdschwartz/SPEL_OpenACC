@@ -410,8 +410,6 @@ def main() -> None:
     os.system(f"cp {spel_mods_dir}unittest_defs.h {case_dir}")
     os.system(f"cp {spel_mods_dir}decompInitMod.F90 {case_dir}")
 
-    type_dict["clumpfilter"].manual_deep_copy()
-
     pickle_unit_test(mod_dict, main_sub_dict, type_dict)
 
     return None

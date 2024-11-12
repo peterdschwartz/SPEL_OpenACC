@@ -49,12 +49,16 @@ def determine_variable_status(
         r"^(class\s*\(|type\s*\(|integer|real|logical|character)", line
     )
     vars_added = {}
+    if verbose:
+        print("line: ", line)
+        print("vars: ", matched_variables)
+        print("assignment:", match_assignment)
+        print("doif:", match_doif)
     # Loop through each derived type and determine rw status.
     for dtype in matched_variables:
         if dtype in vars_added:
             continue
-        else:
-            vars_added[dtype] = True
+        rw_status = None
         if find_variables:
             rw_status = ReadWrite("r", ct)
             dtype_accessed.setdefault(dtype, []).append(rw_status)
@@ -96,6 +100,13 @@ def determine_variable_status(
             elif match_lhs and match_rhs:
                 rw_status = ReadWrite("rw", ct)
                 dtype_accessed.setdefault(dtype, []).append(rw_status)
+
+        if not rw_status:
+            print(f"{func_name}::ERROR Couldn't identify rw_status for {dtype}")
+            print("line:", line)
+            sys.exit(1)
+
+        vars_added[dtype] = rw_status
 
     return dtype_accessed
 
@@ -286,10 +297,12 @@ def replace_ptr_with_targets(elmtype, type_dict, insts_to_type_dict, use_c13c14=
     if not use_c13c14:
         c13c14 = re.compile(r"(c13|c14)")
     else:
-        print("Warning need to double c13/c14 consistency!")
+        print("Warning need to double check c13/c14 consistency!")
         sys.exit(0)
 
     for gv in list(elmtype.keys()):
+        if "%" not in gv:
+            continue
         inst_name, member_name = gv.split("%")
         if "bounds" in inst_name:
             continue
@@ -297,6 +310,7 @@ def replace_ptr_with_targets(elmtype, type_dict, insts_to_type_dict, use_c13c14=
         dtype = type_dict[type_name]
         member = dtype.components[member_name]
         if member["var"].pointer:
+            member["active"] = True
             status = elmtype.pop(gv)
             if not use_c13c14:
                 targets_to_add = {

@@ -50,7 +50,9 @@ def check_global_vars(regex_variables, sub: Subroutine) -> list:
 
 
 def determine_global_variable_status(
-    mod_dict, subroutines: dict[str, Subroutine]
+    mod_dict,
+    subroutines: dict[str, Subroutine],
+    verbose=False,
 ) -> dict[str, Variable]:
     """
     Function that goes through the list of subroutines and returns the non-derived type
@@ -112,6 +114,8 @@ def determine_global_variable_status(
     for sub in all_subs.values():
         active_vars = check_global_vars(regex_variables, sub)
         if active_vars:
+            if verbose:
+                print(f"Subroutine {sub.name} adding {active_vars} ")
             for var in active_vars:
                 variables[var].active = True
                 sub.active_global_vars[var] = variables[var]
