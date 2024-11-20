@@ -276,6 +276,7 @@ class Subroutine(object):
                     global_vars[inst] = dtype
 
         # Loop through subroutine and find any child subroutines
+        endline : int = -999
         if self.cpp_startline:
             if self.associate_end == 0:
                 ct = self.cpp_startline
@@ -290,7 +291,7 @@ class Subroutine(object):
             else:
                 ct = self.associate_end
             endline = self.endline
-        
+
         if self.associate_vars: 
             no_associate = False
         else:
@@ -349,6 +350,7 @@ class Subroutine(object):
                     continue
 
                 # Get the arguments passed to the subroutine
+                call_ln = ct
                 l_unwrp, ct = line_unwrapper(lines=lines, ct=ct)
 
                 # args is a list of arguments passed to subroutine
@@ -415,7 +417,7 @@ class Subroutine(object):
                         matched_vars=args, child_sub=childsub, args=args,
                     )
                     # Store the subroutine call information (name of parent and the arguments passed)
-                    subcall = SubroutineCall(self.name, args_matched)
+                    subcall = SubroutineCall(self.name, args_matched, call_ln)
                     if subcall not in childsub.subroutine_call:
                         childsub.subroutine_call.append(subcall)
 
@@ -539,7 +541,7 @@ class Subroutine(object):
 
                     m_ptr_local = regex_ptr_simple.search(line)
                     if(m_ptr_local):
-                        print(_bc.OKGREEN+f"Line is assoicating ptr - Do not parse"+_bc.ENDC)
+                        print(_bc.OKGREEN+"Line is assoicating ptr - Do not parse"+_bc.ENDC)
                     else:
                         dtype_accessed = determine_variable_status(
                             match_var, line, ct, dtype_accessed, verbose=verbose
@@ -582,7 +584,7 @@ class Subroutine(object):
                     else:
                         child_sub = sub_dict[subname]
 
-                    # arg_to dtype is a list of PointerAlias(ptr=argname,obj=varname)
+                    # arg_to_dtype is a list of PointerAlias(ptr=argname,obj=varname)
                     arg_to_dtype = determine_arg_name(match_var, child_sub, args)
                     vars_passed_as_args = {arg.ptr: arg.obj for arg in arg_to_dtype}
 
@@ -668,9 +670,9 @@ class Subroutine(object):
                     else:
                         self.elmtype_access_by_ln[varname] = values
                     if "%" not in varname:
-                        print(_bc.FAIL+f"ERROR: Adding { varname } to elmtype!"+_bc.ENDC)
+                        print(_bc.FAIL+f"ERROR: adding {varname} to elmtype!"+_bc.ENDC)
                         print(self.name,values)
-                        continue
+                        #sys.exit(1)
                     if num_uses == num_reads:
                         # read-only
                         self.elmtype_r[varname] = "r"
@@ -1523,7 +1525,7 @@ class Subroutine(object):
                 print(
                     _bc.BOLD
                     + _bc.WARNING
-                    + f"Writing to file "
+                    + "Writing to file "
                     + spel_dir
                     + "modified-files/"
                     + self.filepath

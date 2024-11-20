@@ -258,7 +258,7 @@ def match_input_arguments(l_args, sub, special, verbose=False):
     return matched
 
 
-def determine_arg_name(matched_vars, child_sub, args) -> list:
+def determine_arg_name(matched_vars, child_sub, args, verbose=False) -> list:
     """
     Function that takes a list of vars passed as arguments to subroutine and
     checks if any correspond to any in 'matched_vars'
@@ -274,6 +274,11 @@ def determine_arg_name(matched_vars, child_sub, args) -> list:
 
     var_string = "|".join(matched_vars)
     var_string = f"({var_string})"
+    if child_sub.name == "dynamic_plant_alloc":
+        verbose = True
+
+    if verbose:
+        print(func_name, args)
 
     arg_vars_list = []
     # Make lists of matched expressions and their location in args.
@@ -295,6 +300,8 @@ def determine_arg_name(matched_vars, child_sub, args) -> list:
             actual_arg = child_sub.Arguments[arg_key]
             m_var_name = matched_arg
         arg_to_dtype = PointerAlias(actual_arg.name, m_var_name)
+        if verbose:
+            print(f"{func_name}{arg_to_dtype}")
         arg_vars_list.append(arg_to_dtype)
 
     return arg_vars_list

@@ -6,6 +6,7 @@ have broad utility for several modules in SPEL
 import re
 import subprocess as sp
 import sys
+from collections import namedtuple
 
 from mod_config import ELM_SRC, _bc
 
@@ -27,6 +28,10 @@ user_type = re.compile(r"^(class\s*\(|type\s*\()", re.IGNORECASE)
 ng_regex_array = re.compile(r"\w+?\s*\(.+?\)")
 # capture array bounds only:
 regex_bounds = re.compile(r"(?<=(\w|\s))\(.+\)")
+
+# Named tuple used to store line numbers
+# for preprocessed and original files
+PreProcTuple = namedtuple("PreProcTuple", ["cpp_ln", "ln"])
 
 
 class Variable(object):
@@ -1077,7 +1082,7 @@ def line_unwrapper(lines, ct, verbose=False):
     # remove new line character
     simple_l = simple_l.rstrip("\n").strip()
     continuation = bool(simple_l.endswith("&"))
-    full_line = simple_l
+    full_line = simple_l.lower()
     newct = ct
     while continuation:
         newct += 1
@@ -1249,3 +1254,52 @@ def parse_line_for_variables(ifile, l, ln, ptr=False, verbose=False):
             )
 
     return variable_list
+
+def check_cpp_line(base_fn, og_lines, cpp_lines, cpp_ln, og_ln, verbose=False):
+    """Function to check if the compiler preprocessor (cpp) line
+    is a cpp comment and adjust the line numbers accordingly.
+    returns the adjusted line numbers
+    """
+    func_name = "check_cpp_line"
+    # regex to match if the proprocessor comments refer to mod_file
+    regex_file = re.compile(r"({})".format(base_fn))
+    # regex matches a preprocessor comment
+    regex_cpp_comment = re.compile(r"(^# [0-9]+)")
+    # Store current lines to check
+    cpp_line = cpp_lines[cpp_ln]
+    line = og_lines[og_ln]
+    line = line.split("!")[0].strip()
+
+    # Comment out include statements
+    # (NOTE: this is unnecessary and overly specific to elm use case?)
+    regex_include_assert = re.compile(r"^(#include)\s+[\"\'](shr_assert.h)[\'\"]")
+    if regex_include_assert.search(line):
+        if verbose:
+            print(f"{func_name}:: Found include statement to comment out:\n{line}")
+            print(f"cpp line: {cpp_line}")
+        newline = line.replace("#include", "!#py #include")
+        og_lines[og_ln] = newline
+        # include statements take up multiple lines:
+        match_file = regex_file.search(cpp_line)
+        while not match_file:
+            cpp_ln += 1
+            cpp_line = cpp_lines[cpp_ln]
+            match_file = regex_file.search(cpp_line)
+
+    # Check if the line is a preprocessor comment
+    m_cpp = regex_cpp_comment.search(cpp_line)
+    if m_cpp:
+        # Check if the comment refers to the mod_file
+        match_file = regex_file.search(cpp_line)
+        if match_file:
+            # Get the line for the original file, adjusted for 0-based indexing
+            # NOTE: if not match_file, then the comment is for an include statement
+            #       which will be handled in the main part of the code?
+            og_ln = int(m_cpp.group().split()[1]) - 1
+
+        # Since it was a comment, go to the next line
+        cpp_ln += 1
+        if verbose:
+            print(f"{func_name}:: Found CPP comment, new line number: {og_ln}")
+    return cpp_ln, og_ln, og_lines
+

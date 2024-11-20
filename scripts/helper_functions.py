@@ -23,12 +23,16 @@ class ReadWrite(object):
 # to properly match read/write status of variables.
 # SubroutineCall = namedtuple('SubroutineCall',['subname','args'])
 # subclass namedtuple to allow overriding equality.
-class SubroutineCall(namedtuple("SubroutineCall", ["subname", "args"])):
+class SubroutineCall(namedtuple("SubroutineCall", ["subname", "args", "ln"])):
     def __eq__(self, other):
-        return (self.subname == other.subname) and (self.args == other.args)
+        return (
+            (self.subname == other.subname)
+            and (self.args == other.args)
+            and (self.ln == other.ln)
+        )
 
     def __str__(self):
-        return f"{self.subname} ({self.args})"
+        return f"{self.subname}@{self.ln} ({self.args})"
 
 
 def determine_variable_status(

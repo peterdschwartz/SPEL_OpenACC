@@ -5,11 +5,23 @@ from collections import namedtuple
 
 from analyze_subroutines import Subroutine
 from fortran_modules import get_module_name_from_file
-from mod_config import (ELM_SRC, PHYSICAL_PROP_TYPE_LIST, _bc, elm_dir_regex,
-                        preproc_list, shr_dir_regex, spel_mods_dir,
-                        spel_output_dir, unit_test_files)
-from utilityFunctions import (comment_line, find_file_for_subroutine,
-                              getArguments, line_unwrapper)
+from mod_config import (
+    ELM_SRC,
+    PHYSICAL_PROP_TYPE_LIST,
+    _bc,
+    elm_dir_regex,
+    preproc_list,
+    shr_dir_regex,
+    spel_mods_dir,
+    spel_output_dir,
+    unit_test_files,
+)
+from utilityFunctions import (
+    comment_line,
+    find_file_for_subroutine,
+    getArguments,
+    line_unwrapper,
+)
 
 TAB_WIDTH = 2
 indent = 1
@@ -173,11 +185,9 @@ def write_elminstMod(typedict, case_dir):
 
 
 def clean_use_statements(mod_list, file, case_dir):
-    from edit_files import comment_line
-
     """
-     function that will clean both initializeParameters
-     and readConstants
+    function that will clean both initializeParameters
+    and readConstants
     """
     ifile = open(f"{spel_mods_dir}{file}.F90", "r")
     lines = ifile.readlines()
@@ -415,7 +425,7 @@ def prepare_unit_test_files(
         of.writelines(lines)
 
     # Write DeepCopyMod for UnitTest
-    create_deepcopy_module(type_dict, case_dir)
+    create_deepcopy_module(type_dict, case_dir, "DeepCopyMod")
 
     return
 
@@ -1065,20 +1075,20 @@ def create_deepcopy_subroutine(lines, dtype, all_active=False):
     return lines
 
 
-def create_deepcopy_module(type_dict, casedir):
+def create_deepcopy_module(type_dict, casedir, modname, all_active=False):
     """
     Function to create subroutine(s) for performing a manual deepcopy
     """
     tabs = set_indent("reset")
     lines = []
 
-    lines.append("module DeepCopyMod\n")
+    lines.append(f"module {modname}\n")
 
     active_instances = {
         inst_var.name: inst_var
         for dtype in type_dict.values()
         for inst_var in dtype.instances.values()
-        if inst_var.active
+        if inst_var.active or all_active
     }
     active_types = {inst_var.type: True for inst_var in active_instances.values()}
 
@@ -1096,10 +1106,12 @@ def create_deepcopy_module(type_dict, casedir):
 
     for type_name in active_types:
         dtype = type_dict[type_name]
-        lines = create_deepcopy_subroutine(lines, dtype)
+        lines = create_deepcopy_subroutine(
+            lines=lines, dtype=dtype, all_active=all_active
+        )
 
-    lines.append("end module DeepCopyMod")
+    lines.append(f"end module {modname}")
 
-    with open(f"{casedir}/DeepCopyMod.F90", "w") as ofile:
+    with open(f"{casedir}/{modname}.F90", "w") as ofile:
         ofile.writelines(lines)
     return None

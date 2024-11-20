@@ -1,9 +1,9 @@
 import re
 import subprocess as sp
 import sys
-from collections import namedtuple
 
 from analyze_subroutines import Subroutine
+from check_sections import check_if_block
 from DerivedType import get_derived_type_definition
 from fortran_modules import (
     FortranModule,
@@ -13,6 +13,8 @@ from fortran_modules import (
 )
 from mod_config import E3SM_SRCROOT, spel_output_dir
 from utilityFunctions import (
+    PreProcTuple,
+    check_cpp_line,
     comment_line,
     find_variables,
     get_interface_list,
@@ -97,10 +99,6 @@ macros = ["MODAL_AER"]
 # The preprocessed file will have a '# <line_number>' indicating
 # the line number immediately after the #endif in the original file.
 
-# Named tuple used to store line numbers
-# for preprocessed and original files
-PreProcTuple = namedtuple("PreProcTuple", ["cpp_ln", "ln"])
-
 
 def remove_subroutine(og_lines, cpp_lines, start):
     """Function to comment out an entire subroutine"""
@@ -167,57 +165,6 @@ def parse_local_mods(lines, start):
         ct += 1
 
     return remove
-
-
-def check_cpp_line(base_fn, og_lines, cpp_lines, cpp_ln, og_ln, verbose=False):
-    """Function to check if the compiler preprocessor (cpp) line
-    is a cpp comment and adjust the line numbers accordingly.
-    returns the adjusted line numbers
-    """
-    func_name = "check_cpp_line"
-    # regex to match if the proprocessor comments refer to mod_file
-    regex_file = re.compile(r"({})".format(base_fn))
-    # regex matches a preprocessor comment
-    regex_cpp_comment = re.compile(r"(^# [0-9]+)")
-    # Store current lines to check
-    cpp_line = cpp_lines[cpp_ln]
-    line = og_lines[og_ln]
-    line = line.split("!")[0].strip()
-
-    # Comment out include statements
-    # (NOTE: this is unnecessary and overly specific to elm use case?)
-    regex_include_assert = re.compile(r"^(#include)\s+[\"\'](shr_assert.h)[\'\"]")
-    if regex_include_assert.search(line):
-        if verbose:
-            print(f"{func_name}:: Found include statement to comment out:\n{line}")
-            print(f"cpp line: {cpp_line}")
-        newline = line.replace("#include", "!#py #include")
-        og_lines[og_ln] = newline
-        # include statements take up multiple lines:
-        match_file = regex_file.search(cpp_line)
-        while not match_file:
-            cpp_ln += 1
-            cpp_line = cpp_lines[cpp_ln]
-            match_file = regex_file.search(cpp_line)
-        print(f"{func_name}::Skipping to line {cpp_ln}\n {cpp_lines[cpp_ln]}")
-
-    # Check if the line is a preprocessor comment
-    m_cpp = regex_cpp_comment.search(cpp_line)
-    if m_cpp:
-        # Check if the comment refers to the mod_file
-        match_file = regex_file.search(cpp_line)
-        if match_file:
-            # Get the line for the original file, adjusted for 0-based indexing
-            # NOTE: if not match_file, then the comment is for an include statement
-            #       which will be handled in the main part of the code?
-            og_ln = int(m_cpp.group().split()[1]) - 1
-
-        # Since it was a comment, go to the next line
-        cpp_ln += 1
-        if verbose:
-            print(f"{func_name}:: Found CPP comment, new line number: {og_ln}")
-    # If not a cpp comment, these arguments are unchanged.
-    return cpp_ln, og_ln, og_lines
 
 
 def process_fates_or_betr(lines, mode):
@@ -429,6 +376,14 @@ def get_used_mods(ifile, mods, singlefile, mod_dict, verbose=False):
     return mods, mod_dict
 
 
+def AdjustLine(a, b, c):
+    """
+    Function to convert adjust cpp ln number after commenting out lines
+    in the original file (ie, for line continuations)
+    """
+    return a + (b - c)
+
+
 def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
     """
     Function that modifies the source code of the file
@@ -468,16 +423,9 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
     in_subroutine = False
 
     regex_if = re.compile(r"^(if)[\s]*(?=\()", re.IGNORECASE)
-    regex_endif = re.compile(r"^(end\s*if)", re.IGNORECASE)
-    regex_ifthen = re.compile(r"^(if)(.+)(then)$", re.IGNORECASE)
     regex_include_assert = re.compile(r"^(#include)\s+[\"\'](shr_assert.h)[\'\"]")
 
     subs_removed = []
-
-    # Function to convert adjust cpp ln number after commenting out lines
-    # in the original file (ie, for line continuations)
-    def AdjustLine(a, b, c):
-        return a + (b - c)
 
     # Note: can use grep to get sub_start faster, but
     #       some modules have multiple of the same subroutine
@@ -559,18 +507,11 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
                         else:
                             el = re.sub(r"\s*(=>)\s*", "|", el)
                     el = el.strip().lower()
-                    if "spval" in el:
-                        print(f"ERROR: trying to remove {el}")
-                        print(f"cpp_lin: {ct} og_lin: {linenum}")
-                        print(f"line: {l}")
-                        print(f"from file: {base_fn}")
-                        sys.exit(1)
                     if el not in bad_subroutines:
                         if verbose:
                             print(f"Adding {el} to bad_subroutines")
                             print(f"from {fn} \nline: {l}")
                         bad_subroutines.append(el)
-            # comment out use statement
             lines, newct = comment_line(lines=lines, ct=linenum, verbose=verbose)
             ct = AdjustLine(ct, newct, linenum)
             linenum = newct
@@ -592,7 +533,6 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
         match_bad_inst = re.search(r"\b({})\b".format(bad_sub_string), lprime)
         if match_sub:
             in_subroutine = True
-            # TODO: Add better regex to get subroutine name
             subname = l.split()[1].split("(")[0]
             interface_list = get_interface_list()
             if subname in interface_list or "_oacc" in subname:
@@ -639,89 +579,33 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
                     ct = endline_pair.ln
                     linenum = ct
                 subs_removed.append(subname)
-        # Subroutine is calling a subroutine that needs to be removed
         elif match_call:
+            # Subroutine is calling a subroutine that needs to be removed
             lines, newct = comment_line(lines=lines, ct=linenum, verbose=verbose)
             ct = AdjustLine(ct, newct, linenum)
             linenum = newct
             if verbose:
                 print(f"{func_name}::Matched sub call to remove: {l}")
 
-        # Found an instance of something used by a "bad" module
         elif match_bad_inst:
+            # Found an instance of something used by a "bad" module
             if verbose:
                 print(f"{func_name}::Removing usage of {match_bad_inst.group()}\n{l}")
             # Check if any thing used from a module that is to be removed
             match_if = regex_if.search(l)
             match_decl = find_variables.search(l)
             if not match_use and not match_decl:
-                # Check if the bad element is in an if statement.
-                # If so, need to remove the entire if statement.
+                # Check if the bad element is in an if statement. If so, need to remove the entire if statement.
                 if match_if:
-                    # Get a new line adjusted for continuation lines
-                    # So that we can match 'if() then' versus just a 'if()'
-                    l_cont, newct = line_unwrapper(lines=lines, ct=linenum)
-                    l_cont = l_cont.strip().lower()
-                    match_ifthen = regex_ifthen.search(l_cont)
-                    if match_ifthen:
-                        if_counter = 1
-                        match_end_if = regex_endif.search(l)
-                        lines, newct = comment_line(
-                            lines=lines, ct=linenum, verbose=verbose
-                        )
-                        ct = AdjustLine(ct, newct, linenum)
-                        linenum = newct
-                        while if_counter > 0:
-                            ct += 1
-                            linenum += 1
-                            # Adjust if we are looping through compiler preprocessed file
-                            if cpp_file:
-                                line = cpp_lines[ct]
-                                # Function to check if the line is a cpp comment
-                                # and adjust the line numbers accordingly
-                                newct, linenum, lines = check_cpp_line(
-                                    base_fn=base_fn,
-                                    og_lines=lines,
-                                    cpp_lines=cpp_lines,
-                                    cpp_ln=ct,
-                                    og_ln=linenum,
-                                    verbose=verbose,
-                                )
-                                # If cpp_line was a comment, increment and analyze next line
-                                if newct > ct:
-                                    ct = newct
-                                    continue
-                            else:
-                                # not cpp file
-                                linenum = ct
-                                line = lines[ct]
+                    ct, linenum = check_if_block(
+                        ct,
+                        lines,
+                        linenum,
+                        cpp_lines,
+                        base_fn,
+                        verbose=verbose,
+                    )
 
-                            l = line.split("!")[0]  # don't search comments
-                            l = l.strip().lower()
-                            if l:
-                                # Get another complete line to check for nested if statements
-                                l_cont, newct = line_unwrapper(lines=lines, ct=linenum)
-                                l_cont = l_cont.strip().lower()
-
-                                match_nested_ifthen = regex_ifthen.search(l_cont)
-                                if match_nested_ifthen:
-                                    if_counter += 1
-                                # See if we are at the end of the if statement
-                                match_end_if = regex_endif.search(l)
-                                if match_end_if:
-                                    if_counter -= 1
-                                lines, newct = comment_line(
-                                    lines=lines, ct=linenum, verbose=verbose
-                                )
-                                ct = AdjustLine(ct, newct, linenum)
-                                linenum = newct
-
-                    else:  # not match_ifthen
-                        lines, newct = comment_line(
-                            lines=lines, ct=linenum, verbose=verbose
-                        )
-                        ct = AdjustLine(ct, newct, linenum)
-                        linenum = newct
                 else:  # not match_if
                     lines, newct = comment_line(
                         lines=lines, ct=linenum, verbose=verbose
@@ -787,9 +671,6 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
         # increment line numbers.
         linenum += 1
         ct += 1
-    # Added to try and avoid the compilation warnings about not declaring procedures
-    # if subs_removed and overwrite:
-    #    lines = remove_reference_to_subroutine(lines=lines, subnames=subs_removed)
 
     return sub_dict
 
