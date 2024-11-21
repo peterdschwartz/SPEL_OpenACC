@@ -55,28 +55,53 @@ tr:nth-child(even) {
     text-decoration: underline; /* Underline on hover to indicate it's clickable */
 }
 
-.child {
-    margin-left: 20px;
-    display: none;
-    /* Initially hide children */
+.left-panel ul, #SubTree{
+  list-style-type: none;
+  margin: 0;
+  padding-left: 10px;
 }
 
-.toggle {
+.left-panel #SubTree{
+    margin: 0;
+    padding-left: 10px;
+}
+
+.left-panel .parent::before  {
+    content: "\265C";
+}
+
+
+.child {
+    display: none;
+}
+
+/* When .child is visible */
+.active {
+    display: block;
+}
+
+.box {
     cursor: pointer;
+    user-select: none;
     color: black;
     text-decoration: underline;
-    margin-right: 5px;
 }
 
-.arrow {
-    cursor: pointer;
-    color: blue;
-    margin-right: 5px;
+.box::before {
+  content: "\2610";
+  color: black;
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.check-box::before {
+  content: "\2611"; 
+  color: dodgerblue;
 }
 
 .vl {
     border-left: 2px solid black;
-    height: 500px;
+    height: 500px ;
     position: absolute;
     left: 50%;
     margin-left: -3px;
@@ -155,3 +180,27 @@ text-align: left;
 .right-panel table {
     width : 100%;
 }
+
+
+#suggestions-list {
+    list-style-type: none;
+    padding: 0;
+    margin: 0;
+    max-height: 150px;
+    overflow-y: auto;
+    border: 1px solid #ccc;
+    position: absolute;
+    background: white;
+    width: 100%;
+    z-index: 10;
+}
+
+#suggestions-list li {
+    padding: 5px;
+    cursor: pointer;
+}
+
+#suggestions-list li:hover {
+    background-color: #f0f0f0;
+}
+

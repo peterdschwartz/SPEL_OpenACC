@@ -125,19 +125,17 @@ class DjangoSession(models.Model):
 
 
 class ModuleDependency(models.Model):
-    dependency_id = models.AutoField(primary_key=True)
-    module = models.ForeignKey("Modules", models.DO_NOTHING, blank=True, null=True)
+    dependency_id = models.AutoField(primary_key=True, default=1)
+    module = models.ForeignKey("Modules", on_delete=models.CASCADE, default=1)
     dep_module = models.ForeignKey(
         "Modules",
-        models.DO_NOTHING,
+        on_delete=models.CASCADE,
         related_name="moduledependency_dep_module_set",
-        blank=True,
-        null=True,
+        default=1,
     )
     object_used = models.CharField(max_length=100, blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = "module_dependency"
 
 
@@ -146,70 +144,74 @@ class Modules(models.Model):
     module_name = models.CharField(unique=True, max_length=100)
 
     class Meta:
-        managed = False
         db_table = "modules"
 
 
 class SubroutineActiveGlobalVars(models.Model):
-    variable_id = models.AutoField(primary_key=True)
-    subroutine = models.ForeignKey("Subroutines", models.DO_NOTHING)
+    objects = models.Manager()
+    variable_id = models.AutoField(primary_key=True, default=1)
+    subroutine = models.ForeignKey("Subroutines", on_delete=models.CASCADE, default=1)
     instance = models.ForeignKey(
         "UserTypeInstances", models.DO_NOTHING, blank=True, null=True
     )
-    member = models.ForeignKey("TypeDefinitions", models.DO_NOTHING)
-    status = models.CharField(max_length=2)
+    member = models.ForeignKey("TypeDefinitions", models.DO_NOTHING, default=1)
+    status = models.CharField(max_length=2, default="xx")
 
     class Meta:
-        managed = False
         db_table = "subroutine_active_global_vars"
         unique_together = (("instance", "member", "subroutine"),)
 
 
 class SubroutineArgs(models.Model):
     arg_id = models.AutoField(primary_key=True)
-    subroutine = models.ForeignKey("Subroutines", models.DO_NOTHING)
+    subroutine = models.ForeignKey("Subroutines", models.CASCADE, default=1)
     arg_type = models.CharField(max_length=100)
     arg_name = models.CharField(max_length=100)
     dim = models.IntegerField()
 
     class Meta:
-        managed = False
         db_table = "subroutine_args"
 
 
 class SubroutineCalltree(models.Model):
+    objects = models.Manager()
     parent_id = models.AutoField(primary_key=True)
-    parent_subroutine = models.ForeignKey("Subroutines", models.DO_NOTHING)
+    parent_subroutine = models.ForeignKey(
+        "Subroutines",
+        on_delete=models.CASCADE,
+        default=1,
+    )
     child_subroutine = models.ForeignKey(
         "Subroutines",
-        models.DO_NOTHING,
+        on_delete=models.CASCADE,
         related_name="subroutinecalltree_child_subroutine_set",
+        default=1,
     )
 
     class Meta:
-        managed = False
         db_table = "subroutine_calltree"
 
 
 class SubroutineLocalArrays(models.Model):
     local_arry_id = models.AutoField(primary_key=True)
-    subroutine = models.ForeignKey("Subroutines", models.DO_NOTHING)
+    subroutine = models.ForeignKey("Subroutines", on_delete=models.CASCADE, default=1)
     array_name = models.CharField(max_length=100)
     dim = models.IntegerField()
 
     class Meta:
-        managed = False
         db_table = "subroutine_local_arrays"
 
 
 class Subroutines(models.Model):
     subroutine_id = models.AutoField(primary_key=True)
     subroutine_name = models.CharField(unique=True, max_length=100)
-    module = models.ForeignKey(Modules, models.DO_NOTHING)
+    module = models.ForeignKey(Modules, on_delete=models.CASCADE, default=1)
 
     class Meta:
-        managed = False
         db_table = "subroutines"
+
+    def __str__(self):
+        return f"{self.subroutine_name}"
 
 
 class TypeDefinitions(models.Model):

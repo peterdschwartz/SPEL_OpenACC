@@ -3,10 +3,11 @@ import json
 from django.conf import settings
 from django.db import connection
 
+from .models import SubroutineActiveGlobalVars, SubroutineCalltree
+
 DB_NAME = settings.DATABASES["default"]["NAME"]
 
 modules = {}
-subroutines = {}
 
 
 class Node:
@@ -14,7 +15,10 @@ class Node:
         if dependency is None:
             dependency = []
         self.name = name
-        self.dependency = dependency
+        self.children = dependency
+
+    def __repr__(self):
+        return f"Node(name:{self.name},dep:{self.children})"
 
 
 def modules_dfs(mod_id, node):
@@ -32,7 +36,7 @@ def modules_dfs(mod_id, node):
         dep = i[2]
         if dep not in visited:
             n = Node(modules[dep])
-            node.dependency.append(n)
+            node.children.append(n)
             modules_dfs(dep, n)
 
         visited.append(dep)
@@ -40,7 +44,7 @@ def modules_dfs(mod_id, node):
 
 def jsonify(node, d):
     d["node"] = {"name": node.name, "children": []}
-    for child in node.dependency:
+    for child in node.children:
         if child.name != "shr_kind_mod" and child.name != "NULL":
             child_dict = {}
             jsonify(child, child_dict)
@@ -72,6 +76,60 @@ def get_module_calltree(mod_name):
     r = {}
     jsonify(root, r)
     return json.dumps(r)
+
+
+def get_subroutine_details(instance, member, mode):
+    from django.db.models import F
+
+    """
+    Function that queries database
+    """
+    # Filter subroutines not in the call tree
+    if mode == "head":
+        excluded_subroutines = SubroutineCalltree.objects.values_list(
+            "child_subroutine", flat=True
+        )
+    else:
+        excluded_subroutines = []
+
+    if instance != "":
+        if member != "":
+            # Query the database with partial matches
+            results = (
+                SubroutineActiveGlobalVars.objects.filter(
+                    instance__instance_name=instance,
+                    member__member_name__contains=member,  # Partial match for member_name
+                )
+                .exclude(subroutine__in=list(excluded_subroutines))
+                .values(
+                    sub=F("subroutine__subroutine_name"),
+                    inst=F("instance__instance_name"),
+                    m=F("member__member_name"),
+                    rw=F("status"),
+                )
+            )
+        else:
+            results = (
+                SubroutineActiveGlobalVars.objects.filter(
+                    instance__instance_name__contains=instance,
+                )
+                .exclude(subroutine__in=list(excluded_subroutines))
+                .values(
+                    sub=F("subroutine__subroutine_name"),
+                    inst=F("instance__instance_name"),
+                    m=F("member__member_name"),
+                    rw=F("status"),
+                )
+            )
+    elif instance == "" and member == "":
+        results = SubroutineActiveGlobalVars.objects.all().values(
+            sub=F("subroutine__subroutine_name"),
+            inst=F("instance__instance_name"),
+            m=F("member__member_name"),
+            rw=F("status"),
+        )
+    # Extract the subroutine names
+    return results
 
 
 def subroutine_active_table(instance, member):
@@ -145,7 +203,19 @@ def subroutine_active_table_ALL(instance, member):
     return s
 
 
-def subroutine_dfs(sub_id, node):
+def subroutine_dfs(sub_id, node, id_to_sub, active_subs):
+    """
+    Function that performs a depth-first-search of subroutine call tree,
+    to get the child subroutines.
+
+    If active_sub is non-empty, only subroutines listed their are included
+    """
+
+    if active_subs:
+        all_active = False
+    else:
+        all_active = True
+
     if sub_id == 0:
         return
     visited = []
@@ -156,50 +226,71 @@ def subroutine_dfs(sub_id, node):
         )
         s = cur.fetchall()
 
+    # Note that each row of s is of the form:
+    #   dep_id  parent_id child_id
     for i in s:
         dep = i[2]
-        if subroutines[dep] == "Null":
+        dep_name = id_to_sub[dep]
+        if dep_name == "Null":
             continue
-        if dep not in visited:
-            n = Node(subroutines[dep])
-            node.dependency.append(n)
-            subroutine_dfs(dep, n)
+        if dep not in visited and (all_active or dep_name in active_subs):
+            n = Node(id_to_sub[dep])
+            node.children.append(n)
+            subroutine_dfs(dep, n, id_to_sub, active_subs)
 
         visited.append(dep)
 
 
 def subroutine_calltree_helper():
+    subroutines = {}
     with connection.cursor() as cur:
         cur.execute("SELECT * FROM subroutines")
         s = cur.fetchall()
     for i in s:
         subroutines[i[0]] = i[1]
 
-    return subroutines
+    sub_to_id = {val: key for key, val in subroutines.items()}
+    return subroutines, sub_to_id
 
 
 def get_subroutine_calltree(instance, member):
-    res = []
-    if instance != "" and member != "":
-        subs = subroutine_active_table(instance, member)
-        all = subroutine_active_table_ALL(instance, member)
-    else:
-        all = []
-    for sub_name in subs:
-        if sub_name == "Null":
-            continue
+    tree = []
+
+    active_vars_query = get_subroutine_details(instance, member, mode="")
+    parent_subs = get_subroutine_details(instance, member, mode="head")
+
+    parent_sub_names = []
+    [
+        parent_sub_names.append(row["sub"])
+        for row in parent_subs
+        if row["sub"] not in parent_sub_names
+    ]
+
+    active_subs = []
+    if active_vars_query:
+        [
+            active_subs.append(s["sub"])
+            for s in active_vars_query
+            if s["sub"] not in active_subs
+        ]
+
+    active_vars_table = []
+    for item in active_vars_query:
+        row = [
+            item["sub"],
+            f'{item["inst"]}%{item["m"]}',
+            item["rw"],
+        ]
+        active_vars_table.append(row)
+
+    for sub_name in parent_sub_names:
         root = Node("")
-        subroutines = subroutine_calltree_helper()
+        id_to_sub, sub_to_id = subroutine_calltree_helper()
         root.name = sub_name
-        key = None
 
-        try:
-            key = list(subroutines.keys())[list(subroutines.values()).index(sub_name)]
-        except ValueError as e:
-            return "n/a"
+        key = sub_to_id[sub_name]
 
-        subroutine_dfs(key, root)
-        r = {}
-        jsonify(root, r)
-        res.append(json.dumps(r))
-    return res, all
+        subroutine_dfs(key, root, id_to_sub, active_subs)
+        tree.append(root)
+
+    return tree, active_vars_table

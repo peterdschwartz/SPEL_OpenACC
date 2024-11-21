@@ -3,10 +3,11 @@ from django.db import connection, models
 from django.shortcuts import HttpResponse, render
 from django.views.decorators.http import require_http_methods
 
-from .calltree import get_module_calltree, get_subroutine_calltree
+from .calltree import Node, get_module_calltree, get_subroutine_calltree
 from .models import (
     ModuleDependency,
     Modules,
+    SubroutineActiveGlobalVars,
     SubroutineArgs,
     SubroutineCalltree,
     Subroutines,
@@ -65,6 +66,7 @@ VIEWS_TABLE_DICT = {
             "Module": "module.module_name",
             "Subroutine": "subroutine_name",
         },
+        "title": "Table of Subroutines",
     },
     "modules": {
         "name": Modules,
@@ -73,6 +75,7 @@ VIEWS_TABLE_DICT = {
             "Id": "module_id",
             "Module": "module_name",
         },
+        "title": "Table of Modules",
     },
     "subroutine_calltree": {
         "name": SubroutineCalltree,
@@ -82,6 +85,7 @@ VIEWS_TABLE_DICT = {
             "Parent Sub": "parent_subroutine.subroutine_name",
             "Child Sub": "child_subroutine.subroutine_name",
         },
+        "title": "Table of Subroutine Call Tree",
     },
     "types": {
         "name": TypeDefinitions,
@@ -95,6 +99,7 @@ VIEWS_TABLE_DICT = {
             "Dim": "dim",
             "Bounds": "bounds",
         },
+        "title": "Table of Type Definitions",
     },
     "dependency": {
         "name": ModuleDependency,
@@ -105,6 +110,7 @@ VIEWS_TABLE_DICT = {
             "Dependent Mod": "dep_module.module_name",
             "Used object": "object_used",
         },
+        "title": "Table of Module Dependencies",
     },
     "instances": {
         "name": UserTypeInstances,
@@ -115,6 +121,7 @@ VIEWS_TABLE_DICT = {
             "Type Name": "instance_type.user_type_name",
             "Instance Name": "instance_name",
         },
+        "title": "Table of User Type Instances",
     },
     "subroutineargs": {
         "name": SubroutineArgs,
@@ -126,6 +133,19 @@ VIEWS_TABLE_DICT = {
             "Arg Name": "arg_name",
             "Dim": "dim",
         },
+        "title": "Table of Subroutine Arguments",
+    },
+    "activeglobalvars": {
+        "name": SubroutineActiveGlobalVars,
+        "html": "active_global_vars.html",
+        "fields": {
+            "Id": "variable_id",
+            "Subroutine": "subroutine.subroutine_name",
+            "Inst": "instance.instance_name",
+            "Member": "member.member_name",
+            "Status": "status",
+        },
+        "title": "Table of Global Vars by Subroutine",
     },
 }
 
@@ -169,30 +189,55 @@ def modules_calltree(request):
 def subcall(request):
     if request.method == "POST":
         variable = request.POST.get("Variable")
-        instance, member = variable.split("%")
+        if "%" in variable:
+            instance, member = variable.split("%")
+        else:
+            # Assume just an instance.
+            instance = variable
+            member = ""
     else:
         instance = "bounds"
         member = "begc"
-    tree, all = get_subroutine_calltree(instance, member)
-    print(f"CallTree with {instance}%{member}\n{tree}")
+    tree_list, all = get_subroutine_calltree(instance, member)
 
+    html_tree = build_tree_html(tree_list)
     context = {
-        "tree": tree,
+        "tree": html_tree,
         "all": all,
     }
     if request.method == "POST":
-        return render(request, "partials/table_subcall.html", context)
+        # return render(request, "partials/table_subcall.html", context)
+        return render(request, "partials/subcall_partial.html", context)
     return render(request, "partials/subcall_partial.html", context)
 
 
-def subroutine_calltree(request):
-    if request.method == "POST":
-        variable = request.POST.get("Variable")
-        instance, member = variable.split("%")
-        tree, all = get_subroutine_calltree(instance, member)
+def build_tree_html(tree: list[Node]):
+    """Recursive function to build HTML for a tree."""
+    html = '<ul id="SubTree">'
+    for node in tree:
+        html += process_node(node)
+    html += "</ul>"
+    return html
+
+
+def process_node(node: Node):
+    """
+    Function to tranlate Node("name":name,"children":[])
+    to html
+    """
+    html = ""
+
+    if node.children:
+        html += f'<li><span class="box">{node.name}</span>'
+        html += '<ul class="child">'
+        for child in node.children:
+            html += process_node(child)
+        html += "</ul>"
+        html += "</li>"
     else:
-        return render(request, "subroutine_calltree.html", {})
-    return render(request, "subroutine_calltree.html", {"tree": tree, "all": all})
+        html += f'<li class="parent">{node.name}</li>'
+
+    return html
 
 
 @require_http_methods(["GET", "POST"])
@@ -208,8 +253,9 @@ def view_table(request, table_name):
 
     model = table["name"]
     display_fields = table["fields"]
+    print(table)
+    title = table["title"]
     if request.method == "POST":
-        print(request.headers)
         sort_by = request.POST.get("sort_by", None)
     else:
         sort_by = None
@@ -242,12 +288,13 @@ def view_table(request, table_name):
         "all_objects": rows,
         "field_names": display_fields,
         "table_name": table_name,
+        "title": table["title"],
     }
     # Check if the request is coming from HTMX (for partial table response)
     if request.headers.get("HX-Request"):
         return render(request, "partials/dynamic_table.html", context)
 
-    return render(request, table["html"], context)
+    return render(request, "partials/table_view.html", context)
 
 
 def home(request):
@@ -262,3 +309,9 @@ def fake(request, table):
     table = VIEWS_TABLE_DICT[table]
     # print(table["name"])
     return render(request, "query_variables.html", {"table": table["dict"]})
+
+
+def autocomplete(request):
+    query = request.GET.get("q", "")
+
+    return render(request, "partials/autocomplete_results.html", context)
