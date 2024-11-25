@@ -24,15 +24,22 @@ def get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=Fa
     type_end_line = 0
     user_derived_type = DerivedType(type_name, vmod=modname, fpath=ifile)
 
+    regex_contains = re.compile(r"\b(contains)\b")
+    regex_end_type = re.compile(r"^(end\s+type)")
+
     member_list = []
     ct = ln
     while ct < len(lines):
         full_line, ct = line_unwrapper(lines, ct)
         full_line = full_line.strip().lower()
         # test to see if we exceeded type definition
-        _end = re.search(r"^(end\s+type)", full_line)
-        if verbose:
-            print(full_line)
+        _end = regex_end_type.search(full_line)
+        _contains = regex_contains.search(full_line)
+        if _contains:
+            ct = user_derived_type.get_type_procedures(regex_end_type, lines, ct)
+            type_end_line = ct
+            break
+
         if not _end:
             data_type = re.compile(r"^\s*(real|integer|logical|character)")
             m = data_type.search(full_line)
@@ -142,12 +149,17 @@ class DerivedType(object):
         self.analyzed = False
         self.active = False
         self.init_sub = None
+        self.procedures = {}
 
     def __repr__(self):
         return f"DerivedType({self.type_name})"
 
     def _add_components(
-        self, member_list: list[Variable], lines, type_end, verbose=False
+        self,
+        member_list: list[Variable],
+        lines,
+        type_end,
+        verbose=False,
     ):
         """
         Function to add components to the derived type.
@@ -283,6 +295,14 @@ class DerivedType(object):
         for v in self.instances.values():
             ofile.write(hl.OKBLUE + f"{v.type} {v.name} {v.declaration}\n" + hl.ENDC)
         ofile.write(hl.WARNING + f"Initialized in {self.init_sub} \n" + hl.ENDC)
+        if self.procedures:
+            ofile.write(hl.OKGREEN + f"Type Procedures:\n")
+            for alias, proc in self.procedures.items():
+                if alias != proc:
+                    ofile.write(f"{alias} => {proc}\n")
+                else:
+                    ofile.write(f"{alias}\n")
+            ofile.write(hl.ENDC)
         if long:
             ofile.write("w/ components:\n")
             for c in self.components.values():
@@ -426,3 +446,43 @@ class DerivedType(object):
                 ofile.write(tabs * depth + "end do\n")
 
         return None
+
+    def get_type_procedures(self, regex_end, lines, ln):
+        """
+        Function
+        """
+        func_name = "get_type_procedures::"
+        regex_proc = re.compile(r"^(procedure)\b")
+
+        ln += 1
+        full_line, ln = line_unwrapper(lines, ln)
+        m_end = regex_end.search(full_line)
+        while not m_end:
+            m_proc = regex_proc.search(full_line)
+            if m_proc:
+                if "::" not in full_line:
+                    print(
+                        f"{func_name}Error-type proc syntax unaccounted for\n{full_line}"
+                    )
+                    sys.exit(1)
+
+                proc_string = full_line.split("::")[1]
+                if "=>" in proc_string:
+                    # There's an alias:
+                    split_str = proc_string.split("=>")
+                    alias = split_str[0].strip()
+                    proc_name = split_str[1].strip()
+                else:
+                    alias = proc_string.strip()
+                    proc_name = alias
+                    if "," in proc_name:
+                        print(
+                            f"{func_name}Error - multiple procedures declared on same line?\n{full_line}"
+                        )
+                        sys.exit(1)
+                self.procedures[alias] = proc_name
+            ln += 1
+            full_line, ln = line_unwrapper(lines, ln)
+            m_end = regex_end.search(full_line)
+
+        return ln
