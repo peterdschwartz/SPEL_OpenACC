@@ -7,11 +7,12 @@ import re
 import subprocess as sp
 import sys
 from collections import namedtuple
+from dataclasses import dataclass
 
 from mod_config import ELM_SRC, _bc
 
 # Regular Expressions
-find_type = re.compile(r"(?<=\()\w+(?=\))")  # Matches type(user-type) -> user-type
+find_type = re.compile(r"(?<=\()\s*\w+\s*(?=\))")  # Matches type(user-type) -> user-type
 # Match any variable declarations
 find_variables = re.compile(
     r"^(class\s*\(|type\s*\(|integer|real|logical|character)", re.IGNORECASE
@@ -32,7 +33,6 @@ regex_bounds = re.compile(r"(?<=(\w|\s))\(.+\)")
 # Named tuple used to store line numbers
 # for preprocessed and original files
 PreProcTuple = namedtuple("PreProcTuple", ["cpp_ln", "ln"])
-
 
 class Variable(object):
     """
@@ -151,6 +151,22 @@ def comment_line(lines, ct, mode="normal", verbose=False):
             print(lines[ct].rstrip("\n"))
         continuation = bool(newline.strip("\n").strip().endswith("&"))
     return lines, ct
+
+def split_func_line(line):
+    """
+    Function to split function definition line
+    """
+    func_name = "split_func_line::"
+    regex_func = re.compile(r"\b(function)\b")
+
+    split_line = regex_func.split(line)
+    split_line = [s.strip() for s in split_line]
+
+    if len(split_line) != 3 or split_line[1].strip() != "function":
+        print(f"{func_name}Split Failed", split_line)
+        sys.exit(1)
+
+    return split_line
 
 
 def removeBounds(line, verbose=False):
@@ -429,19 +445,18 @@ def getLocalVariables(sub, verbose=False, class_var=False):
     else:
         match_arg = None
 
-    find_type = re.compile(r"(?<=\()\w+(?=\))")
     class_var = re.compile(r"^(class\s*\()", re.IGNORECASE)
     find_variables = re.compile(
-        "^(class\s*\(|type\s*\(|integer|real|logical|character)", re.IGNORECASE
+        r"^(class\s*\(|type\s*\(|integer|real|logical|character)", re.IGNORECASE
     )
     regex_var = re.compile(r"\w+")
-    regex_subgrid_index = re.compile("(?<=bounds\%beg)[a-z]", re.IGNORECASE)
+    regex_subgrid_index = re.compile(r"(?<=bounds\%beg)[a-z]", re.IGNORECASE)
     # test for intrinsic data types or user defined
     intrinsic_type = re.compile(r"^(integer|real|logical|character)", re.IGNORECASE)
     user_type = re.compile(r"^(class\s*\(|type\s*\()", re.IGNORECASE)
     ng_array_ind = re.compile(r"(?<=\w)\s*(\(.+?\))")
 
-    ln = startline
+    ln = startline+1
     while ln < endline:
         line, ln = line_unwrapper(lines=lines, ct=ln)
         line = line.strip().lower()
@@ -449,6 +464,8 @@ def getLocalVariables(sub, verbose=False, class_var=False):
         match_variable = find_variables.search(line)
 
         if match_variable:
+            if verbose:
+                print(f"{func_name} Matched:{match_variable.group()},{line}")
             # Track variable declaration start / end
             if sub.var_declaration_startl == 0:
                 sub.var_declaration_startl = ln
@@ -468,6 +485,7 @@ def getLocalVariables(sub, verbose=False, class_var=False):
                     data_type = find_type.search(line).group()
 
                 temp_vars = intrinsic_type.sub("", line)
+                temp_decl = line.replace(temp_vars,"")
             else:
                 # Could be a list of variables
                 temp_decl = line.split("::")[0]
@@ -525,6 +543,7 @@ def getLocalVariables(sub, verbose=False, class_var=False):
                             dim,
                             parameter=parameter,
                             optional=optional,
+                            bounds=bounds,
                         )
                     else:
                         sub.LocalVariables["arrays"][varname] = Variable(
@@ -1156,9 +1175,8 @@ def parse_line_for_variables(ifile, l, ln, ptr=False, verbose=False):
             # regex to separate type from variable when there is no '::' separator
             ng_type = re.compile(r"^\w+?\s*\(.+?\)")
             match_type = ng_type.search(l)
-            if (
-                match_type
-            ):  # Means there exists a character(len=) or type(.) or real(r8)
+            if (match_type):
+                # Means there exists a character(len=) or type(.) or real(r8)
                 temp_decl = match_type.group()
                 temp_vars = l.split(temp_decl)[1]
             else:  # means it's a simple decl such as 'integer'
@@ -1260,7 +1278,7 @@ def check_cpp_line(base_fn, og_lines, cpp_lines, cpp_ln, og_ln, verbose=False):
     is a cpp comment and adjust the line numbers accordingly.
     returns the adjusted line numbers
     """
-    func_name = "check_cpp_line"
+    func_name = "check_cpp_line::"
     # regex to match if the proprocessor comments refer to mod_file
     regex_file = re.compile(r"({})".format(base_fn))
     # regex matches a preprocessor comment
@@ -1270,12 +1288,11 @@ def check_cpp_line(base_fn, og_lines, cpp_lines, cpp_ln, og_ln, verbose=False):
     line = og_lines[og_ln]
     line = line.split("!")[0].strip()
 
-    # Comment out include statements
     # (NOTE: this is unnecessary and overly specific to elm use case?)
     regex_include_assert = re.compile(r"^(#include)\s+[\"\'](shr_assert.h)[\'\"]")
     if regex_include_assert.search(line):
         if verbose:
-            print(f"{func_name}:: Found include statement to comment out:\n{line}")
+            print(f"{func_name}Found include statement to comment out:\n{line}")
             print(f"cpp line: {cpp_line}")
         newline = line.replace("#include", "!#py #include")
         og_lines[og_ln] = newline
@@ -1288,7 +1305,7 @@ def check_cpp_line(base_fn, og_lines, cpp_lines, cpp_ln, og_ln, verbose=False):
 
     # Check if the line is a preprocessor comment
     m_cpp = regex_cpp_comment.search(cpp_line)
-    if m_cpp:
+    while(m_cpp):
         # Check if the comment refers to the mod_file
         match_file = regex_file.search(cpp_line)
         if match_file:
@@ -1296,10 +1313,12 @@ def check_cpp_line(base_fn, og_lines, cpp_lines, cpp_ln, og_ln, verbose=False):
             # NOTE: if not match_file, then the comment is for an include statement
             #       which will be handled in the main part of the code?
             og_ln = int(m_cpp.group().split()[1]) - 1
+            if verbose:
+                print(f"{func_name}:: Found CPP comment, new line number: {og_ln}")
 
         # Since it was a comment, go to the next line
         cpp_ln += 1
-        if verbose:
-            print(f"{func_name}:: Found CPP comment, new line number: {og_ln}")
+        m_cpp = regex_cpp_comment.search(cpp_lines[cpp_ln])
+
     return cpp_ln, og_ln, og_lines
 

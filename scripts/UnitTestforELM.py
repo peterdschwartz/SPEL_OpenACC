@@ -47,7 +47,7 @@ def main() -> None:
     if args.casename:
         casename = args.casename
     else:
-        casename = "canflux"
+        casename = "fut"
 
     case_dir = unittests_dir + casename
 
@@ -121,15 +121,13 @@ def main() -> None:
                 mods=needed_mods,
                 required_mods=default_mods,
                 main_sub_dict=main_sub_dict,
-                overwrite=False,
-                verbose=True,
+                overwrite=True,
+                verbose=False,
             )
-            # Update initial subroutine with data collected by `process_for_unit_test`
             # NOTE: direct assignment here means that changes to subroutines[s] object
             #       below will be reflected immediately in main_sub_dict. Make explicit instead?
             subroutines[s] = main_sub_dict[s]
             subroutines[s].unit_test_function = True
-            sys.exit(1)
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
     # examineLoops performs adjustments that go beyond the "naive"                  #

@@ -10,10 +10,12 @@ from helper_functions import (ReadWrite, SubroutineCall,
 from interfaces import determine_arg_name, resolve_interface
 from log_functions import center_print
 from LoopConstructs import Loop, exportVariableDependency
-from mod_config import _bc, spel_dir
+from mod_config import _bc, _no_colors, spel_dir
 from process_associate import getAssociateClauseVars
-from utilityFunctions import (find_file_for_subroutine, get_interface_list,
-                              getArguments, getLocalVariables, line_unwrapper)
+from utilityFunctions import (Variable, find_file_for_subroutine, find_type,
+                              get_interface_list, getArguments,
+                              getLocalVariables, line_unwrapper,
+                              split_func_line)
 
 
 class Subroutine(object):
@@ -57,6 +59,7 @@ class Subroutine(object):
         ignore_interface=False,
         verbose=False,
         lib_func=False,
+        function=None,
     ):
         """
         Initalizes the subroutine object:
@@ -67,9 +70,9 @@ class Subroutine(object):
 
         self.name = name
         self.library = lib_func
+        self.func = True if function else False
         if lib_func:
             print(f"Creating Subroutine {self.name} in {file} L{start}-{end}")
-        # Find subroutine
         if not ignore_interface:
             if not file and start == 0 and end == 0:
                 file, start, end = find_file_for_subroutine(name=name)
@@ -91,7 +94,7 @@ class Subroutine(object):
         self.calltree.append(name)
 
         # Initialize arguments and local variables
-        self.Arguments = {}  # Order is important here
+        self.Arguments = {}
         self.LocalVariables = {}
         self.LocalVariables["arrays"] = {}
         self.LocalVariables["scalars"] = {}
@@ -112,28 +115,44 @@ class Subroutine(object):
 
         # Process the Associate Clause
         self.associate_vars = {}
+        self.associate_start = -1
+        self.associate_end = -1
+        self.dummy_args_list = []
+        self.return_type = function.return_type if function else ""
+        self.result_name = function.result if function else ""
+        self.result = None
+
         if not lib_func:
             self.associate_vars, jstart, jend = getAssociateClauseVars(self)
             self.associate_start = jstart
             self.associate_end = jend
-
-        # Retrieve dummy arguments and parse variables
-        if not lib_func:
             self.dummy_args_list = self._get_dummy_args()
             getLocalVariables(self, verbose=verbose)
 
+
+        if function:
+            if self.result_name in self.Arguments:
+                self.result = self.Arguments.pop(self.result_name)
+            else:
+                self.result = Variable(
+                            type=self.return_type,
+                            name=self.result_name,
+                            subgrid="?",
+                            ln=self.startline,
+                            dim=0,
+                )
+            self.dummy_args_list.remove(self.result_name)
         if self.Arguments:
             sort_args = {}
             for arg in self.dummy_args_list:
                 sort_args[arg] = self.Arguments[arg]
             self.Arguments = sort_args.copy()
 
-        # These 3 dictionaries will be summaries of ReadWrite Status for
-        # the FUT subroutines as a whole
+        # These 3 dictionaries will be summaries of ReadWrite Status for the FUT subroutines as a whole
         self.elmtype_r = {}
         self.elmtype_w = {}
         self.elmtype_rw = {}
-        # This dict holds "global var" : list[ReadWrite] with no processing.
+        # This dict holds "global_var" : list[ReadWrite] with no processing.
         self.elmtype_access_by_ln = {}
 
         self.subroutine_call = []
@@ -142,13 +161,16 @@ class Subroutine(object):
         self.acc_status = False
         self.DoLoops = []
         self.analyzed_child_subroutines = False
-        self.active_global_vars = {} # non-derived type variables used in the subroutine
+
+        # non-derived type variables used in the subroutine
+        self.active_global_vars = {}
 
         # Flag that denotes subroutines that were user requested 
         self.unit_test_function = False
 
     def __repr__(self) -> str:
-        return f"Subroutine({self.name})"
+        name = "Subroutine" if not self.func else "Function"
+        return f"{name}({self.name})"
 
     def print_subroutine_info(self, ofile=sys.stdout, long=False):
         """
@@ -157,37 +179,46 @@ class Subroutine(object):
         """
         tab = "  "
         base_path = "/".join(self.filepath.split("/")[-2:])
-        ofile.write(
-            _bc.HEADER
-            + f"Subroutine {self.name} in {base_path} L{self.startline}-{self.endline}\n"
-            + _bc.ENDC
-        )
 
-        ofile.write(_bc.WARNING + "Has Arguments:\n" + _bc.ENDC)
+        if ofile != sys.stdout:
+            c = _no_colors
+        else:
+            c = _bc
+
+        title = "Subroutine" if not self.func else "Function"
+        ofile.write(
+            c.HEADER
+            + f"{title} {self.name} in {base_path} L{self.startline}-{self.endline}\n"
+            + c.ENDC
+        )
+        if self.func:
+            ofile.write(c.HEADER+f"{tab}Result -> {self.result}\n")
+
+        ofile.write(c.WARNING + "Has Arguments:\n" + c.ENDC)
         for arg in self.Arguments.values():
             if arg.optional:
                 _str = "~" * len(tab)
             else:
                 _str = tab
-            ofile.write(_bc.OKBLUE + _str + f"{arg}\n" + _bc.ENDC)
+            ofile.write(c.OKBLUE + _str + f"{arg}\n" + c.ENDC)
 
         # Print local variables
-        ofile.write(_bc.WARNING + "Local Arrays:\n" + _bc.ENDC)
+        ofile.write(c.WARNING + "Local Arrays:\n" + c.ENDC)
         array_dict = self.LocalVariables["arrays"]
         for arg in array_dict:
             var = array_dict[arg]
-            ofile.write(_bc.OKGREEN + f"{tab}{var}\n" + _bc.ENDC)
+            ofile.write(c.OKGREEN + f"{tab}{var}\n" + c.ENDC)
         if long:
-            ofile.write(_bc.WARNING + "Local Scalars:\n")
+            ofile.write(c.WARNING + "Local Scalars:\n")
             for arg in self.LocalVariables["scalars"]:
                 ofile.write(f"{tab}{arg}\n")
 
         # print Child Subroutines
         if self.child_Subroutine:
-            ofile.write(_bc.WARNING + "Child Subroutines:\n")
+            ofile.write(c.WARNING + "Child Subroutines:\n")
             for s in self.child_Subroutine.values():
                 ofile.write(f"{tab}{s.name}\n")
-        ofile.write(_bc.ENDC)
+        ofile.write(c.ENDC)
         return None
 
     def _get_dummy_args(self):
@@ -196,16 +227,33 @@ class Subroutine(object):
         for the s
         And then passes it to the getArguments function
         """
-        from utilityFunctions import getArguments
+        func_name = "_get_dummy_args"
+        tabs = ' '*len(func_name)
 
         ifile = open(self.filepath, "r")
         lines = ifile.readlines()
         ifile.close()
+        regex = re.compile(r'(?<=\()[\w\s,]+(?=\))')
 
         ln = self.startline
         full_line,ln = line_unwrapper(lines=lines,ct=ln)
+        if self.func:
+            _ftype, _f , func_rest = split_func_line(full_line)
+            args_and_res = regex.findall(func_rest)
+            args = args_and_res[0].split(',')
+            if(len(args_and_res)!=2):
+                args.append(self.result_name)
+            elif len(args_and_res) == 2:
+                args.append(args_and_res[1])
+            else:
+                print(f"{func_name}Error - wrong function dummy args")
+                print(f"{tabs}{args_and_res}\n{tabs}{full_line}")
+                sys.exit(1)
+        else:
+            args_str = regex.findall(full_line)
+            args = args_str[0].split(',')
 
-        args = getArguments(full_line)
+        args = [arg.strip() for arg in args]
         return args
 
     def _get_global_constants(self, constants):
@@ -672,7 +720,7 @@ class Subroutine(object):
                     if "%" not in varname:
                         print(_bc.FAIL+f"ERROR: adding {varname} to elmtype!"+_bc.ENDC)
                         print(self.name,values)
-                        #sys.exit(1)
+                        sys.exit(1)
                     if num_uses == num_reads:
                         # read-only
                         self.elmtype_r[varname] = "r"

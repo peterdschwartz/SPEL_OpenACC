@@ -5,23 +5,11 @@ from collections import namedtuple
 
 from analyze_subroutines import Subroutine
 from fortran_modules import get_module_name_from_file
-from mod_config import (
-    ELM_SRC,
-    PHYSICAL_PROP_TYPE_LIST,
-    _bc,
-    elm_dir_regex,
-    preproc_list,
-    shr_dir_regex,
-    spel_mods_dir,
-    spel_output_dir,
-    unit_test_files,
-)
-from utilityFunctions import (
-    comment_line,
-    find_file_for_subroutine,
-    getArguments,
-    line_unwrapper,
-)
+from mod_config import (ELM_SRC, PHYSICAL_PROP_TYPE_LIST, _bc, elm_dir_regex,
+                        preproc_list, shr_dir_regex, spel_mods_dir,
+                        spel_output_dir, unit_test_files)
+from utilityFunctions import (comment_line, find_file_for_subroutine,
+                              getArguments, line_unwrapper)
 
 TAB_WIDTH = 2
 indent = 1
@@ -322,7 +310,6 @@ def find_parent_subroutine_call(
             if arg in parent_sub.Arguments:
                 argvar = parent_sub.Arguments[arg]
                 if argvar.type in type_dict:
-                    # Choose an instance?
                     inst_var = type_dict[argvar.type].instances[0]
                     args_as_instances[inst_var.name] = inst_var
                 else:
@@ -332,7 +319,7 @@ def find_parent_subroutine_call(
             elif arg in parent_sub.LocalVariables["scalars"]:
                 args_as_vars[arg] = parent_sub.LocalVariables["scalars"][arg]
             else:
-                print(_bc.FAIL + "STILL CAN'T FIND ARGS (non-derived type global var?)")
+                print(_bc.FAIL + f"Can't find {arg} (non-derived type global var?)")
 
         # Variables to have declarations added to main.F90
         if args_as_vars:

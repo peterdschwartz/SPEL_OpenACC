@@ -1,6 +1,27 @@
 import re
+import sys
+from dataclasses import dataclass
 
-from utilityFunctions import check_cpp_line, comment_line, line_unwrapper
+from analyze_subroutines import Subroutine
+from mod_config import spel_output_dir
+from utilityFunctions import (
+    PreProcTuple,
+    check_cpp_line,
+    comment_line,
+    find_type,
+    intrinsic_type,
+    line_unwrapper,
+    split_func_line,
+)
+
+
+@dataclass
+class FunctionReturn:
+    return_type: str
+    name: str
+    result: str
+    start_ln: int
+    cpp_start: int
 
 
 def AdjustLine(a, b, c):
@@ -11,10 +32,86 @@ def AdjustLine(a, b, c):
     return a + (b - c)
 
 
+def check_function_start(line, ln_pair, regex_func, verbose=False):
+    """
+    Function to parse function start for result type and name
+    """
+
+    func_name = "check_function_start::"
+
+    split_line = split_func_line(line)
+
+    func_type, func_keyword, func_rest = split_line
+    if func_type:
+        # Definition:  <function type> function <name>(<args>)
+        if "type" in func_type:
+            func_type = find_type.search(func_type).group()
+        else:
+            func_type = intrinsic_type.search(func_type).group()
+        func_name = func_rest.split("(")[0]
+        func_result = func_name
+    else:
+        # is it worth getting this here or after local variables are parsed?
+        func_type = ""
+        func_name = func_rest.split("(")[0]
+        # Definition: function <name>(<args>) result(<result>) || function <name>(<args>)
+        args_and_res = find_type.findall(func_rest)
+        args_and_res = [v.strip() for v in args_and_res]
+        if len(args_and_res) == 2:
+            args, func_result = args_and_res
+        else:
+            func_result = func_name.strip()
+
+    return FunctionReturn(
+        return_type=func_type,
+        name=func_name,
+        result=func_result,
+        start_ln=ln_pair.ln,
+        cpp_start=ln_pair.cpp_ln,
+    )
+
+
+def create_function(
+    fn,
+    ln_pair: PreProcTuple,
+    func_init: FunctionReturn,
+    sub_dict,
+    verbose=False,
+):
+    """
+    Function to instantiate function if not in sub_dict
+    """
+    func_name = "create_function::"
+    if ln_pair.cpp_ln:
+        base_fn = fn.split("/")[-1]
+        new_fn = f"{spel_output_dir}cpp_{base_fn}"
+    else:
+        new_fn = None
+    if func_init.name not in sub_dict:
+        if verbose:
+            print(f"{func_name}Adding Function {func_init.name}:")
+            print(f"{' '*len(func_name)} fn: {fn} ")
+            print(f"{' '*len(func_name)} ln: L{func_init.start_ln}-{ln_pair.ln}")
+        sub = Subroutine(
+            func_init.name,
+            fn,
+            [""],
+            start=func_init.start_ln,
+            end=ln_pair.ln,
+            cpp_start=func_init.cpp_start,
+            cpp_end=ln_pair.cpp_ln,
+            cpp_fn=new_fn,
+            function=func_init,
+        )
+
+        sub_dict[func_init.name] = sub
+
+    return None
+
+
 def check_if_block(
-    ct,
+    ln_pair: PreProcTuple,
     lines,
-    og_ln,
     cpp_lines,
     base_fn,
     verbose=False,
@@ -28,7 +125,12 @@ def check_if_block(
         cpp_lines : lines of cpp module
         base_fn : name of file
     """
+    if ln_pair.cpp_ln:
+        ct = ln_pair.cpp_ln
+    else:
+        ct = ln_pair.ln
 
+    og_ln = ln_pair.ln
     regex_endif = re.compile(r"^(end\s*if)", re.IGNORECASE)
     regex_ifthen = re.compile(r"^(if)(.+)(then)$", re.IGNORECASE)
 
@@ -48,7 +150,7 @@ def check_if_block(
             ct += 1
             og_ln += 1
 
-            if cpp_lines:
+            if ln_pair.cpp_ln:
                 # Function to check if the line is a cpp comment
                 # and adjust the line numbers accordingly
                 newct, og_ln, lines = check_cpp_line(

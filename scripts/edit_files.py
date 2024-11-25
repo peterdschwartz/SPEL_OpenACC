@@ -3,7 +3,7 @@ import subprocess as sp
 import sys
 
 from analyze_subroutines import Subroutine
-from check_sections import check_if_block
+from check_sections import check_function_start, check_if_block, create_function
 from DerivedType import get_derived_type_definition
 from fortran_modules import (
     FortranModule,
@@ -396,34 +396,39 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
     cmd = f'grep -E "ifn?def"  {fn} | grep -v "_OPENACC"'
     output = sp.getoutput(cmd)
     base_fn = fn.split("/")[-1]
+    print("EOF", len(lines))
 
     if output:
-        # Need to loop a preprocessed version of the file
-        cpp_file = True  # Logical to determine what file we are looping through
+        # For CPP files, regex operates on the cpp_lines, but only the original lines are commented
+        cpp_file = True
         new_fn = f"{spel_output_dir}cpp_{base_fn}"
-        # Set up cmd for preprocessing
-        # Get macros used:
+
+        # Set up cmd for preprocessing. Get macros used:
         macros_string = "-D" + " -D".join(macros)
-        # cmd to pass to subprocess
         cmd = f"gfortran -I{E3SM_SRCROOT}/share/include {macros_string} -cpp -E {fn} > {new_fn}"
-        ier = sp.getoutput(cmd)  # run the command
+        ier = sp.getoutput(cmd)
+
         # read lines of preprocessed file
         file = open(new_fn, "r")
         cpp_lines = file.readlines()
         file.close()
     else:
         cpp_file = False
-        cpp_lines = []
-
-    # Control flags that will be used to remove certain subroutines
-    # remove_fates = False
-    # remove_betr = False
+        cpp_lines = lines[:]
 
     # Flag to keep track if we are currently in a subroutine
     in_subroutine = False
 
     regex_if = re.compile(r"^(if)[\s]*(?=\()", re.IGNORECASE)
     regex_include_assert = re.compile(r"^(#include)\s+[\"\'](shr_assert.h)[\'\"]")
+    regex_sub = re.compile(r"^\s*(subroutine)\s+")
+    regex_shr_assert = re.compile(r"^\s*(shr_assert_all|shr_assert)\b")
+    regex_end_sub = re.compile(r"^\s*(end subroutine)")
+
+    regex_func = re.compile(r"\b(function)\b")
+    regex_end_func = re.compile(r"\s*(end function)\b")
+
+    subname = ""
 
     subs_removed = []
 
@@ -441,27 +446,35 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
         # Adjust if we are looping through compiler preprocessed file
         if cpp_file:
             line = cpp_lines[ct]
-            # Function to check if the line is a cpp comment
-            # and adjust the line numbers accordingly
+            # Function to check if the line is a cpp comment and adjust the line numbers accordingly
             newct, linenum, lines = check_cpp_line(
                 base_fn=base_fn,
                 og_lines=lines,
                 cpp_lines=cpp_lines,
                 cpp_ln=ct,
                 og_ln=linenum,
-                verbose=verbose,
+                verbose=False,
             )
             # If cpp_line was a comment, increment and analyze next line
             if newct > ct:
                 ct = newct
                 continue
+            cpp_ln = ct
         else:  # not cpp file
+            cpp_ln = None
             linenum = ct
             line = lines[ct]
 
-        l = line.split("!")[0]  # don't search comments
-        l = l.strip().lower()
-        if not l:
+        # Save starting line number to check it comments were applied.
+        start_ln_pair = PreProcTuple(cpp_ln=cpp_ln, ln=linenum)
+
+        if not cpp_file:
+            l_cont, cont_ct = line_unwrapper(lines=lines, ct=linenum)
+        else:
+            l_cont, cont_ct = line_unwrapper(lines=cpp_lines, ct=ct)
+
+        l_cont = l_cont.strip().lower()
+        if not l_cont:
             linenum += 1
             ct += 1
             continue
@@ -474,7 +487,7 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
                 print(f"cpp Ln: {ct} Original Ln: {linenum}")
 
         # Check for '#include "shr_assert.h"' lines. Note that they are removed for cpp files.
-        match_include_assert = regex_include_assert.search(l)
+        match_include_assert = regex_include_assert.search(l_cont)
         if match_include_assert:
             lines, newct = comment_line(lines=lines, ct=linenum, verbose=verbose)
             ct = AdjustLine(ct, newct, linenum)
@@ -483,18 +496,35 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
         # Match use statements
         bad_mod_string = "|".join(bad_modules)
         bad_mod_string = f"({bad_mod_string})"
-        match_use = re.search(f"\s*(use)[\s]+{bad_mod_string}", l, re.IGNORECASE)
+        match_use = re.search(
+            r"\s*(use)[\s]+{}".format(bad_mod_string), l_cont, re.IGNORECASE
+        )
+
+        # Join bad subroutines into single string with logical OR for regex. Commented out if matched.
+        bad_sub_string = "|".join(bad_subroutines)
+        bad_sub_string = f"({bad_sub_string})"
+
+        # Test if subroutine has started
+        match_sub = regex_sub.search(l_cont)
+
+        # Test if a bad subroutine is being called.
+        match_call = re.search(
+            r"\s*(call)[\s]+{}".format(bad_sub_string), l_cont, re.IGNORECASE
+        )
+        match_bad_inst = re.search(r"\b({})\b".format(bad_sub_string), l_cont)
+
+        match_assert = regex_shr_assert.search(l_cont)
+        match_end = regex_end_sub.search(l_cont)
+
+        match_func = regex_func.search(l_cont)
+        match_end_func = regex_end_func.search(l_cont)
+
         if match_use:
-            if verbose:
-                print(f"{func_name}::Matched modules to remove: {l}")
-            # Get bad subs; Need to refine this for variables, etc...
-            if ":" in l:
-                # Account for multiple lines
-                l, newct = line_unwrapper(lines=lines, ct=linenum)
+            if ":" in l_cont:
                 if cpp_file and verbose:
                     l_dbg, ct_dbg = line_unwrapper(lines=cpp_lines, ct=ct)
 
-                subs = l.split(":")[1]
+                subs = l_cont.split(":")[1]
                 subs = subs.rstrip("\n")
                 subs = re.sub(r"\b(assignment\(=\))\b", "", subs)
                 # Add elements used from the module to be commented out
@@ -516,22 +546,15 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
             ct = AdjustLine(ct, newct, linenum)
             linenum = newct
 
-        # Join bad subroutines into single string with logical OR for regex. Commented out if matched.
-        bad_sub_string = "|".join(bad_subroutines)
-        bad_sub_string = f"({bad_sub_string})"
+        elif match_sub:
 
-        # Test if subroutine has started
-        match_sub = re.search(r"^(\s*subroutine\s+)", l, re.IGNORECASE)
+            if in_subroutine:
+                print(
+                    f"{func_name}Error - entering subroutine before exiting previous one!"
+                )
+                print(l_cont)
+                sys.exit(1)
 
-        # Test if a bad subroutine is being called.
-        match_call = re.search(
-            r"\s*(call)[\s]+{}".format(bad_sub_string), l, re.IGNORECASE
-        )
-
-        lprime, newct = line_unwrapper(lines=lines, ct=linenum)
-        lprime = lprime.strip().lower()
-        match_bad_inst = re.search(r"\b({})\b".format(bad_sub_string), lprime)
-        if match_sub:
             in_subroutine = True
             subname = l.split()[1].split("(")[0]
             interface_list = get_interface_list()
@@ -590,10 +613,10 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
         elif match_bad_inst:
             # Found an instance of something used by a "bad" module
             if verbose:
-                print(f"{func_name}::Removing usage of {match_bad_inst.group()}\n{l}")
+                print(f"{func_name}::Removing usage of {match_bad_inst.group()}")
             # Check if any thing used from a module that is to be removed
-            match_if = regex_if.search(l)
-            match_decl = find_variables.search(l)
+            match_if = regex_if.search(l_cont)
+            match_decl = find_variables.search(l_cont)
             if not match_use and not match_decl:
                 # Check if the bad element is in an if statement. If so, need to remove the entire if statement.
                 if match_if:
@@ -606,7 +629,7 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
                         verbose=verbose,
                     )
 
-                else:  # not match_if
+                else:
                     lines, newct = comment_line(
                         lines=lines, ct=linenum, verbose=verbose
                     )
@@ -616,24 +639,27 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
                 lines, newct = comment_line(lines=lines, ct=linenum, verbose=verbose)
                 ct = AdjustLine(ct, newct, linenum)
                 linenum = newct
-        elif re.search(r"(gsmap)", l.lower()):
+        elif re.search(r"(gsmap)", l_cont.lower()):
             if verbose:
                 print("Removing gsmap ")
             lines, newct = comment_line(lines=lines, ct=linenum, verbose=verbose)
             ct = AdjustLine(ct, newct, linenum)
             linenum = newct
 
-        # match SHR_ASSERT_ALL
-        match_assert = re.search(r"^[\s]+(SHR_ASSERT_ALL|SHR_ASSERT)\b", line)
-        if match_assert:
+        elif match_assert:
             lines, newct = comment_line(lines=lines, ct=ct)
             ct = AdjustLine(ct, newct, linenum)
             linenum = newct
 
-        match_end = re.search(r"^(\s*end subroutine)", l)
-        if match_end:
+        elif match_end:
+            if not in_subroutine:
+                print(
+                    f"{func_name}::ERROR: Matched subroutine end without matching the start!"
+                )
+                print(cpp_file, f"@Line {ct}: {l_cont}")
+                sys.exit(1)
             in_subroutine = False
-            # Instantiate Subroutine if not already done
+
             if subname not in sub_dict:
                 if cpp_file:
                     endline = linenum
@@ -650,7 +676,6 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
                         + f"L{sub_start}-{endline} in {base_fn}"
                     )
 
-                # Instantiate Subroutine
                 sub = Subroutine(
                     subname,
                     fn,
@@ -667,8 +692,41 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
             else:
                 if verbose:
                     print(f"{func_name}::Subroutine {subname} already in sub_dict")
+        elif match_func and not match_end_func:
+            if in_subroutine:
+                print(f"{func_name}::Error-Encountered function decl in subroutine!")
+                print(l_cont)
+                sys.exit(1)
+            in_subroutine = True
+            if cpp_file:
+                sub_start = linenum
+                cpp_startline = ct
+            else:
+                sub_start = ct
+            func_init = check_function_start(l_cont, start_ln_pair, regex_func, verbose)
 
-        # increment line numbers.
+        elif match_end_func:
+            if not in_subroutine:
+                print(f"{func_name}::ERROR - Matched function end without the start!")
+                print("cpp:", cpp_file, f"@Line {ct}: {l_cont}")
+                sys.exit(1)
+            in_subroutine = False
+            create_function(fn, start_ln_pair, func_init, sub_dict, verbose)
+
+        # Check if anything was commented out:
+        if "!#py" in lines[start_ln_pair.ln]:
+            if verbose:
+                print(f"{func_name}::Commented out: ")
+                stop_ln = linenum
+                for i in range(start_ln_pair.ln, stop_ln + 1):
+                    print(i, lines[i].rstrip("\n"))
+        else:
+            # adjust for line continuation:
+            ct = cont_ct
+            if cpp_file:
+                linenum = AdjustLine(linenum, cont_ct, start_ln_pair.cpp_ln)
+            else:
+                linenum = ct
         linenum += 1
         ct += 1
 
