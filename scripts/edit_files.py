@@ -396,7 +396,6 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
     cmd = f'grep -E "ifn?def"  {fn} | grep -v "_OPENACC"'
     output = sp.getoutput(cmd)
     base_fn = fn.split("/")[-1]
-    print("EOF", len(lines))
 
     if output:
         # For CPP files, regex operates on the cpp_lines, but only the original lines are commented
@@ -556,7 +555,7 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
                 sys.exit(1)
 
             in_subroutine = True
-            subname = l.split()[1].split("(")[0]
+            subname = l_cont.split()[1].split("(")[0]
             interface_list = get_interface_list()
             if subname in interface_list or "_oacc" in subname:
                 ct += 1

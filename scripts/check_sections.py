@@ -40,22 +40,23 @@ def check_function_start(line, ln_pair, regex_func, verbose=False):
     func_name = "check_function_start::"
 
     split_line = split_func_line(line)
+    regex = re.compile(r"(?<=\()[\w\s,]+(?=\))")
 
     func_type, func_keyword, func_rest = split_line
     if func_type:
         # Definition:  <function type> function <name>(<args>)
         if "type" in func_type:
-            func_type = find_type.search(func_type).group()
+            func_type = regex.search(func_type).group()
         else:
             func_type = intrinsic_type.search(func_type).group()
-        func_name = func_rest.split("(")[0]
+        func_name = func_rest.split("(")[0].strip()
         func_result = func_name
     else:
         # is it worth getting this here or after local variables are parsed?
         func_type = ""
-        func_name = func_rest.split("(")[0]
+        func_name = func_rest.split("(")[0].strip()
         # Definition: function <name>(<args>) result(<result>) || function <name>(<args>)
-        args_and_res = find_type.findall(func_rest)
+        args_and_res = regex.findall(func_rest)
         args_and_res = [v.strip() for v in args_and_res]
         if len(args_and_res) == 2:
             args, func_result = args_and_res

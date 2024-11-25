@@ -158,9 +158,11 @@ def split_func_line(line):
     """
     func_name = "split_func_line::"
     regex_func = re.compile(r"\b(function)\b")
+    regex_remove = re.compile(r"\b(pure|elemental)\b")
 
     split_line = regex_func.split(line)
     split_line = [s.strip() for s in split_line]
+    split_line[0] = regex_remove.sub("",split_line[0]).strip()
 
     if len(split_line) != 3 or split_line[1].strip() != "function":
         print(f"{func_name}Split Failed", split_line)
@@ -1114,7 +1116,7 @@ def line_unwrapper(lines, ct, verbose=False):
         # Fortran allow empty lines in between line continuations
         if simple_l.isspace() or not simple_l:
             continue
-        full_line = full_line[:-1] + simple_l.strip()
+        full_line = full_line[:-1] + simple_l.strip().lower()
         continuation = bool(full_line.endswith("&"))
 
     # Debug check:

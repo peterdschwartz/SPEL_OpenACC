@@ -22,7 +22,6 @@ class SubroutineTests(unittest.TestCase):
 
         fn = f"{scripts_dir}/tests/example_functions.f90"
 
-        NUM_SUBS = 3
         SUB_NAME_DICT = {
             "landunit_is_special": uf.Variable(
                 type="logical",
@@ -45,7 +44,23 @@ class SubroutineTests(unittest.TestCase):
                 subgrid="?",
                 ln=-1,
             ),
+            "cnallocate_carbon_only": uf.Variable(
+                type="logical",
+                name="cnallocate_carbon_only",
+                dim=0,
+                subgrid="?",
+                ln=-1,
+            ),
+            "get_beg": uf.Variable(
+                type="integer",
+                name="beg_index",
+                dim=0,
+                subgrid="?",
+                ln=-1,
+            ),
         }
+
+        NUM_SUBS = len(SUB_NAME_DICT.keys())
         ifile = open(fn, "r")
         lines = ifile.readlines()
         ifile.close()

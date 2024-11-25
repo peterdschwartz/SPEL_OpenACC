@@ -78,5 +78,50 @@ contains
 
   end function old_weight_was_zero
 
+  logical function CNAllocate_carbon_only ( )
+    cnallocate_carbon_only = .true.
+  end function cnallocate_carbon_only
+
+  pure function get_beg(bounds, subgrid_level) result(beg_index)
+    !
+    ! !DESCRIPTION:
+    ! Get beginning bounds for a given subgrid level
+    !
+    ! subgrid_level should be one of the constants defined in this module:
+    ! BOUNDS_SUBGRID_GRIDCELL, BOUNDS_SUBGRID_LANDUNIT, etc.
+    !
+    ! Returns -1 for invalid subgrid_level (does not abort in this case, in order to keep
+    ! this function pure).
+    !
+    ! !USES:
+    !
+    ! !ARGUMENTS:
+    integer :: beg_index  ! function result
+    type(bounds_type), intent(in) :: bounds
+    integer, intent(in) :: subgrid_level
+    !
+    ! !LOCAL VARIABLES:
+
+    character(len=*), parameter :: subname = 'get_beg'
+    !-----------------------------------------------------------------------
+
+    select case (subgrid_level)
+    case (BOUNDS_SUBGRID_GRIDCELL)
+       beg_index = bounds%begg
+    case (BOUNDS_SUBGRID_TOPOUNIT)
+       beg_index = bounds%begt
+    case (BOUNDS_SUBGRID_LANDUNIT)
+       beg_index = bounds%begl
+    case (BOUNDS_SUBGRID_COLUMN)
+       beg_index = bounds%begc
+    case (BOUNDS_SUBGRID_PATCH)
+       beg_index = bounds%begp
+    case (BOUNDS_SUBGRID_COHORT)
+       beg_index = bounds%begCohort
+    case default
+       beg_index = -1
+    end select
+
+  end function get_beg
 
 end module test

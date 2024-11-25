@@ -240,18 +240,25 @@ class Subroutine(object):
         if self.func:
             _ftype, _f , func_rest = split_func_line(full_line)
             args_and_res = regex.findall(func_rest)
-            args = args_and_res[0].split(',')
-            if(len(args_and_res)!=2):
-                args.append(self.result_name)
-            elif len(args_and_res) == 2:
-                args.append(args_and_res[1])
+            if args_and_res:
+                args = args_and_res[0].split(',')
+                if(len(args_and_res)!=2):
+                    args.append(self.result_name)
+                elif len(args_and_res) == 2:
+                    args.append(args_and_res[1])
+                else:
+                    print(f"{func_name}Error - wrong function dummy args")
+                    print(f"{tabs}{args_and_res}\n{tabs}{full_line}")
+                    sys.exit(1)
             else:
-                print(f"{func_name}Error - wrong function dummy args")
-                print(f"{tabs}{args_and_res}\n{tabs}{full_line}")
-                sys.exit(1)
+                args = [self.result_name] if self.result_name else []
         else:
             args_str = regex.findall(full_line)
-            args = args_str[0].split(',')
+            args_str = [_str for _str in args_str if _str.strip()]
+            if args_str:
+                args = args_str[0].split(',')
+            else:
+                args = []
 
         args = [arg.strip() for arg in args]
         return args
