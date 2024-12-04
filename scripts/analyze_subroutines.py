@@ -3,7 +3,6 @@ from __future__ import annotations
 import os.path
 import re
 import sys
-from pprint import pprint
 from typing import Any, Dict, List, Optional
 
 from scripts.DerivedType import DerivedType, get_component
