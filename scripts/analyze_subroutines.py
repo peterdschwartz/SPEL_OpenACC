@@ -2,18 +2,35 @@ import os.path
 import re
 import sys
 
-from helper_functions import (ReadWrite, SubroutineCall,
-                              determine_argvar_status, determine_level_in_tree,
-                              determine_variable_status,
-                              summarize_read_write_status,
-                              trace_derived_type_arguments)
+from analysis.analyze_ifs import flatten
+
+from helper_functions import (
+    ReadWrite,
+    SubroutineCall,
+    determine_argvar_status,
+    determine_level_in_tree,
+    determine_variable_status,
+    summarize_read_write_status,
+    trace_derived_type_arguments,
+    callTree_helper,
+    print_calltree_helper,
+    CallTreeSubroutine,
+)
 from interfaces import determine_arg_name, resolve_interface
 from log_functions import center_print
 from LoopConstructs import Loop, exportVariableDependency
 from mod_config import _bc, spel_dir
 from process_associate import getAssociateClauseVars
-from utilityFunctions import (find_file_for_subroutine, get_interface_list,
-                              getArguments, getLocalVariables, line_unwrapper)
+from utilityFunctions import (
+    find_file_for_subroutine,
+    get_interface_list,
+    getArguments,
+    getLocalVariables,
+    line_unwrapper,
+)
+
+
+
 
 
 class Subroutine(object):
@@ -142,9 +159,9 @@ class Subroutine(object):
         self.acc_status = False
         self.DoLoops = []
         self.analyzed_child_subroutines = False
-        self.active_global_vars = {} # non-derived type variables used in the subroutine
+        self.active_global_vars = {}  # non-derived type variables used in the subroutine
 
-        # Flag that denotes subroutines that were user requested 
+        # Flag that denotes subroutines that were user requested
         self.unit_test_function = False
 
     def __repr__(self) -> str:
@@ -203,7 +220,7 @@ class Subroutine(object):
         ifile.close()
 
         ln = self.startline
-        full_line,ln = line_unwrapper(lines=lines,ct=ln)
+        full_line, ln = line_unwrapper(lines=lines, ct=ln)
 
         args = getArguments(full_line)
         return args
@@ -290,8 +307,8 @@ class Subroutine(object):
             else:
                 ct = self.associate_end
             endline = self.endline
-        
-        if self.associate_vars: 
+
+        if self.associate_vars:
             no_associate = False
         else:
             no_associate = True
@@ -325,7 +342,11 @@ class Subroutine(object):
                     ptrname = ptrname.strip()
                     gv_alias = gv_alias.strip()
                     gv = self.associate_vars[gv_alias]
-                    print(_bc.WARNING+f"Adding {ptrname} as associating with {gv}"+_bc.ENDC)
+                    print(
+                        _bc.WARNING
+                        + f"Adding {ptrname} as associating with {gv}"
+                        + _bc.ENDC
+                    )
                     self.associate_vars.setdefault(ptrname, []).append(gv)
 
             match_call = re.search(r"^call ", line.strip())
@@ -412,10 +433,12 @@ class Subroutine(object):
                 # Transform args to list of PointerAlias with dummy_arg => passed_var
                 if not childsub.library:
                     args_matched = determine_arg_name(
-                        matched_vars=args, child_sub=childsub, args=args,
+                        matched_vars=args,
+                        child_sub=childsub,
+                        args=args,
                     )
                     # Store the subroutine call information (name of parent and the arguments passed)
-                    subcall = SubroutineCall(self.name, args_matched)
+                    subcall = SubroutineCall(self.name, args_matched, ct)
                     if subcall not in childsub.subroutine_call:
                         childsub.subroutine_call.append(subcall)
 
@@ -496,8 +519,7 @@ class Subroutine(object):
             )
             # regex_ptr_assoc = re.compile(r"\w+\s*(=>)\s*({})".format(ptrname_str))
 
-
-        regex_dtype_var =  re.compile(r"\w+(?:\(\w+\))?%\w+")
+        regex_dtype_var = re.compile(r"\w+(?:\(\w+\))?%\w+")
         regex_paren = re.compile(r"\((.+)\)")
         # regex_ptr_member = re.compile(r"\w+\s*(=>)\s*\w+(%)\w+")
         # Checks for local variables used as targets
@@ -517,11 +539,11 @@ class Subroutine(object):
             match_call = re.search(r"^\s*(call) ", line)
             # Get list of all global variables used in this line and for arrays, remove index
             match_var = regex_dtype_var.findall(line)
-            arr_of_structs = [regex_paren.sub('',mvar) for mvar in match_var]
+            arr_of_structs = [regex_paren.sub("", mvar) for mvar in match_var]
 
             # Solution to avoid replacing regex in other functions for now?
-            for i,mvar in enumerate(match_var):
-                line = line.replace(mvar,arr_of_structs[i])
+            for i, mvar in enumerate(match_var):
+                line = line.replace(mvar, arr_of_structs[i])
             match_var = arr_of_structs.copy()
 
             if not match_call:
@@ -538,8 +560,12 @@ class Subroutine(object):
                         user_type_args.update(temp)
 
                     m_ptr_local = regex_ptr_simple.search(line)
-                    if(m_ptr_local):
-                        print(_bc.OKGREEN+f"Line is assoicating ptr - Do not parse"+_bc.ENDC)
+                    if m_ptr_local:
+                        print(
+                            _bc.OKGREEN
+                            + f"Line is assoicating ptr - Do not parse"
+                            + _bc.ENDC
+                        )
                     else:
                         dtype_accessed = determine_variable_status(
                             match_var, line, ct, dtype_accessed, verbose=verbose
@@ -668,8 +694,12 @@ class Subroutine(object):
                     else:
                         self.elmtype_access_by_ln[varname] = values
                     if "%" not in varname:
-                        print(_bc.FAIL+f"ERROR: Adding { varname } to elmtype!"+_bc.ENDC)
-                        print(self.name,values)
+                        print(
+                            _bc.FAIL
+                            + f"ERROR: Adding { varname } to elmtype!"
+                            + _bc.ENDC
+                        )
+                        print(self.name, values)
                         continue
                     if num_uses == num_reads:
                         # read-only
@@ -819,14 +849,26 @@ class Subroutine(object):
                 branch=el, tree_to_write=tree_to_write
             )
 
-        if(casename):
+        if casename:
             ofile = open(f"{casename}/{self.name}CallTree.txt", "w")
         for branch in tree_to_write:
             level = branch[1]
             sub = branch[0]
             print(level * "|---->" + sub)
-            if(casename): ofile.write(level * "|---->" + sub + "\n")
-        if casename : ofile.close()
+            if casename:
+                ofile.write(level * "|---->" + sub + "\n")
+        if casename:
+            ofile.close()
+
+    def print_calltree(self, parent_ifs, namelist):
+        flat = flatten(parent_ifs)     
+        parent = CallTreeSubroutine()
+        parent.name=self.name
+        parent.ln=self.startline 
+        self.calltree = parent
+        callTree_helper(self, parent, flat, namelist)
+
+        print_calltree_helper(self.calltree, 0)
 
     def generate_update_directives(self, elmvars_dict, verify_vars):
         """
@@ -927,11 +969,14 @@ class Subroutine(object):
         Add loop parallel directives if desired
         """
         from mod_config import _bc
-        from utilityFunctions import (determine_filter_access,
-                                      find_file_for_subroutine,
-                                      get_interface_list, getArguments,
-                                      getLocalVariables,
-                                      lineContinuationAdjustment)
+        from utilityFunctions import (
+            determine_filter_access,
+            find_file_for_subroutine,
+            get_interface_list,
+            getArguments,
+            getLocalVariables,
+            lineContinuationAdjustment,
+        )
 
         interface_list = (
             get_interface_list()
@@ -1552,7 +1597,8 @@ class Subroutine(object):
 
         # intrinsic_types = ["real", "integer", "character", "logical"]
         args_to_match = [
-            arg for arg, var in self.Arguments.items()  # if var.type in intrinsic_types
+            arg
+            for arg, var in self.Arguments.items()  # if var.type in intrinsic_types
         ]
         arg_match_string = "|".join(args_to_match)
         regex_args = re.compile(r"\b({})\b".format(arg_match_string), re.IGNORECASE)
@@ -1601,8 +1647,8 @@ class Subroutine(object):
                     # I do not _think_ that we need to capture this alias as in this routine
                     # we are interested in how the argument in used.
                     match_ptr = regex_ptr.search(line)
-                    if(match_ptr):
-                        line_num +=1
+                    if match_ptr:
+                        line_num += 1
                         continue
 
                     match_arg_use = list(set(match_arg_use))
@@ -1610,8 +1656,12 @@ class Subroutine(object):
                         match_arg_use, line, line_num, args_accessed, verbose=verbose
                     )
                     if not args_accessed:
-                        print(_bc.FAIL+f"{func_name}::Failed to finds args ", match_arg_use,_bc.ENDC)
-                        print(self.name,line_num, line)
+                        print(
+                            _bc.FAIL + f"{func_name}::Failed to finds args ",
+                            match_arg_use,
+                            _bc.ENDC,
+                        )
+                        print(self.name, line_num, line)
                         sys.exit(1)
 
                 else:
@@ -1634,15 +1684,16 @@ class Subroutine(object):
                     ]
                     if inactive_args:
                         arg_to_dtype = [
-                            arg for arg in arg_to_dtype 
-                            if arg.ptr not in inactive_args
+                            arg for arg in arg_to_dtype if arg.ptr not in inactive_args
                         ]
                     for arg_var in arg_to_dtype:
                         argname = arg_var.ptr
                         dtypename = arg_var.obj
                         arg_status = child_sub.arguments_read_write[argname].status
-                        if(isinstance(arg_status, ReadWrite)):
-                            print(f"ERROR:{argname} has nested ReadWrite from {child_sub.name}")
+                        if isinstance(arg_status, ReadWrite):
+                            print(
+                                f"ERROR:{argname} has nested ReadWrite from {child_sub.name}"
+                            )
                             sys.exit()
                         arg_status = ReadWrite(status=arg_status, ln=line_num)
                         args_accessed.setdefault(dtypename, []).append(arg_status)
@@ -1658,7 +1709,7 @@ class Subroutine(object):
             print(f"{func_name}::ERROR: Failed to analyze arguments for {self.name}")
             sys.exit(1)
         return None
-    
+
     def print_elmtype_access(self):
         """
         Function to print the read/write status of all derived type members
@@ -1675,4 +1726,4 @@ class Subroutine(object):
         for key in self.elmtype_rw.keys():
             print(key, self.elmtype_rw[key])
         print(_bc.ENDC)
-        return None 
+        return None
