@@ -77,6 +77,7 @@ bad_subroutines = [
     "ncd_pio_closefile",
     "alm_fates",
     "elm_fates",
+    "ncd_inqdlen",
 ]
 
 remove_subs = [
@@ -390,7 +391,7 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
     Occurs after parsing the file for subroutines and modules
     that need to be removed.
     """
-    func_name = "modify_file"
+    func_name = "modify_file::"
 
     # Test if the file in question contains any ifdef statements:
     cmd = f'grep -E "ifn?def"  {fn} | grep -v "_OPENACC"'
@@ -518,6 +519,8 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
         match_func = regex_func.search(l_cont)
         match_end_func = regex_end_func.search(l_cont)
 
+        match_gsmap = re.search(r"(gsmap)", l_cont.lower())
+
         if match_use:
             if ":" in l_cont:
                 if cpp_file and verbose:
@@ -546,12 +549,13 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
             linenum = newct
 
         elif match_sub:
-
             if in_subroutine:
                 print(
                     f"{func_name}Error - entering subroutine before exiting previous one!"
                 )
-                print(l_cont)
+                print(ct, l_cont)
+                if cpp_file:
+                    print("og_line:", linenum, lines[linenum])
                 sys.exit(1)
 
             in_subroutine = True
@@ -575,9 +579,7 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
             test_init = bool("init" not in subname.lower().replace("initcold", "cold"))
 
             # Remove if it's an IO routine
-            test_nlgsmap = bool(
-                "readnl" in subname.lower() or re.search(r"(gsmap)", subname.lower())
-            )
+            test_nlgsmap = bool("readnl" in subname.lower() or match_gsmap)
             # TODO: Does decompinit_lnd_using_gp still need to be a special case?
             test_decompinit = bool(subname.lower() == "decompinit_lnd_using_gp")
             if (match_remove and test_init) or test_nlgsmap or test_decompinit:
@@ -601,6 +603,7 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
                     ct = endline_pair.ln
                     linenum = ct
                 subs_removed.append(subname)
+                in_subroutine = False
         elif match_call:
             # Subroutine is calling a subroutine that needs to be removed
             lines, newct = comment_line(lines=lines, ct=linenum, verbose=verbose)
@@ -620,9 +623,8 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
                 # Check if the bad element is in an if statement. If so, need to remove the entire if statement.
                 if match_if:
                     ct, linenum = check_if_block(
-                        ct,
+                        start_ln_pair,
                         lines,
-                        linenum,
                         cpp_lines,
                         base_fn,
                         verbose=verbose,
@@ -638,7 +640,7 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
                 lines, newct = comment_line(lines=lines, ct=linenum, verbose=verbose)
                 ct = AdjustLine(ct, newct, linenum)
                 linenum = newct
-        elif re.search(r"(gsmap)", l_cont.lower()):
+        elif match_gsmap:
             if verbose:
                 print("Removing gsmap ")
             lines, newct = comment_line(lines=lines, ct=linenum, verbose=verbose)

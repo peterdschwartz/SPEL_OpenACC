@@ -6,7 +6,7 @@ import unittest
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import utilityFunctions as uf
 from analyze_subroutines import Subroutine
-from edit_files import get_filename_from_module, get_used_mods, modify_file
+from edit_files import get_filename_from_module, modify_file
 from mod_config import E3SM_SRCROOT, scripts_dir
 
 
@@ -17,6 +17,11 @@ class SubroutineTests(unittest.TestCase):
           Storing copy of files, may not allow testing of E3SM's directory structure.
           Sol'n:  store the commit hash the tests were validated against?
     """
+
+    def test_CallTree(self):
+        """
+        unit-test for call tree
+        """
 
     def test_Functions(self):
 

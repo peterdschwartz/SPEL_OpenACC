@@ -1,5 +1,4 @@
 import re
-import sys
 from dataclasses import dataclass
 
 from analyze_subroutines import Subroutine

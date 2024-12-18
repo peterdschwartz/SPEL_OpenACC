@@ -551,8 +551,6 @@ class Subroutine(object):
             regex_associated_ptr = re.compile(
                 r"\b({})\b".format(ptrname_str), re.IGNORECASE
             )
-            # regex_ptr_assoc = re.compile(r"\w+\s*(=>)\s*({})".format(ptrname_str))
-
 
         regex_dtype_var =  re.compile(r"\w+(?:\(\w+\))?%\w+")
         regex_paren = re.compile(r"\((.+)\)")

@@ -5,11 +5,24 @@ from collections import namedtuple
 
 from analyze_subroutines import Subroutine
 from fortran_modules import get_module_name_from_file
-from mod_config import (ELM_SRC, PHYSICAL_PROP_TYPE_LIST, _bc, elm_dir_regex,
-                        preproc_list, shr_dir_regex, spel_mods_dir,
-                        spel_output_dir, unit_test_files)
-from utilityFunctions import (comment_line, find_file_for_subroutine,
-                              getArguments, line_unwrapper)
+from mod_config import (
+    ELM_SRC,
+    PHYSICAL_PROP_TYPE_LIST,
+    _bc,
+    elm_dir_regex,
+    preproc_list,
+    shr_dir_regex,
+    spel_mods_dir,
+    spel_output_dir,
+    unit_test_files,
+)
+from utilityFunctions import (
+    Variable,
+    comment_line,
+    find_file_for_subroutine,
+    getArguments,
+    line_unwrapper,
+)
 
 TAB_WIDTH = 2
 indent = 1
@@ -319,7 +332,18 @@ def find_parent_subroutine_call(
             elif arg in parent_sub.LocalVariables["scalars"]:
                 args_as_vars[arg] = parent_sub.LocalVariables["scalars"][arg]
             else:
-                print(_bc.FAIL + f"Can't find {arg} (non-derived type global var?)")
+                # Assume it's a derived type removed for fut purposes (ie, alm_fates)
+                print(
+                    _bc.WARNING + f"Can't find {arg} (non-udt global var?)" + _bc.ENDC
+                )
+                args_as_vars[arg] = Variable(
+                    type="integer",
+                    name=arg,
+                    dim=0,
+                    subgrid="?",
+                    bounds="",
+                    ln=-1,
+                )
 
         # Variables to have declarations added to main.F90
         if args_as_vars:
@@ -345,6 +369,47 @@ def find_parent_subroutine_call(
     return Additions(calls=calls, mods=mods_to_add, vars=var_decl_to_add)
 
 
+def adjust_call_sig(args, calls, num_filter_members):
+    """
+    Function to replace typical elm variables (ie, filters)
+    """
+    regex_filter = re.compile(r"\b(filter_)")
+    filter_member_str = "|".join(num_filter_members)
+    regex_numf = re.compile(r"\b({})\b".format(filter_member_str))
+    print("numf:", filter_member_str)
+
+    adj_args = args[:]
+    adj_calls = calls[:]
+    for i, decl in enumerate(args):
+        m_f = regex_filter.search(decl)
+        m_numf = regex_numf.search(decl)
+        if m_f:
+            adj_args.remove(decl)
+        elif m_numf:
+            adj_args.remove(decl)
+        elif "bounds" in decl:
+            adj_args.remove(decl)
+
+    for i, el in enumerate(calls):
+        adj_calls[i] = adj_calls[i].replace("bounds", "bounds_clump")
+        adj_calls[i] = regex_filter.sub("filter(nc)%", adj_calls[i])
+        m_numf = regex_numf.findall(el)
+        for repl in m_numf:
+            adj_calls[i] = adj_calls[i].replace(repl, f"filter(nc)%{repl}")
+
+    return adj_args, adj_calls
+
+
+def get_filter_members(filter_type):
+    member_list = []
+    for comp in filter_type.components.values():
+        member_var = comp["var"]
+        if "num_" in member_var.name:
+            member_list.append(member_var.name)
+
+    return member_list
+
+
 def prepare_main(subroutines, type_dict, instance_to_type, casedir):
     """
     Function to insert USE dependencies into main.F90 and subroutine calls for the FUT subs
@@ -363,12 +428,17 @@ def prepare_main(subroutines, type_dict, instance_to_type, casedir):
 
     additions = find_parent_subroutine_call(subroutines, type_dict, instance_to_type)
 
+    num_filters = get_filter_members(type_dict["clumpfilter"])
+    adj_args, adj_calls = adjust_call_sig(additions.vars, additions.calls, num_filters)
+
     modules_to_add.extend(additions.mods)
 
     lines = insert_at_token(lines=lines, token=use_token, lines_to_add=modules_to_add)
-    lines = insert_at_token(lines=lines, token=var_token, lines_to_add=additions.vars)
+    lines = insert_at_token(lines=lines, token=var_token, lines_to_add=adj_args)
     lines = insert_at_token(
-        lines=lines, token=call_token, lines_to_add=reversed(additions.calls)
+        lines=lines,
+        token=call_token,
+        lines_to_add=reversed(adj_calls),
     )
     with open(f"{casedir}/main.F90", "w") as iofile:
         iofile.writelines(lines)
@@ -592,10 +662,10 @@ def create_constants_io(mode, global_vars, casedir):
     lines.append(tabs + "use fileio_mod, only : fio_open, fio_close\n")
     if mode == "r":
         lines.append(tabs + "use fileio_mod, only : fio_read\n")
-    lines.append(tabs + "integer :: fid, errcode=0\n")
+    lines.append(tabs + "integer :: fid = 18, errcode=0\n")
     lines.append(tabs + 'character(len=64) :: ofile = "E3SM_constants.txt"\n')
-    lines.append(tabs + "fid = 23\n")
-    lines.append(tabs + "call fio_open(fid,ofile, 2)\n\n")
+    access = "1" if mode == "r" else "2"
+    lines.append(tabs + f"call fio_open(fid,ofile, {access})\n\n")
     for gv in global_vars.values():
         if gv.parameter or not gv.active:
             continue
@@ -603,7 +673,7 @@ def create_constants_io(mode, global_vars, casedir):
             lines.append(f'{tabs}write(fid,"(A)") "{gv.name}"\n')
             lines.append(f"{tabs}write(fid,*) {gv.name}\n")
         else:
-            str1 = f"{tabs}call fio_read(18,'{gv.name}', {gv.name}, errcode=errcode)\n"
+            str1 = f"{tabs}call fio_read(fid,'{gv.name}', {gv.name}, errcode=errcode)\n"
             str2 = f"{tabs}if (errcode .ne. 0) stop\n"
             lines.append(str1)
             lines.append(str2)
