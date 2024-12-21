@@ -2,7 +2,7 @@ import functools
 
 
 class Trace:
-    enabled = False
+    enabled = True
     _trace_level = 0  # Static variable to keep the indent level
     _trace_indent_placeholder = "|  "
 

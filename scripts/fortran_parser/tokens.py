@@ -7,6 +7,7 @@ class TokenTypes(Enum):
     IDENT = "IDENT"
     EOF = "EOF"
     INT = "INT"
+    FLOAT = "FLOAT"
     ILLEGAL = "ILLEGAL"
     # Operators
     ASSIGN = "="
@@ -16,6 +17,7 @@ class TokenTypes(Enum):
     BANG = "!"
     SLASH = "/"
     # delimiters
+    DOT = "."
     COMMA = ","
     LPAREN = "("
     RPAREN = ")"

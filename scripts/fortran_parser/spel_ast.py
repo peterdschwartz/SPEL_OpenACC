@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Optional, OrderedDict
 
 from tokens import Token
 
@@ -23,6 +23,9 @@ class Statement(Node):
         """Marker method for statement nodes."""
         pass
 
+    def to_dict(self):
+        return {"Node": self.__class__.__name__}
+
 
 # Derived interface: Expression
 class Expression(Node):
@@ -30,6 +33,9 @@ class Expression(Node):
     def expression_node(self) -> None:
         """Marker method for expression nodes."""
         pass
+
+    def to_dict(self):
+        return {"Node": self.__class__.__name__}
 
 
 class Program(Statement):
@@ -66,6 +72,9 @@ class Identifier(Expression):
     def __eq__(self, other):
         return isinstance(other, Identifier) and self.value == other.value
 
+    def to_dict(self):
+        return {"Node": "Ident", "val": str(self)}
+
 
 # Statement Classes
 class ExpressionStatement(Statement):
@@ -88,11 +97,14 @@ class ExpressionStatement(Statement):
         else:
             return self.token == other.token and self.expression == other.expression
 
+    def to_dict(self):
+        return {"Node": "ExpressionStatement", "Expr": self.expression.to_dict()}
+
 
 class SubCallStatement(Statement):
     def __init__(self, tok):
         self.token: Token = tok  # "CALL"
-        self.function = None  # FuncExpression
+        self.function: Optional[FuncExpression] = None  # FuncExpression
 
     def statement_node(self):
         pass
@@ -108,6 +120,9 @@ class SubCallStatement(Statement):
             return False
         else:
             return self.token == other.token and self.function == other.function
+
+    def to_dict(self):
+        return {"Node": "SubCallStatement", "Sub": self.function.to_dict()}
 
 
 # Expression Classes
@@ -127,6 +142,31 @@ class IntegerLiteral(Expression):
 
     def __eq__(self, other):
         return isinstance(other, IntegerLiteral) and self.value == other.value
+
+    def to_dict(self):
+        return {"Node": "Int", "val": str(self)}
+
+
+class FloatLiteral(Expression):
+    def __init__(self, tok: Token):
+        self.token: Token = tok
+        self.value: Optional[float] = None
+        self.precision: str = ""
+
+    def token_literal(self) -> str:
+        return self.token.literal
+
+    def expression_node(self) -> None:
+        pass
+
+    def __str__(self):
+        return str(self.value) + self.precision
+
+    def __eq__(self, other):
+        return isinstance(other, FloatLiteral) and self.value == other.value
+
+    def to_dict(self):
+        return {"Node": "Float", "val": str(self)}
 
 
 class PrefixExpression(Expression):
@@ -153,6 +193,13 @@ class PrefixExpression(Expression):
                 and self.right_expr == other.right_expr
                 and self.operator == other.operator
             )
+
+    def to_dict(self):
+        return {
+            "Node": "PrefixExpression",
+            "Op": self.operator,
+            "Right": self.right_expr.to_dict(),
+        }
 
 
 class InfixExpression(Expression):
@@ -187,6 +234,14 @@ class InfixExpression(Expression):
                 and self.left_expr == other.left_expr
             )
 
+    def to_dict(self):
+        return {
+            "Node": "InfixExpression",
+            "Left": self.left_expr.to_dict(),
+            "Op": self.operator,
+            "Right": self.right_expr.to_dict(),
+        }
+
 
 class FuncExpression(Expression):
     def __init__(
@@ -218,12 +273,19 @@ class FuncExpression(Expression):
                 and self.args == other.args
             )
 
+    def to_dict(self):
+        return {
+            "Node": "FuncExpression",
+            "Func": str(self.function),
+            "Args": [arg.to_dict() for arg in self.args],
+        }
+
 
 class BoundsExpression(Expression):
     def __init__(self, tok):
         self.token: Token = tok  # Colon
-        self.start: Optional[Expression] = None
-        self.end: Optional[Expression] = None
+        self.start: Expression|str = ""
+        self.end: Expression|str = ""
 
     def expression_node(self) -> None:
         pass
@@ -243,3 +305,14 @@ class BoundsExpression(Expression):
                 and self.start == other.start
                 and self.end == other.end
             )
+
+    def to_dict(self):
+        return {
+            "Node": "Bounds",
+            "Val": str(self),
+        }
+
+# class AssignmentExpression:
+#     def __init__(self,tok):
+#         self.token: Token = tok
+#         self.

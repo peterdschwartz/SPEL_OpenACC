@@ -1,4 +1,5 @@
 import os
+from pprint import pprint
 
 import lexer
 from spel_parser import Parser
@@ -16,6 +17,7 @@ def start_repl():
 
         for stmt in program.statements:
             print(stmt)
+            pprint(stmt.to_dict(), sort_dicts=False)
 
 
 if __name__ == "__main__":

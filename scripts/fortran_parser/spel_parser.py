@@ -2,19 +2,10 @@ from enum import Enum
 from typing import Callable, Dict, List, Optional
 
 import lexer
-from spel_ast import (
-    BoundsExpression,
-    Expression,
-    ExpressionStatement,
-    FuncExpression,
-    Identifier,
-    InfixExpression,
-    IntegerLiteral,
-    PrefixExpression,
-    Program,
-    Statement,
-    SubCallStatement,
-)
+from spel_ast import (BoundsExpression, Expression, ExpressionStatement,
+                      FloatLiteral, FuncExpression, Identifier,
+                      InfixExpression, IntegerLiteral, PrefixExpression,
+                      Program, Statement, SubCallStatement)
 from tokens import Token, TokenTypes
 from tracing import Trace
 
@@ -60,16 +51,19 @@ class Parser:
 
         self.register_prefix_fns(TokenTypes.IDENT, self.parse_identifier)
         self.register_prefix_fns(TokenTypes.INT, self.parseIntegerLiteral)
+        self.register_prefix_fns(TokenTypes.FLOAT, self.parse_FloatLiteral)
         self.register_prefix_fns(TokenTypes.BANG, self.parse_prefix_expr)
         self.register_prefix_fns(TokenTypes.MINUS, self.parse_prefix_expr)
         self.register_prefix_fns(TokenTypes.LPAREN, self.parse_grouped_expr)
+        self.register_prefix_fns(TokenTypes.COLON, self.parse_prefix_bounds_expr)
 
         self.register_infix_fns(TokenTypes.PLUS, self.parse_infix_expr)
         self.register_infix_fns(TokenTypes.MINUS, self.parse_infix_expr)
         self.register_infix_fns(TokenTypes.SLASH, self.parse_infix_expr)
         self.register_infix_fns(TokenTypes.ASTERISK, self.parse_infix_expr)
+        self.register_infix_fns(TokenTypes.ASSIGN, self.parse_infix_expr)
         self.register_infix_fns(TokenTypes.LPAREN, self.parse_func_expr)
-        self.register_infix_fns(TokenTypes.COLON, self.parse_bounds_expr)
+        self.register_infix_fns(TokenTypes.COLON, self.parse_infix_bounds_expr)
 
         self.next_token()
         self.next_token()
@@ -99,6 +93,17 @@ class Parser:
             raise ParseError(
                 "Could not parse IntegerLiteral: " + self.cur_token.literal
             )
+
+    def parse_FloatLiteral(self) -> Expression:
+        num = FloatLiteral(tok=self.cur_token)
+        lit = self.cur_token.literal
+        if "_" in lit:
+            val, prec = lit.split("_")
+            num.precision = "_" + prec
+        else:
+            val = lit
+        num.value = float(val)
+        return num
 
     def curTokenIs(self, etype: TokenTypes):
         return self.cur_token.token == etype
@@ -236,14 +241,26 @@ class Parser:
             raise ParseError("Couldn't Parse Arguments")
         return args
 
-    @Trace.trace_decorator("parse_bounds_expr")
-    def parse_bounds_expr(self, start: Expression) -> Expression:
+    @Trace.trace_decorator("parse_infix_bounds_expr")
+    def parse_infix_bounds_expr(self, start: Expression) -> Expression:
         """
         Function to parse bounds.  curent token should be ":"
         """
         bounds_expr = BoundsExpression(tok=self.cur_token)
         bounds_expr.start = start
 
-        self.next_token()
-        bounds_expr.end = self.parse_expression(Precedence.LOWEST)
+        if not self.peekTokenIs(TokenTypes.RPAREN) and not self.peekTokenIs(TokenTypes.COMMA):
+            self.next_token()
+            bounds_expr.end = self.parse_expression(Precedence.LOWEST)
+        return bounds_expr
+
+    @Trace.trace_decorator("parse_prefix_bounds_expr")
+    def parse_prefix_bounds_expr(self) -> Expression:
+        """
+        Function to parse bounds.  curent token should be ":"
+        """
+        bounds_expr = BoundsExpression(tok=self.cur_token)
+        if not self.peekTokenIs(TokenTypes.RPAREN) and not self.peekTokenIs(TokenTypes.COMMA):
+            self.next_token()
+            bounds_expr.end = self.parse_expression(Precedence.LOWEST)
         return bounds_expr

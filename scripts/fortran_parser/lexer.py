@@ -1,11 +1,11 @@
-from dataclasses import dataclass
+import sys
 
 import tokens
 
 
 class Lexer:
     def __init__(self, input: str):
-        self.input: str = input
+        self.input: str = input.lower()  # FORTRAN case-insensitive
         self.position: int = 0
         self.read_position: int = 0
         self.ch: str = ""
@@ -28,9 +28,35 @@ class Lexer:
 
     def read_num(self) -> str:
         pos = self.position
+        check_prec = False
         while is_number(self.ch):
             self.read_char()
+            if self.ch == ".":
+                check_prec = True
+                self.read_char()
+        if check_prec:
+            self.check_precision()
+
         return self.input[pos : self.position]
+
+    def check_precision(self):
+        """
+        Need to retrieve scientific notation/precision.
+        EX: 1.D-10, 1.E+3, 1._r8
+        """
+        peek_ch = self.peek_char()
+        if peek_ch == " " or peek_ch == "\t":
+            return
+        if self.ch in ["d", "e"]:
+            self.read_char()  # cur token is now one of the above.
+            if self.ch in ["-", "+"]:
+                self.read_char()
+            # self.ch is either a letter or +/-
+            self.read_char()
+            self.read_num()  # Advance position to end of exponent
+        elif self.ch == "_":
+            self.read_identifier()
+        return
 
     def skip_white_space(self) -> None:
         while self.ch == " " or self.ch == "\t":
@@ -38,7 +64,7 @@ class Lexer:
         return
 
     def peek_char(self):
-        if self.position >= len(self.input):
+        if self.read_position >= len(self.input):
             return ""
         else:
             return self.input[self.read_position]
@@ -82,7 +108,10 @@ class Lexer:
                     return tok
                 elif is_number(cur_ch):
                     lit: str = self.read_num()
-                    tok = new_token(tokens.TokenTypes.INT, lit)
+                    if "." in lit:
+                        tok = new_token(tokens.TokenTypes.FLOAT, lit)
+                    else:
+                        tok = new_token(tokens.TokenTypes.INT, lit)
                     return tok
                 else:
                     tok = new_token(tokens.TokenTypes.ILLEGAL, self.ch)
@@ -92,6 +121,7 @@ class Lexer:
 
 
 def is_valid_ident(ch: str) -> bool:
+    "FORTRAN allows numbers, _, and % (for derived types) in identifier names"
     return ch.isalnum() or ch == "_" or ch == "%"
 
 
