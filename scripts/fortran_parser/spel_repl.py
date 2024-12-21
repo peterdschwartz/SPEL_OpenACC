@@ -1,8 +1,8 @@
 import os
 from pprint import pprint
 
-import lexer
-from spel_parser import Parser
+import scripts.fortran_parser.lexer as lexer
+from scripts.fortran_parser.spel_parser import Parser
 
 
 def start_repl():

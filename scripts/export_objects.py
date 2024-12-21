@@ -1,10 +1,10 @@
 import pickle
 import sys
 
-from analyze_subroutines import Subroutine
-from DerivedType import DerivedType
-from fortran_modules import FortranModule
-from mod_config import E3SM_SRCROOT
+from scripts.analyze_subroutines import Subroutine
+from scripts.DerivedType import DerivedType
+from scripts.fortran_modules import FortranModule
+from scripts.mod_config import E3SM_SRCROOT, scripts_dir
 
 
 def pickle_unit_test(
@@ -19,7 +19,7 @@ def pickle_unit_test(
     import subprocess as sp
 
     func_name = "pickle_unit_test"
-    cmd = f"./git_commit.sh {E3SM_SRCROOT}"
+    cmd = f"{scripts_dir}/git_commit.sh {E3SM_SRCROOT}"
     output = sp.getoutput(cmd)
 
     if "ERROR" in output:
@@ -32,21 +32,21 @@ def pickle_unit_test(
     for mod in mod_dict.values():
         mod.filepath = mod.filepath.replace(E3SM_SRCROOT, "")
 
-    dbfile = open(f"mod_dict-{commit}.pkl", "ab")
+    dbfile = open(f"{scripts_dir}/mod_dict-{commit}.pkl", "ab")
     pickle.dump(mod_dict, dbfile)
     dbfile.close()
 
     for sub in sub_dict.values():
         sub.filepath = sub.filepath.replace(E3SM_SRCROOT, "")
 
-    dbfile = open(f"sub_dict-{commit}.pkl", "ab")
+    dbfile = open(f"{scripts_dir}/sub_dict-{commit}.pkl", "ab")
     pickle.dump(sub_dict, dbfile)
     dbfile.close()
 
     for dtype in type_dict.values():
         dtype.filepath = dtype.filepath.replace(E3SM_SRCROOT, "")
 
-    dbfile = open(f"type_dict-{commit}.pkl", "ab")
+    dbfile = open(f"{scripts_dir}/type_dict-{commit}.pkl", "ab")
     pickle.dump(type_dict, dbfile)
     dbfile.close()
 
@@ -56,21 +56,21 @@ def unpickle_unit_test(commit):
     Function to load SPEL's output from pickled files.
     """
     mod_dict, sub_dict, type_dict = {}, {}, {}
-    dbfile = open(f"mod_dict{commit}.pkl", "rb")
+    dbfile = open(f"{scripts_dir}/mod_dict{commit}.pkl", "rb")
     mod_dict = pickle.load(dbfile)
     dbfile.close()
 
     for mod in mod_dict.values():
         mod.filepath = E3SM_SRCROOT + mod.filepath
 
-    dbfile = open(f"sub_dict{commit}.pkl", "rb")
+    dbfile = open(f"{scripts_dir}/sub_dict{commit}.pkl", "rb")
     sub_dict = pickle.load(dbfile)
     dbfile.close()
 
     for sub in sub_dict.values():
         sub.filepath = E3SM_SRCROOT + sub.filepath
 
-    dbfile = open(f"type_dict{commit}.pkl", "rb")
+    dbfile = open(f"{scripts_dir}/type_dict{commit}.pkl", "rb")
     type_dict = pickle.load(dbfile)
     dbfile.close()
     for dtype in type_dict.values():
@@ -81,16 +81,15 @@ def unpickle_unit_test(commit):
 
 def create_dataframe(sub_dict, filename):
     import pandas as pd
-    main_data_dict = {"subroutine": [],
-                      "variable names": [],
-                      "status": []}
+
+    main_data_dict = {"subroutine": [], "variable names": [], "status": []}
     # Create dataframe for subroutine's readwrite variable status:
     for subname in sub_dict.keys():
         sub = sub_dict[subname]
 
         status_dict = sub.elmtype_r | sub.elmtype_rw | sub.elmtype_w
 
-        main_data_dict["subroutine"].extend([subname ] * len(status_dict))
+        main_data_dict["subroutine"].extend([subname] * len(status_dict))
         main_data_dict["variable names"].extend([key for key in status_dict.keys()])
         main_data_dict["status"].extend([val for val in status_dict.values()])
 

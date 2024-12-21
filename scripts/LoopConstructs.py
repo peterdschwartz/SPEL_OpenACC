@@ -6,7 +6,8 @@ that is used to parse subroutines
 import re
 import sys
 
-from utilityFunctions import lineContinuationAdjustment
+from scripts.mod_config import _bc
+from scripts.utilityFunctions import lineContinuationAdjustment
 
 
 def exportVariableDependency(
@@ -17,7 +18,6 @@ def exportVariableDependency(
     subroutine (parent) and creates a readable table with
     the variables.
     """
-    from mod_config import _bc
 
     # Initialize dictionary for variables across all Loops
     num_loops = len(DoLoops)
@@ -280,7 +280,6 @@ class Loop(object):
         """
         Function to print a Loop instance
         """
-        from mod_config import _bc
 
         lstart = self.start[0]
         lend = self.end[0]
@@ -338,7 +337,6 @@ class Loop(object):
         returns the self.vars dictionary that
         holds the variables modified by this Loop
         """
-        from mod_config import _bc
 
         # non-greedy capture
         # ng_regex_array = re.compile(f'\w+?\({cc}+?\)')

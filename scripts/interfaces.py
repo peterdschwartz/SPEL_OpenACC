@@ -2,9 +2,9 @@ import re
 import subprocess as sp
 import sys
 
-from fortran_modules import PointerAlias
-from mod_config import ELM_SRC, _bc
-from utilityFunctions import Variable
+from scripts.fortran_modules import PointerAlias
+from scripts.mod_config import ELM_SRC, _bc
+from scripts.utilityFunctions import Variable
 
 
 def resolve_interface(sub, iname, args, dtype_dict, sub_dict, verbose=False):

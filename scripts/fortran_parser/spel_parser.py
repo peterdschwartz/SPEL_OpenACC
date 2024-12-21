@@ -1,13 +1,15 @@
 from enum import Enum
 from typing import Callable, Dict, List, Optional
 
-import lexer
-from spel_ast import (BoundsExpression, Expression, ExpressionStatement,
-                      FloatLiteral, FuncExpression, Identifier,
-                      InfixExpression, IntegerLiteral, PrefixExpression,
-                      Program, Statement, SubCallStatement)
-from tokens import Token, TokenTypes
-from tracing import Trace
+import scripts.fortran_parser.lexer as lexer
+from scripts.fortran_parser.spel_ast import (BoundsExpression, Expression,
+                                             ExpressionStatement, FloatLiteral,
+                                             FuncExpression, Identifier,
+                                             InfixExpression, IntegerLiteral,
+                                             PrefixExpression, Program,
+                                             Statement, SubCallStatement)
+from scripts.fortran_parser.tokens import Token, TokenTypes
+from scripts.fortran_parser.tracing import Trace
 
 
 class Precedence(Enum):
@@ -249,7 +251,9 @@ class Parser:
         bounds_expr = BoundsExpression(tok=self.cur_token)
         bounds_expr.start = start
 
-        if not self.peekTokenIs(TokenTypes.RPAREN) and not self.peekTokenIs(TokenTypes.COMMA):
+        if not self.peekTokenIs(TokenTypes.RPAREN) and not self.peekTokenIs(
+            TokenTypes.COMMA
+        ):
             self.next_token()
             bounds_expr.end = self.parse_expression(Precedence.LOWEST)
         return bounds_expr
@@ -260,7 +264,9 @@ class Parser:
         Function to parse bounds.  curent token should be ":"
         """
         bounds_expr = BoundsExpression(tok=self.cur_token)
-        if not self.peekTokenIs(TokenTypes.RPAREN) and not self.peekTokenIs(TokenTypes.COMMA):
+        if not self.peekTokenIs(TokenTypes.RPAREN) and not self.peekTokenIs(
+            TokenTypes.COMMA
+        ):
             self.next_token()
             bounds_expr.end = self.parse_expression(Precedence.LOWEST)
         return bounds_expr

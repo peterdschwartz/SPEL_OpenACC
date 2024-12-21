@@ -7,9 +7,12 @@ import re
 import subprocess as sp
 import sys
 from collections import namedtuple
-from dataclasses import dataclass
+from pprint import pprint
 
-from mod_config import ELM_SRC, _bc
+from scripts.fortran_parser.lexer import Lexer
+from scripts.fortran_parser.spel_parser import Parser
+from scripts.fortran_parser.tracing import Trace
+from scripts.mod_config import ELM_SRC, _bc
 
 # Regular Expressions
 find_type = re.compile(r"(?<=\()\s*\w+\s*(?=\))")  # Matches type(user-type) -> user-type
@@ -181,11 +184,11 @@ def removeBounds(line, verbose=False):
     this may be better off using a tokenizer and parser for the
     parenthesis.
     """
-    cc = "[ a-zA-Z0-9%\-\+]*?:[ a-zA-Z0-9%\-\+]*?"
-    non_greedy1D = re.compile(f"\({cc}\)")
-    non_greedy2D = re.compile(f"\({cc},{cc}\)")
-    non_greedy3D = re.compile(f"\({cc},{cc},{cc}\)")
-    non_greedy4D = re.compile(f"\({cc},{cc},{cc},{cc}\)")
+    cc = r"[ a-zA-Z0-9%\-\+]*?:[ a-zA-Z0-9%\-\+]*?"
+    non_greedy1D = re.compile(r"\({}\)".format(cc))
+    non_greedy2D = re.compile(r"\({},{}\)".format(cc,cc))
+    non_greedy3D = re.compile(r"\({},{},{}\)".format(cc,cc,cc))
+    non_greedy4D = re.compile(r"\({},{},{},{}\)".format(cc,cc,cc,cc))
     regex_array_as_index = re.compile(r"\w+\s*\([,\w+\*-]+\)", re.IGNORECASE)
     # ng_array_ind = re.compile(r'(?<=\w)\s*(\(.+?\))')
     ng_array_ind = re.compile(r"(?<=\w)\s*\(([^()]*|(?:\([^()]*\))*)\)")
@@ -236,7 +239,8 @@ def removeBounds(line, verbose=False):
     return newline
 
 
-def getArguments(l, verbose=False):
+@Trace.trace_decorator("getArguments")
+def getArguments(full_line, verbose=False):
     """
     Function that takes a string of the subroutine call
     as an argument and returns the variables
@@ -249,11 +253,18 @@ def getArguments(l, verbose=False):
     resolve ambiguities from interfaces, and
     track global variables passed as arguments.
     """
+    lex = Lexer(input=full_line)
+    parser = Parser(lex=lex)
+    program = parser.parse_program()
+
+    for stmt in program.statements:
+        pprint(stmt.to_dict())
+
     if verbose:
-        print(_bc.WARNING + f"getArguments:: Processing {l}" + _bc.ENDC)
+        print(_bc.WARNING + f"getArguments:: Processing {full_line}" + _bc.ENDC)
     # Matches longest string between parentheses
-    par = re.compile("(?<=\().+(?=\))")
-    m = par.search(l)
+    par = re.compile(r"(?<=\().+(?=\))")
+    m = par.search(full_line)
     if not m:
         args = []
         return args
@@ -715,7 +726,7 @@ def adjust_array_access_and_allocation(local_arrs, sub, dargs=False, verbose=Fal
             track_changes.append(lnew)
 
     # Go through all loops and make replacements for filter index
-    ng_regex_array = re.compile("\w+\s*\([,\w+\*-]+\)", re.IGNORECASE)
+    ng_regex_array = re.compile(r"\w+\s*\([,\w+\*-]+\)", re.IGNORECASE)
     regex_var = re.compile(r"\w+")
     regex_indices = re.compile(r"(?<=\()(.+)(?=\))")
     print("Going through loops")
@@ -780,18 +791,18 @@ def adjust_array_access_and_allocation(local_arrs, sub, dargs=False, verbose=Fal
 
                         # Make replacement in line: (assumes subgrid is first index!!)
                         # lnew = lnew.replace(f"{v}({subgrid}",f"{v}(f{subgrid}")
-                        lnew = re.sub(f"{v}\s*\({subgrid}", f"{v}(f{subgrid}", lnew)
+                        lnew = re.sub(r"{}\s*\({}".format(v,subgrid), r"{}(f{}".format(v,subgrid), lnew)
                         replaced = True
 
                     regex_check_index = re.compile(
-                        f"\w+\([,a-z0-9*-]*(({v})\(.\))[,a-z+0-9-]*\)", re.IGNORECASE
+                        r"\w+\([,a-z0-9*-]*(({})\(.\))[,a-z+0-9-]*\)".format(v), re.IGNORECASE
                     )
                     match = regex_check_index.search(temp_line)
                     if match:  # array {v} is being used as an index
                         # substitute from the entire line
                         i = regex_indices.search(arr).group()
-                        i = f"\({i}\)"
-                        temp_line = re.sub(f"{v}{i}", v, temp_line)
+                        i = r"\({}\)".format(i)
+                        temp_line = re.sub(r"{}{}".format(v,i), v, temp_line)
                         removing = True
                 m_arr = ng_regex_array.findall(temp_line)
 
@@ -833,7 +844,7 @@ def adjust_array_access_and_allocation(local_arrs, sub, dargs=False, verbose=Fal
         if m_skip:
             print(_bc.FAIL + f"{subname} must be manually altered !" + _bc.ENDC)
             continue
-        regex_subcall = re.compile(f"\s+(call)\s+({subname})", re.IGNORECASE)
+        regex_subcall = re.compile(r"\s+(call)\s+({})".format(subname), re.IGNORECASE)
 
         for arg in args:
             # If index fails, then there is an inconsistency
@@ -844,11 +855,11 @@ def adjust_array_access_and_allocation(local_arrs, sub, dargs=False, verbose=Fal
             local_var = local_arrs[loc_]
             filter_used = local_var.filter_used + arg.subgrid
             # bounds string:
-            bounds_string = f"(\s*bounds%beg{arg.subgrid}\s*:\s*bounds%end{arg.subgrid}\s*|\s*beg{arg.subgrid}\s*:\s*end{arg.subgrid}\s*)"
+            bounds_string = r"(\s*bounds%beg{}\s*:\s*bounds%end{}\s*|\s*beg{}\s*:\s*end{}\s*)".format(arg.subgrid,arg.subgrid,arg.subgrid,arg.subgrid)
             # string to replace bounds with
             num_filter = "num_" + filter_used.replace("filter_", "")
             num_filter = f"1:{num_filter}"
-            regex_array_arg = re.compile(f"{arg.name}\s*\({bounds_string}")
+            regex_array_arg = re.compile(r"{}\s*\({}".format(arg.name,bounds_string))
 
             for ln in range(sub.startline, sub.endline):
                 line = lines[ln]
@@ -954,13 +965,13 @@ def adjust_child_sub_arguments(sub, file, lstart, lend, args):
             sys.exit(f"Error keyword for {arg.name} in {sub.name} is missing")
 
         regex_arg_type = re.compile(f"{arg.type}", re.IGNORECASE)
-        regex_arg_name = re.compile(f"{kw}\s*\(", re.IGNORECASE)
+        regex_arg_name = re.compile(r"{}\s*\(".format(kw), re.IGNORECASE)
         regex_bounds_full = re.compile(
-            f"({kw}\s*\()(bounds%beg{arg.subgrid})\s*(:)\s*(bounds%end{arg.subgrid})\s*(\))",
+            r"({}\s*\()(bounds%beg{})\s*(:)\s*(bounds%end{})\s*(\))".format(kw,arg.subgrid,arg.subgrid),
             re.IGNORECASE,
         )
         regex_bounds = re.compile(
-            f"({kw}\s*\(\s*bounds%beg{arg.subgrid}[\s:]+\))", re.IGNORECASE
+            r"({}\s*\(\s*bounds%beg{}[\s:]+\))".format(kw,arg.subgrid), re.IGNORECASE
         )
         for ct in range(lstart - 1, lend):
             #

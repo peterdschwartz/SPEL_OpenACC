@@ -1,5 +1,5 @@
-from DerivedType import DerivedType
-from helper_functions import replace_ptr_with_targets
+from scripts.DerivedType import DerivedType
+from scripts.helper_functions import replace_ptr_with_targets
 
 
 def main() -> None:
@@ -12,21 +12,17 @@ def main() -> None:
     import os
     import sys
 
-    import write_routines as wr
-    from analyze_subroutines import Subroutine
-    from edit_files import process_for_unit_test
-    from export_objects import pickle_unit_test
-    from fortran_modules import FortranModule
-    from mod_config import (
-        _bc,
-        default_mods,
-        scripts_dir,
-        spel_mods_dir,
-        spel_output_dir,
-        unittests_dir,
-    )
-    from utilityFunctions import find_file_for_subroutine, insert_header_for_unittest
-    from variable_analysis import determine_global_variable_status
+    import scripts.write_routines as wr
+    from scripts.analyze_subroutines import Subroutine
+    from scripts.edit_files import process_for_unit_test
+    from scripts.export_objects import pickle_unit_test
+    from scripts.fortran_modules import FortranModule
+    from scripts.mod_config import (_bc, default_mods, scripts_dir,
+                                    spel_mods_dir, spel_output_dir,
+                                    unittests_dir)
+    from scripts.utilityFunctions import (find_file_for_subroutine,
+                                          insert_header_for_unittest)
+    from scripts.variable_analysis import determine_global_variable_status
 
     # Set up Argument Parser
     desc = (
@@ -88,7 +84,7 @@ def main() -> None:
             preprocess = False
         else:
             os.system(f"rm -rf {case_dir}/*")
-            os.system("rm *.pkl")
+            os.system(f"rm {scripts_dir}/*.pkl")
             preprocess = True
 
     # Initialize dictionary that will hold instance of all subroutines encountered.

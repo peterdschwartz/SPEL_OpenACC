@@ -1,7 +1,7 @@
 import subprocess as sp
 import sys
 
-from mod_config import ELM_SRC, SHR_SRC, _bc
+from scripts.mod_config import ELM_SRC, SHR_SRC, _bc
 
 
 # NOTE: Create Class for used objects that are aliased

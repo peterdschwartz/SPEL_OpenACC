@@ -1,6 +1,6 @@
 import sys
 
-import tokens
+import scripts.fortran_parser.tokens as tokens
 
 
 class Lexer:

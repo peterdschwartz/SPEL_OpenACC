@@ -3,11 +3,13 @@ import sys
 import unittest
 from pprint import pprint
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(
+    0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../"))
+)
 
-import lexer
-from spel_parser import Parser
-from tokens import Token, TokenTypes
+import scripts.fortran_parser.lexer as lexer
+from scripts.fortran_parser.spel_parser import Parser
+from scripts.fortran_parser.tokens import Token, TokenTypes
 
 
 class LexTests(unittest.TestCase):

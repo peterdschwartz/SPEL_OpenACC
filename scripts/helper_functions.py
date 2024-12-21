@@ -2,8 +2,8 @@ import re
 import sys
 from collections import namedtuple
 
-from log_functions import list_print
-from mod_config import _bc
+from scripts.log_functions import list_print
+from scripts.mod_config import _bc
 
 
 # Declare namedtuple for readwrite status of variables:

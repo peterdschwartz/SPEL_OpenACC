@@ -3,26 +3,15 @@ import subprocess as sp
 import sys
 from collections import namedtuple
 
-from analyze_subroutines import Subroutine
-from fortran_modules import get_module_name_from_file
-from mod_config import (
-    ELM_SRC,
-    PHYSICAL_PROP_TYPE_LIST,
-    _bc,
-    elm_dir_regex,
-    preproc_list,
-    shr_dir_regex,
-    spel_mods_dir,
-    spel_output_dir,
-    unit_test_files,
-)
-from utilityFunctions import (
-    Variable,
-    comment_line,
-    find_file_for_subroutine,
-    getArguments,
-    line_unwrapper,
-)
+from scripts.analyze_subroutines import Subroutine
+from scripts.fortran_modules import get_module_name_from_file
+from scripts.mod_config import (ELM_SRC, PHYSICAL_PROP_TYPE_LIST, _bc,
+                                elm_dir_regex, preproc_list, shr_dir_regex,
+                                spel_mods_dir, spel_output_dir,
+                                unit_test_files)
+from scripts.utilityFunctions import (Variable, comment_line,
+                                      find_file_for_subroutine, getArguments,
+                                      line_unwrapper)
 
 TAB_WIDTH = 2
 indent = 1

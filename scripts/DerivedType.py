@@ -2,10 +2,11 @@ import re
 import subprocess as sp
 import sys
 
-import write_routines as wr
-from fortran_modules import get_module_name_from_file
-from mod_config import ELM_SRC, _bc, _no_colors
-from utilityFunctions import Variable, line_unwrapper, parse_line_for_variables
+import scripts.write_routines as wr
+from scripts.fortran_modules import get_module_name_from_file
+from scripts.mod_config import ELM_SRC, _bc, _no_colors
+from scripts.utilityFunctions import (Variable, line_unwrapper,
+                                      parse_line_for_variables)
 
 ## arrow and tab are strings for writing files or printing readable output
 arrow = "|--->"

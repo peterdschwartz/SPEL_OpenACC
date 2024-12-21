@@ -2,20 +2,23 @@ import os.path
 import re
 import sys
 
-from helper_functions import (ReadWrite, SubroutineCall,
-                              determine_argvar_status, determine_level_in_tree,
-                              determine_variable_status,
-                              summarize_read_write_status,
-                              trace_derived_type_arguments)
-from interfaces import determine_arg_name, resolve_interface
-from log_functions import center_print
-from LoopConstructs import Loop, exportVariableDependency
-from mod_config import _bc, _no_colors, spel_dir
-from process_associate import getAssociateClauseVars
-from utilityFunctions import (Variable, find_file_for_subroutine, find_type,
-                              get_interface_list, getArguments,
-                              getLocalVariables, line_unwrapper,
-                              split_func_line)
+from scripts.fortran_parser.tracing import Trace
+from scripts.helper_functions import (ReadWrite, SubroutineCall,
+                                      determine_argvar_status,
+                                      determine_level_in_tree,
+                                      determine_variable_status,
+                                      summarize_read_write_status,
+                                      trace_derived_type_arguments)
+from scripts.interfaces import determine_arg_name, resolve_interface
+from scripts.LoopConstructs import Loop, exportVariableDependency
+from scripts.mod_config import _bc, _no_colors, spel_dir
+from scripts.process_associate import getAssociateClauseVars
+from scripts.utilityFunctions import (Variable, determine_filter_access,
+                                      find_file_for_subroutine,
+                                      get_interface_list, getArguments,
+                                      getLocalVariables, line_unwrapper,
+                                      lineContinuationAdjustment,
+                                      split_func_line)
 
 
 class Subroutine(object):
@@ -296,6 +299,7 @@ class Subroutine(object):
             ct += 1
         print(constants)
 
+    @Trace.trace_decorator("_preprocess_file")
     def _preprocess_file(
         self, main_sub_dict, dtype_dict, interface_list, verbose=False
     ):
@@ -306,8 +310,6 @@ class Subroutine(object):
             * dtype_dict : dict of user type defintions
             * interface_list : contains names of known interfaces
         """
-        from mod_config import _bc
-
         func_name = "_preprocess_file"
 
         if self.cpp_filepath:
@@ -500,6 +502,7 @@ class Subroutine(object):
                 self.acc_status = True
                 return None
 
+    @Trace.trace_decorator("_analyze_variables")
     def _analyze_variables(self, sub_dict, global_vars, interface_list, verbose=False):
         """
         Function used to determine read and write variables
@@ -556,7 +559,7 @@ class Subroutine(object):
         regex_paren = re.compile(r"\((.+)\)")
         # regex_ptr_member = re.compile(r"\w+\s*(=>)\s*\w+(%)\w+")
         # Checks for local variables used as targets
-        regex_ptr_simple = re.compile(f"\w+\s*(=>)\s*\w+")
+        regex_ptr_simple = re.compile(r"\w+\s*(=>)\s*\w+")
 
         # dtype_accessed is a dictonary to keep track of derived type vars accessed in the subroutine.
         #        {'inst%component' : [ list of ReadWrite ] }
@@ -738,6 +741,7 @@ class Subroutine(object):
 
         return None
 
+    @Trace.trace_decorator("parse_subroutine")
     def parse_subroutine(self, dtype_dict, main_sub_dict, child=False, verbose=False):
         """
         This function parses subroutine to find which variables are ro,wo,rw
@@ -784,7 +788,9 @@ class Subroutine(object):
 
         return None
 
+    @Trace.trace_decorator("child_subroutine_analysis")
     def child_subroutines_analysis(self, dtype_dict, main_sub_dict, verbose=False):
+
         """
         This function handles parsing child_subroutines and merging
         variable dictionaries
@@ -981,12 +987,6 @@ class Subroutine(object):
         Function that will parse the loop structure of a subroutine
         Add loop parallel directives if desired
         """
-        from mod_config import _bc
-        from utilityFunctions import (determine_filter_access,
-                                      find_file_for_subroutine,
-                                      get_interface_list, getArguments,
-                                      getLocalVariables,
-                                      lineContinuationAdjustment)
 
         interface_list = (
             get_interface_list()
@@ -1018,7 +1018,7 @@ class Subroutine(object):
         loop_start = 0
         loop_end = 0
         regex_do = re.compile(r"\s*(do)\s+\w+\s*(?=[=])", re.IGNORECASE)
-        regex_dowhile = re.compile(f"\s*(do while)", re.IGNORECASE)
+        regex_dowhile = re.compile(r"\s*(do while)", re.IGNORECASE)
         regex_enddo = re.compile(r"^\s*(end)\s*(do)", re.IGNORECASE)
         regex_subcall = re.compile(r"^(call)", re.IGNORECASE)
 

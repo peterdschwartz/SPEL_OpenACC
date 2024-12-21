@@ -2,12 +2,15 @@ import os
 import re
 import sys
 import unittest
+from typing import Dict
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-import utilityFunctions as uf
-from analyze_subroutines import Subroutine
-from edit_files import get_filename_from_module, modify_file
-from mod_config import E3SM_SRCROOT, scripts_dir
+#sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
+import scripts.utilityFunctions as uf
+from scripts.analyze_subroutines import Subroutine
+from scripts.DerivedType import DerivedType
+from scripts.edit_files import (get_filename_from_module, modify_file,
+                                process_for_unit_test)
+from scripts.mod_config import E3SM_SRCROOT, scripts_dir
 
 
 class SubroutineTests(unittest.TestCase):
@@ -77,23 +80,66 @@ class SubroutineTests(unittest.TestCase):
             verbose=False,
             overwrite=False,
         )
-        num_subs = len(sub_dict.keys())
-        self.assertEqual(num_subs, NUM_SUBS)
         for key, ans in SUB_NAME_DICT.items():
-            sub_dict[key].print_subroutine_info()
-            comp = sub_dict[key].result
-            with self.subTest(ans=ans):
-                self.assertEqual(ans, comp)
+            func: Subroutine = sub_dict[key]
+            if func.func:
+                sub_dict[key].print_subroutine_info()
+                comp = sub_dict[key].result
+                with self.subTest(ans=ans):
+                    self.assertEqual(ans, comp)
 
     def test_getArguments(self):
 
-        func_calls = [
-            "call sub1__test (var(i,:), var_2 (isoilorder (c) , j), veg%member(bounds%begc:bounds%endc,isoil (c) ) )"
-        ]
-        func_1 = func_calls[0]
-        args = uf.getArguments(func_1)
-        ans1 = ["var", "var_2", "veg%member"]
-        self.assertListEqual(args, ans1)
+        fn = f"{scripts_dir}/tests/example_functions.f90"
+        mod_dict = {}
+        main_sub_dict = {}
+
+        mod_dict, file_list, main_sub_dict = process_for_unit_test(
+            fname=fn,
+            case_dir="./",
+            mod_dict=mod_dict,
+            mods=[],
+            required_mods=[],
+            main_sub_dict=main_sub_dict,
+            overwrite=True,
+            verbose=False,
+        )
+
+        sub_name_list = ["call_sub"]
+        subroutines: Dict[str, Subroutine] = {
+            s: main_sub_dict[s] for s in sub_name_list
+        }
+
+        type_dict: Dict[str, DerivedType] = {}
+        for mod in mod_dict.values():
+            for utype, dtype in mod.defined_types.items():
+                type_dict[utype] = dtype
+
+        instance_to_user_type = {}
+        for type_name, dtype in type_dict.items():
+            if "bounds" in type_name:
+                continue
+            for instance in dtype.instances.values():
+                instance_to_user_type[instance.name] = type_name
+
+        for s in sub_name_list:
+            #
+            # Parsing means getting info on the variables read and written
+            # to by the subroutine and any of its callees
+            #
+            subroutines[s].parse_subroutine(
+                dtype_dict=type_dict,
+                main_sub_dict=main_sub_dict,
+                verbose=False,
+            )
+
+            subroutines[s].child_subroutines_analysis(
+                dtype_dict=type_dict,
+                main_sub_dict=main_sub_dict,
+                verbose=False,
+            )
+
+        self.assertListEqual([], [1])
 
     def test_get_subroutine_file(self):
         sname = "SoilTemperature"

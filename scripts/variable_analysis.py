@@ -1,9 +1,9 @@
 import re
 import sys
 
-from analyze_subroutines import Subroutine
-from fortran_modules import get_module_name_from_file
-from utilityFunctions import Variable
+from scripts.analyze_subroutines import Subroutine
+from scripts.fortran_modules import get_module_name_from_file
+from scripts.utilityFunctions import Variable
 
 
 def check_global_vars(regex_variables, sub: Subroutine) -> list:

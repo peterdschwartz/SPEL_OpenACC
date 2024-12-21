@@ -2,25 +2,18 @@ import re
 import subprocess as sp
 import sys
 
-from analyze_subroutines import Subroutine
-from check_sections import check_function_start, check_if_block, create_function
-from DerivedType import get_derived_type_definition
-from fortran_modules import (
-    FortranModule,
-    get_filename_from_module,
-    get_module_name_from_file,
-    parse_only_clause,
-)
-from mod_config import E3SM_SRCROOT, spel_output_dir
-from utilityFunctions import (
-    PreProcTuple,
-    check_cpp_line,
-    comment_line,
-    find_variables,
-    get_interface_list,
-    line_unwrapper,
-    parse_line_for_variables,
-)
+from scripts.analyze_subroutines import Subroutine
+from scripts.check_sections import (check_function_start, check_if_block,
+                                    create_function)
+from scripts.DerivedType import get_derived_type_definition
+from scripts.fortran_modules import (FortranModule, get_filename_from_module,
+                                     get_module_name_from_file,
+                                     parse_only_clause)
+from scripts.mod_config import E3SM_SRCROOT, spel_output_dir
+from scripts.utilityFunctions import (PreProcTuple, check_cpp_line,
+                                      comment_line, find_variables,
+                                      get_interface_list, line_unwrapper,
+                                      parse_line_for_variables)
 
 # Compile list of lower-case module names to remove
 # SPEL expects these all to be lower-case currently

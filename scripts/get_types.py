@@ -3,11 +3,11 @@ import re
 import sys
 import time
 
-from DerivedType import get_derived_type_definition
-from fortran_modules import get_filename_from_module, get_module_name_from_file
-from mod_config import ELM_SRC, unittests_dir
-from utilityFunctions import line_unwrapper
-from write_routines import create_deepcopy_module
+from scripts.DerivedType import get_derived_type_definition
+from scripts.fortran_modules import get_filename_from_module, get_module_name_from_file
+from scripts.mod_config import ELM_SRC, unittests_dir
+from scripts.utilityFunctions import line_unwrapper
+from scripts.write_routines import create_deepcopy_module
 
 regex_contains = re.compile(r"^(contains)", re.IGNORECASE)
 

@@ -1,7 +1,7 @@
 import re
 import sys
 
-from utilityFunctions import line_unwrapper
+from scripts.utilityFunctions import line_unwrapper
 
 
 def getAssociateClauseVars(sub, verbose=False):

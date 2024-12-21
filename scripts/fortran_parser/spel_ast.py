@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional, OrderedDict
+from typing import List, Optional
 
-from tokens import Token
+from scripts.fortran_parser.tokens import Token
 
 
 # Base interface: Node
@@ -284,8 +284,8 @@ class FuncExpression(Expression):
 class BoundsExpression(Expression):
     def __init__(self, tok):
         self.token: Token = tok  # Colon
-        self.start: Expression|str = ""
-        self.end: Expression|str = ""
+        self.start: Expression | str = ""
+        self.end: Expression | str = ""
 
     def expression_node(self) -> None:
         pass
@@ -311,6 +311,7 @@ class BoundsExpression(Expression):
             "Node": "Bounds",
             "Val": str(self),
         }
+
 
 # class AssignmentExpression:
 #     def __init__(self,tok):
