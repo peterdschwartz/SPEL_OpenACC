@@ -116,6 +116,9 @@ def get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=Fa
 
 
 class DerivedType(object):
+    """
+    Class to represent Fortran user-derived type
+    """
     def __init__(
         self,
         type_name,

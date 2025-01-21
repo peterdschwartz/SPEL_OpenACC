@@ -16,6 +16,8 @@ class TokenTypes(Enum):
     ASTERISK = "*"
     BANG = "!"
     SLASH = "/"
+    EXP = "**"
+    EQUIV = "=="
     # delimiters
     DOT = "."
     COMMA = ","

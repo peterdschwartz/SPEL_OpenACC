@@ -1,7 +1,10 @@
 import os.path
 import re
 import sys
+from typing import Dict
 
+from scripts.DerivedType import DerivedType
+from scripts.fortran_parser.evaluate import parse_subroutine_call
 from scripts.fortran_parser.tracing import Trace
 from scripts.helper_functions import (ReadWrite, SubroutineCall,
                                       determine_argvar_status,
@@ -354,6 +357,7 @@ class Subroutine(object):
         else:
             no_associate = True
 
+
         # Loop through the routine and find any child subroutines
         if not no_associate:
             ptrname_list = [key for key in self.associate_vars.keys()]
@@ -412,10 +416,10 @@ class Subroutine(object):
 
                 # args is a list of arguments passed to subroutine
                 args = getArguments(l_unwrp)
+                parse_subroutine_call(sub=self,sub_dict=main_sub_dict,input=l_unwrp, ilist=interface_list)
 
                 # If child sub name is an interface, then
-                # find the actual subroutine name corresponding
-                # to the main subroutine dictionary
+                # find the actual subroutine name corresponding to the main subroutine dictionary
                 if child_sub_name in interface_list:
                     child_sub_name, childsub = resolve_interface(
                         self,
@@ -765,7 +769,7 @@ class Subroutine(object):
             verbose=verbose,
         )
 
-        global_vars = {}
+        global_vars: Dict[str,DerivedType] = {}
         for argname, arg in self.Arguments.items():
             if arg.type in dtype_dict.keys():
                 global_vars[argname] = dtype_dict[arg.type]
@@ -783,7 +787,7 @@ class Subroutine(object):
             verbose=verbose,
         )
 
-        # Update main_sub_dict with new parsing information?
+        # Update main_sub_dict with new parsing information
         main_sub_dict[self.name] = self
 
         return None

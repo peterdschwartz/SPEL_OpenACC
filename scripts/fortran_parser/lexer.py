@@ -78,7 +78,12 @@ class Lexer:
 
         match self.ch:
             case "=":
-                tok = new_token(tokens.TokenTypes.ASSIGN, self.ch)
+                next_ch = self.peek_char()
+                if next_ch == "=":
+                    tok = new_token(tokens.TokenTypes.EQUIV, "==")
+                    self.read_char()
+                else:
+                    tok = new_token(tokens.TokenTypes.ASSIGN, self.ch)
             case "(":
                 tok = new_token(tokens.TokenTypes.LPAREN, self.ch)
             case ")":
@@ -90,7 +95,13 @@ class Lexer:
             case "-":
                 tok = new_token(tokens.TokenTypes.MINUS, self.ch)
             case "*":
-                tok = new_token(tokens.TokenTypes.ASTERISK, self.ch)
+                next_ch = self.peek_char()
+                if next_ch == "*":
+                    lit = "**"
+                    self.read_char()
+                    tok = new_token(tokens.TokenTypes.EXP, lit)
+                else:
+                    tok = new_token(tokens.TokenTypes.ASTERISK, self.ch)
             case "/":
                 tok = new_token(tokens.TokenTypes.SLASH, self.ch)
             case "":

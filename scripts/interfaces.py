@@ -33,8 +33,6 @@ def resolve_interface(sub, iname, args, dtype_dict, sub_dict, verbose=False):
         )
     fn, ln, pattern = output
 
-    if verbose:
-        print(fn, ln, pattern + _bc.ENDC)
     ln = int(ln)
 
     # Read file:
@@ -68,8 +66,7 @@ def resolve_interface(sub, iname, args, dtype_dict, sub_dict, verbose=False):
 
     for arg in args:
         found = False
-        # Check global associate variables
-        # if arg is an associated global variable
+        # Check global associate variables if arg is an associated global variable
         # then the type is already known
         if "%" in arg:
             vname, compname = arg.split("%")
@@ -102,6 +99,7 @@ def resolve_interface(sub, iname, args, dtype_dict, sub_dict, verbose=False):
             l_args.append(sub.Arguments[arg])
             found = True
             continue
+
         # Check local variables, arrays :
         if arg in sub.LocalVariables["arrays"].keys():
             l_args.append(sub.LocalVariables["arrays"][arg])

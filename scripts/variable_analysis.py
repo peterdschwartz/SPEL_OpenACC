@@ -1,8 +1,9 @@
 import re
 import sys
+from typing import Dict
 
 from scripts.analyze_subroutines import Subroutine
-from scripts.fortran_modules import get_module_name_from_file
+from scripts.fortran_modules import FortranModule, get_module_name_from_file
 from scripts.utilityFunctions import Variable
 
 
@@ -50,7 +51,7 @@ def check_global_vars(regex_variables, sub: Subroutine) -> list:
 
 
 def determine_global_variable_status(
-    mod_dict,
+    mod_dict: dict[str, FortranModule],
     subroutines: dict[str, Subroutine],
     verbose=False,
 ) -> dict[str, Variable]:
@@ -63,18 +64,22 @@ def determine_global_variable_status(
         * subroutines : list of Subroutine objects
     """
     func_name = "determine_global_variables_status"
-    all_subs = {}
+    all_subs: Dict[str, Subroutine] = {}
     for sub in subroutines.values():
         all_subs[sub.name] = sub
-        for child_sub in sub.child_Subroutine.values():
-            if child_sub.name not in all_subs:
-                all_subs[child_sub.name] = child_sub
+        # for child_sub in sub.child_Subroutine.values():
+        #     if child_sub.name not in all_subs:
+        #         all_subs[child_sub.name] = child_sub
 
     # Create dict of modules containing unit-test subroutines
-    test_modules = {}
+    test_modules: Dict[str, FortranModule] = {}
     for sub in all_subs.values():
         modln, modname = get_module_name_from_file(sub.filepath)
         sub_mod = mod_dict[modname]
+        if modname not in test_modules:
+            sub_mod.sort_used_variables(mod_dict)
+            test_modules[modname] = sub_mod
+
         for m in sub_mod.modules.keys():
             if m not in test_modules:
                 test_modules[m] = mod_dict[m]
@@ -86,7 +91,6 @@ def determine_global_variable_status(
     intrinsic_types = ["real", "integer", "logical", "character"]
     for mod in test_modules.values():
         for used_modname, only_clause in mod.modules.items():
-            # Check if only certain objects are specified
             if only_clause != "all":
                 for ptrobj in only_clause:
                     if isinstance(ptrobj.obj, Variable):
@@ -99,7 +103,6 @@ def determine_global_variable_status(
                             else:
                                 variables[var.name] = var
             else:
-                # Get full information of used modules
                 used_mod = mod_dict[used_modname]
                 for gv in used_mod.global_vars:
                     if gv.type in intrinsic_types:
@@ -109,10 +112,16 @@ def determine_global_variable_status(
     var_string = "|".join(variables.keys())
     regex_variables = re.compile(r"\b({})\b".format(var_string), re.IGNORECASE)
 
+    if verbose:
+        print(f"{func_name}::all subs ", all_subs)
+        print(f"{func_name}::test modules ", test_modules)
+        print(f"{func_name}::variables found ", variables)
+
     # Loop through the subroutines and check for variables used within.
     # `check_global_vars` loops through each sub and looks for any matches
     for sub in all_subs.values():
         active_vars = check_global_vars(regex_variables, sub)
+        print("active_vars:", active_vars, regex_variables)
         if active_vars:
             if verbose:
                 print(f"Subroutine {sub.name} adding {active_vars} ")

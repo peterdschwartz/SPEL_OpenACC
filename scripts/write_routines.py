@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import re
 import subprocess as sp
 import sys
 from collections import namedtuple
+from typing import TYPE_CHECKING, Dict
 
-from scripts.analyze_subroutines import Subroutine
 from scripts.fortran_modules import get_module_name_from_file
 from scripts.mod_config import (ELM_SRC, PHYSICAL_PROP_TYPE_LIST, _bc,
                                 elm_dir_regex, preproc_list, shr_dir_regex,
@@ -13,6 +15,8 @@ from scripts.utilityFunctions import (Variable, comment_line,
                                       find_file_for_subroutine, getArguments,
                                       line_unwrapper)
 
+if TYPE_CHECKING:
+    from scripts.analyze_subroutines import Subroutine
 TAB_WIDTH = 2
 indent = 1
 
@@ -238,7 +242,7 @@ def insert_at_token(lines, token, lines_to_add):
 
 
 def find_parent_subroutine_call(
-    subroutines: dict[str, Subroutine],
+    subroutines: Dict[str, Subroutine],
     type_dict,
     inst_to_type,
 ):

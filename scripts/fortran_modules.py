@@ -36,7 +36,6 @@ def get_module_name_from_file(fpath) -> tuple[int, str]:
     module_name = sp.getoutput(cmd).split("\n")[0]
     # grep will have pattern <line_number>:module <module_name>
     linenumber, module_name = module_name.split(":")
-    # split by space and get the module name
     module_name = module_name.split()[1]
 
     return int(linenumber), module_name.lower()
@@ -154,6 +153,9 @@ class FortranModule:
         self.modified = False  # if module has been through modify_file or not.
         self.variables_sorted = False
 
+    def __repr__(self):
+        return f"FortranModule({self.name})"
+
     def print_module_info(self, ofile=sys.stdout):
         """
         Function to print summary of FortranModule object
@@ -201,6 +203,7 @@ class FortranModule:
         # return early if already called
         if self.variables_sorted:
             return None
+
         for used_mod_name, only_clause in self.modules.items():
             used_mod = mod_dict[used_mod_name]
             # go through `only` clause and check if any are global vars

@@ -3,11 +3,17 @@ Python Module that collects functions that
 have broad utility for several modules in SPEL 
 """
 
+from __future__ import annotations
+
 import re
 import subprocess as sp
 import sys
 from collections import namedtuple
 from pprint import pprint
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from scripts.analyze_subroutines import Subroutine
 
 from scripts.fortran_parser.lexer import Lexer
 from scripts.fortran_parser.spel_parser import Parser
@@ -253,12 +259,6 @@ def getArguments(full_line, verbose=False):
     resolve ambiguities from interfaces, and
     track global variables passed as arguments.
     """
-    lex = Lexer(input=full_line)
-    parser = Parser(lex=lex)
-    program = parser.parse_program()
-
-    for stmt in program.statements:
-        pprint(stmt.to_dict())
 
     if verbose:
         print(_bc.WARNING + f"getArguments:: Processing {full_line}" + _bc.ENDC)

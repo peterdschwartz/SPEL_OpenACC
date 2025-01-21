@@ -1,5 +1,19 @@
 module test
 
+   use shr_const_mod
+
+  integer, parameter, public :: BOUNDS_SUBGRID_GRIDCELL = 1
+  integer, parameter, public :: BOUNDS_SUBGRID_TOPOUNIT = 2
+  integer, parameter, public :: BOUNDS_SUBGRID_LANDUNIT = 3
+  integer, parameter, public :: BOUNDS_SUBGRID_COLUMN   = 4
+  integer, parameter, public :: BOUNDS_SUBGRID_PATCH    = 5
+  integer, parameter, public :: BOUNDS_SUBGRID_COHORT   = 6
+
+  !
+  ! Define possible bounds levels
+  integer, parameter, public :: BOUNDS_LEVEL_PROC  = 1
+  integer, parameter, public :: BOUNDS_LEVEL_CLUMP = 2
+
   type bounds_type
      ! The following variables correspond to "Local" quantities
      integer :: begg, endg                       ! beginning and ending gridcell index
@@ -41,6 +55,39 @@ module test
 
    type(column_nitrogen_flux), target :: col_nf
 
+   type :: prior_weights_type
+     real(r8), allocatable :: pwtcol(:)
+     real(r8), allocatable :: cactive(:)
+   end type prior_weights_type
+
+  type :: patch_state_updater_type
+
+     real(r8), pointer :: pwtgcell_old(:) => null() ! old patch weights on the gridcell
+     real(r8), pointer :: pwtgcell_new(:) => null()! new patch weights on the gridcell
+
+     real(r8), pointer :: cwtgcell_old(:) => null()! old column weights on the gridcell
+
+     ! (pwtgcell_new - pwtgcell_old) from last call to set_new_weights
+     real(r8), pointer :: dwt(:) => null()
+
+     ! (pwtgcell_old / pwtgcell_new) from last call to set_new_weights; only valid for
+     ! growing patches
+     real(r8), pointer :: growing_old_fraction(:) => null()
+
+     ! (dwt / pwtgcell_new) from last call to set_new_weights; only valid for growing
+     ! patches
+     real(r8), pointer :: growing_new_fraction(:) => null()
+   end type 
+
+
+  ! !PUBLIC MEMBER FUNCTIONS:
+  public :: Tridiagonal
+  interface Tridiagonal
+    module procedure Tridiagonal_sr
+    ! module procedure Tridiagonal_sr_with_var_bottom
+    module procedure Tridiagonal_mr
+  end interface Tridiagonal
+
 contains
 
 
@@ -71,9 +118,9 @@ contains
       type(bounds_type), intent(in) :: bounds
       real(r8) :: input1, input2(bounds%begg), input3
       real(r8) :: local_var
-      integer  :: g
+      integer  :: g,j,c
 
-      call test_parsing_sub(bounds, max(input1, local_var + input2(g)), col_nf%m_n_to_litr_met_fire(g), var3=input3)
+      call test_parsing_sub(bounds, max(input1, local_var + input2(g)), col_nf%m_n_to_litr_met_fire(c,j), var3=input3)
 
    end subroutine call_sub
 
@@ -116,7 +163,6 @@ contains
       character(len=*), parameter :: subname = 'prior_weights_type constructor'
       ! ----------------------------------------------------------------------
 
-      !#py SHR_ASSERT(bounds%level == BOUNDS_LEVEL_PROC, subname//': argument must be PROC-level bounds')
 
       allocate (constructor%pwtcol(bounds%begp:bounds%endp))
       allocate (constructor%cactive(bounds%begc:bounds%endc))
@@ -193,5 +239,165 @@ contains
       end select
 
    end function get_beg
+
+  !-----------------------------------------------------------------------
+  subroutine Tridiagonal_sr (bounds, lbj, ubj, jtop, numf, filter, a, b, c, r, u, is_col_active)
+    !$acc routine seq
+    ! !DESCRIPTION:
+    ! Tridiagonal matrix solution
+    ! A x = r
+    ! where x and r are vectors
+    ! !USES:
+    !
+    ! !ARGUMENTS:
+    implicit none
+    type(bounds_type) , intent(in)    :: bounds                                   ! bounds
+    integer           , intent(in)    :: lbj, ubj                                 ! lbinning and ubing level indices
+    integer           , intent(in)    :: jtop( bounds%begc: bounds%endc)          ! top level for each column [col]
+    integer           , intent(in)    :: numf                                     ! filter dimension
+    integer           , intent(in)    :: filter(:)                                ! filter
+    real(r8)          , intent(in)    :: a( bounds%begc:bounds%endc , lbj:ubj)    ! "a" left off diagonal of tridiagonal matrix [col , j]
+    real(r8)          , intent(in)    :: b( bounds%begc:bounds%endc , lbj:ubj)    ! "b" diagonal column for tridiagonal matrix [col  , j]
+    real(r8)          , intent(in)    :: c( bounds%begc:bounds%endc , lbj:ubj)    ! "c" right off diagonal tridiagonal matrix [col   , j]
+    real(r8)          , intent(in)    :: r( bounds%begc:bounds%endc , lbj:ubj)    ! "r" forcing term of tridiagonal matrix [col      , j]
+    real(r8)          , intent(inout) :: u( bounds%begc:bounds%endc , lbj:ubj)    ! solution [col                                    , j]
+                                                                                  !
+    integer                           :: j,ci,fc                                  ! indices
+    logical, optional, intent(in)     :: is_col_active(bounds%begc:bounds%endc)   !
+    logical                           :: l_is_col_active(bounds%begc:bounds%endc) !
+    real(r8)                          :: gam(bounds%begc:bounds%endc,lbj:ubj)     ! temporary
+    real(r8)                          :: bet(bounds%begc:bounds%endc)             ! temporary
+
+    character(len=255)                :: subname ='Tridiagonal_sr'
+    !-----------------------------------------------------------------------
+
+    ! Solve the matrix
+    if(present(is_col_active))then
+       l_is_col_active(:) = is_col_active(:)
+    else
+       l_is_col_active(:) = .true.
+    endif
+
+    do fc = 1,numf
+        ci = filter(fc)
+        if(l_is_col_active(ci))then
+            bet(ci) = b(ci,jtop(ci))
+        endif
+    end do
+
+    do j = lbj, ubj
+       do fc = 1,numf
+           ci = filter(fc)
+           if(l_is_col_active(ci))then
+             if (j >= jtop(ci)) then
+               if (j == jtop(ci)) then
+                 u(ci,j) = r(ci,j) / bet(ci)
+               else
+                 gam(ci,j) = c(ci,j-1) / bet(ci)
+                 bet(ci) = b(ci,j) - a(ci,j) * gam(ci,j)
+                 u(ci,j) = (r(ci,j) - a(ci,j)*u(ci,j-1)) / bet(ci)
+               end if
+             end if
+           endif
+        end do
+    end do
+
+    do j = ubj-1,lbj,-1
+        do fc = 1,numf
+           ci = filter(fc)
+           if(l_is_col_active(ci))then
+             if (j >= jtop(ci)) then
+               u(ci,j) = u(ci,j) - gam(ci,j+1) * u(ci,j+1)
+             end if
+           endif
+        end do
+    end do
+
+
+  end subroutine Tridiagonal_sr
+
+  !-----------------------------------------------------------------------
+  subroutine Tridiagonal_mr (bounds, lbj, ubj, jtop, numf, filter, ntrcs, a, b, c, r, u, is_col_active)
+    !$acc routine seq
+    ! !DESCRIPTION:
+    ! Tridiagonal matrix solution
+    ! A X = R
+    ! where A, X and R are all matrices.
+    ! !USES:
+    !
+    ! !ARGUMENTS:
+    implicit none
+    type(bounds_type) , intent(in)    :: bounds                                         ! bounds
+    integer           , intent(in)    :: lbj, ubj                                       ! lbinning and ubing level indices
+    integer           , intent(in)    :: jtop( bounds%begc: bounds%endc)                ! top level for each column [col]
+    integer           , intent(in)    :: numf                                           ! filter dimension
+    integer           , intent(in)    :: ntrcs                                          !
+    integer           , intent(in)    :: filter(:)                                      ! filter
+    real(r8)          , intent(in)    :: a( bounds%begc:bounds%endc , lbj:ubj)          ! "a" left off diagonal of tridiagonal matrix [col , j]
+    real(r8)          , intent(in)    :: b( bounds%begc:bounds%endc , lbj:ubj)          ! "b" diagonal column for tridiagonal matrix [col  , j]
+    real(r8)          , intent(in)    :: c( bounds%begc:bounds%endc , lbj:ubj)          ! "c" right off diagonal tridiagonal matrix [col   , j]
+    real(r8)          , intent(in)    :: r( bounds%begc:bounds%endc , lbj:ubj, 1:ntrcs) ! "r" forcing term of tridiagonal matrix [col , j]
+    real(r8)          , intent(inout) :: u( bounds%begc:bounds%endc , lbj:ubj, 1:ntrcs) ! solution [col, j]
+                                                                                        !
+    integer                           :: j,ci,fc,k                                      ! indices
+    logical, optional, intent(in)     :: is_col_active(bounds%begc:bounds%endc)         !
+    logical                           :: l_is_col_active(bounds%begc:bounds%endc)       !
+    real(r8)                          :: gam(bounds%begc:bounds%endc,lbj:ubj)           ! temporary
+    real(r8)                          :: bet(bounds%begc:bounds%endc)                   ! temporary
+
+    character(len=255) :: subname ='Tridiagonal_sr'
+    !-----------------------------------------------------------------------
+
+    ! Solve the matrix
+    if (present(is_col_active)) then
+       l_is_col_active(:) = is_col_active(:)
+    else
+       l_is_col_active(:) = .true.
+    endif
+
+    do fc = 1,numf
+       ci = filter(fc)
+       if (l_is_col_active(ci))then
+          bet(ci) = b(ci,jtop(ci))
+       endif
+    end do
+
+    do j = lbj, ubj
+       do fc = 1,numf
+          ci = filter(fc)
+          if (l_is_col_active(ci))then
+             if (j >= jtop(ci)) then
+                if (j == jtop(ci))then
+                   do k = 1, ntrcs
+                     u(ci,j,k) = r(ci,j,k)/bet(ci)
+                   enddo
+                else
+                   gam(ci,j) = c(ci,j-1) / bet(ci)
+                   bet(ci) = b(ci,j) - a(ci,j) * gam(ci,j)
+                   do k = 1, ntrcs
+                      u(ci,j,k) = (r(ci,j, k) - a(ci,j)*u(ci,j-1, k)) / bet(ci)
+                    end do
+                 end if
+             end if
+          end if
+       end do
+    end do
+
+
+    do j = ubj-1,lbj,-1
+       do fc = 1,numf
+          ci = filter(fc)
+          if (l_is_col_active(ci)) then
+             if (j >= jtop(ci)) then
+                do k = 1, ntrcs
+                  u(ci,j, k) = u(ci,j, k) - gam(ci,j+1) * u(ci,j+1, k)
+                end do
+             end if
+          end if
+       end do
+    end do
+
+
+  end subroutine Tridiagonal_mr
 
 end module test
