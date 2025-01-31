@@ -2,7 +2,7 @@ import functools
 
 
 class Trace:
-    enabled = True
+    enabled = False
     _trace_level = 0  # Static variable to keep the indent level
     _trace_indent_placeholder = "|  "
 
@@ -28,12 +28,14 @@ class Trace:
         if cls.enabled:
             cls.inc_ident()
             cls.trace_print(f"BEGIN {msg}")
-        return msg
+            return msg
+        else:
+            return ""
 
     @classmethod
     def untrace(cls, msg: str):
         if cls.enabled:
-            cls.trace_print(f"END {msg}")
+            cls.trace_print(f"END {msg} {cls.enabled}")
             cls.dec_ident()
 
     @classmethod

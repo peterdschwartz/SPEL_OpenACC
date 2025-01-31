@@ -1,6 +1,6 @@
 module test
 
-   use shr_const_mod
+  use shr_const_mod
 
   integer, parameter, public :: BOUNDS_SUBGRID_GRIDCELL = 1
   integer, parameter, public :: BOUNDS_SUBGRID_TOPOUNIT = 2
@@ -13,6 +13,7 @@ module test
   ! Define possible bounds levels
   integer, parameter, public :: BOUNDS_LEVEL_PROC  = 1
   integer, parameter, public :: BOUNDS_LEVEL_CLUMP = 2
+   integer :: nlevdecomp
 
   type bounds_type
      ! The following variables correspond to "Local" quantities
@@ -77,7 +78,7 @@ module test
      ! (dwt / pwtgcell_new) from last call to set_new_weights; only valid for growing
      ! patches
      real(r8), pointer :: growing_new_fraction(:) => null()
-   end type 
+   end type
 
 
   ! !PUBLIC MEMBER FUNCTIONS:
@@ -102,25 +103,46 @@ contains
     allocate(this%m_n_to_litr_met_fire            (begc:endc,1:nlevdecomp_full)) ; this%m_n_to_litr_met_fire           (:,:) = spval
   end subroutine col_nf_init
 
-   subroutine test_parsing_sub(bounds, var1, var2, var3)
+   subroutine test_parsing_sub(bounds, var1, var2, input4, var3)
 
       type(bounds_type), intent(in) :: bounds
       real(r8), INTENT(IN) :: var1
       real(r8), INTENT(IN) :: var2
       real(r8), INTENT(IN) :: var3
+      logical, intent(in) :: input4
 
       integer :: x, y
 
-      x = bounds%begg + var1 + var2 + var3
+      if (input4)then 
+         x = bounds%begg + var1 + var2 + var3
+      else
+         x = bounds%endg + var1 + var2 + var3
+      end if
    end subroutine test_parsing_sub
 
    subroutine call_sub(bounds)
       type(bounds_type), intent(in) :: bounds
-      real(r8) :: input1, input2(bounds%begg), input3
+      real(r8) :: input1, input2(bounds%begg:bounds%endg), input3
       real(r8) :: local_var
-      integer  :: g,j,c
+      integer  :: g,j,c, N
+      integer  :: lbj, ubj, jtop(1:numf), numf
+      integer  :: filter(1:numf)
+      real(r8) :: a_tri(bounds%begc:bounds%endc,0:nlevdecomp+1)
+      real(r8) :: b_tri(bounds%begc:bounds%endc,0:nlevdecomp+1)
+      real(r8) :: c_tri(bounds%begc:bounds%endc,0:nlevdecomp+1)
+      real(r8) :: r_tri(bounds%begc:bounds%endc,0:nlevdecomp+1)
+      real(r8) :: u_tri(bounds%begc:bounds%endc,0:nlevdecomp+1)
 
-      call test_parsing_sub(bounds, max(input1, local_var + input2(g)), col_nf%m_n_to_litr_met_fire(c,j), var3=input3)
+      associate( &
+        hrv_deadstemn_to_prod10n  => col_nf%hrv_deadstemn_to_prod10n &
+      )
+
+      call test_parsing_sub(bounds, max(input1*shr_const_pi, local_var+input2(g)), &
+         col_nf%m_n_to_litr_met_fire(c,1:N), landunit_is_special(g),input3+1)
+
+      call Tridiagonal(bounds, lbj, ubj, jtop, numf, filter, a_tri, b_tri, c_tri, r_tri, u_tri)
+
+      end associate
 
    end subroutine call_sub
 

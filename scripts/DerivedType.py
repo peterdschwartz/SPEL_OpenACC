@@ -1,6 +1,7 @@
 import re
 import subprocess as sp
 import sys
+from typing import Dict
 
 import scripts.write_routines as wr
 from scripts.fortran_modules import get_module_name_from_file
@@ -490,3 +491,13 @@ class DerivedType(object):
             m_end = regex_end.search(full_line)
 
         return ln
+
+def get_component(instance_dict: Dict[str, DerivedType], dtype_field):
+    """
+    Function that looks up inst%field in the instance dict.
+    """
+
+    inst_name, field = dtype_field.split('%')
+    var = instance_dict[inst_name].components[field]['var']
+    return var
+

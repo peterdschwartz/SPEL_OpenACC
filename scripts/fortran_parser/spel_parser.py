@@ -156,7 +156,6 @@ class Parser:
 
     def parse_program(self) -> Program:
         program = Program()
-        Trace.enabled = True
         while self.cur_token.token != TokenTypes.EOF:
             try:
                 stmt = self.parse_statement()

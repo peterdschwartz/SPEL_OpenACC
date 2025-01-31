@@ -1,9 +1,10 @@
 import os.path
 import re
 import sys
-from typing import Dict
+from collections import namedtuple
+from typing import Dict, List
 
-from scripts.DerivedType import DerivedType
+from scripts.DerivedType import DerivedType, get_component
 from scripts.fortran_parser.evaluate import parse_subroutine_call
 from scripts.fortran_parser.tracing import Trace
 from scripts.helper_functions import (ReadWrite, SubroutineCall,
@@ -21,7 +22,9 @@ from scripts.utilityFunctions import (Variable, determine_filter_access,
                                       get_interface_list, getArguments,
                                       getLocalVariables, line_unwrapper,
                                       lineContinuationAdjustment,
-                                      split_func_line)
+                                      search_in_file_section, split_func_line)
+
+FileInfo = namedtuple("FileInfo",["fpath","startln","endln"])
 
 
 class Subroutine(object):
@@ -86,9 +89,9 @@ class Subroutine(object):
                 start -= 1
                 end -= 1
 
-        self.filepath = file
-        self.startline = start
-        self.endline = end
+        self.filepath: str = file
+        self.startline: int = start
+        self.endline: int = end
         if self.endline == 0 or self.startline == 0 or not self.filepath:
             print(
                 f"Error in finding subroutine {self.name} {self.filepath} {self.startline} {self.endline}"
@@ -111,22 +114,24 @@ class Subroutine(object):
         self.arguments_read_write = {}
 
         # Store when the arguments/local variable declarations start and end
-        self.var_declaration_startl = 0
-        self.var_declaration_endl = 0
+        self.var_declaration_startl: int = 0
+        self.var_declaration_endl: int = 0
 
         # Compiler preprocessor flags
-        self.cpp_startline = cpp_start
-        self.cpp_endline = cpp_end
-        self.cpp_filepath = cpp_fn
+        self.cpp_startline: int | None = cpp_start
+        self.cpp_endline: int | None = cpp_end
+        self.cpp_filepath: str | None = cpp_fn
 
         # Process the Associate Clause
         self.associate_vars = {}
         self.associate_start = -1
         self.associate_end = -1
-        self.dummy_args_list = []
+        self.dummy_args_list: List[str] = []
         self.return_type = function.return_type if function else ""
         self.result_name = function.result if function else ""
-        self.result = None
+        self.result: Variable|None = None
+
+        self.dtype_vars: Dict[str,Variable] = {}
 
         if not lib_func:
             self.associate_vars, jstart, jend = getAssociateClauseVars(self)
@@ -159,20 +164,21 @@ class Subroutine(object):
         self.elmtype_w = {}
         self.elmtype_rw = {}
         # This dict holds "global_var" : list[ReadWrite] with no processing.
-        self.elmtype_access_by_ln = {}
+        self.elmtype_access_by_ln: Dict[str,List[ReadWrite]] = {}
 
-        self.subroutine_call = []
+        self.subroutine_call: List[SubroutineCall] = []
         self.child_Subroutine = {}
 
-        self.acc_status = False
+        self.acc_status: bool = False
         self.DoLoops = []
-        self.analyzed_child_subroutines = False
+        self.analyzed_child_subroutines: bool = False
 
         # non-derived type variables used in the subroutine
-        self.active_global_vars = {}
+        self.active_global_vars: Dict[str,Variable] = {}
 
         # Flag that denotes subroutines that were user requested 
-        self.unit_test_function = False
+        self.unit_test_function: bool = False
+
 
     def __repr__(self) -> str:
         name = "Subroutine" if not self.func else "Function"
@@ -302,6 +308,94 @@ class Subroutine(object):
             ct += 1
         print(constants)
 
+
+    def get_dtype_vars(self, instance_dict: Dict[str, DerivedType])-> Dict[str,Variable]:
+        """
+        Function 
+        """
+        regex_dtype_var =  re.compile(r"\w+(?:\(\w+\))?%\w+")
+
+        if not self.cpp_filepath:
+            matched_lines = search_in_file_section(fpath=self.filepath, start_ln=self.startline, end_ln=self.endline,pattern=regex_dtype_var,)
+        else:
+            matched_lines = search_in_file_section(fpath=self.cpp_filepath, start_ln=self.cpp_startline, end_ln=self.cpp_endline,pattern=regex_dtype_var,)
+
+        def check_local_decls(my_dict):
+            return lambda key: key in my_dict
+
+        local_and_args_dict = self.Arguments | self.LocalVariables['arrays'] | self.LocalVariables['scalars']
+        is_arg_or_local = check_local_decls(local_and_args_dict)
+
+        dtype_vars: Dict[str,Variable] = {}
+        ln = 0
+        while(ln<len(matched_lines)):
+            full_line, ln = line_unwrapper(matched_lines, ln)
+            m_vars = regex_dtype_var.findall(full_line)
+
+            for dtype in m_vars:
+                if dtype not in dtype_vars and not is_arg_or_local(dtype.split('%')[0]):
+                    dtype_vars[dtype] = get_component(instance_dict, dtype)
+
+            ln += 1
+
+
+        return dtype_vars
+
+
+    def get_file_info(self):
+        """
+        Getter that returns tuple for fn, start and stop linenumbers.takes into account cpp files
+        """
+        # Note: don't differentiate between cpp files and regular files
+        #       for location of the associate clause.
+        if self.cpp_filepath:
+            fn = self.cpp_filepath
+            if self.associate_end == 0:
+                start_ln = self.cpp_startline
+            else:
+                start_ln = self.associate_end
+            endline = self.cpp_endline
+        else:
+            fn = self.filepath
+            if self.associate_end == 0:
+                start_ln = self.startline
+            else:
+                start_ln = self.associate_end
+            endline = self.endline
+
+        return FileInfo(fpath=fn,startln=start_ln,endln=endline)
+
+    def check_variable_consistency(self)-> bool:
+        """
+        Checks that the variables in Arguments, LocalVariables, dtype_vars and active_global_vars
+        do not overlap (i.e. no variables are improperly shadowed)
+        """
+        var_set = set()
+
+        var_set.update(self.Arguments.keys())
+
+        if var_set & self.LocalVariables['scalars'].keys():
+            print("Error: Local scalar and Argument names overlap.")
+            return False
+        var_set.update(self.LocalVariables['scalars'].keys())
+
+        if var_set & self.LocalVariables['arrays'].keys():
+            print("Error: Local Array names overlap.")
+            return False
+        var_set.update(self.LocalVariables['arrays'].keys())
+
+        if var_set & self.dtype_vars.keys():
+            print("Error: global dtype names overlap.")
+            return False
+        var_set.update(self.dtype_vars.keys())
+
+        if var_set & self.active_global_vars.keys():
+            print("Error: global non-dtype names overlap.")
+            return False
+
+        return True
+
+
     @Trace.trace_decorator("_preprocess_file")
     def _preprocess_file(
         self, main_sub_dict, dtype_dict, interface_list, verbose=False
@@ -315,17 +409,7 @@ class Subroutine(object):
         """
         func_name = "_preprocess_file"
 
-        if self.cpp_filepath:
-            fn = self.cpp_filepath
-        else:
-            fn = self.filepath
-
-        file = open(fn, "r")
-        lines = file.readlines()
-        file.close()
-        regex_ptr = re.compile(r"\w+\s*(=>)\s*\w+(%)\w+")
-        # Set up dictionary of derived type instances
-        global_vars = {}
+        global_vars: Dict[str, DerivedType] = {}
         for argname, arg in self.Arguments.items():
             if arg.type in dtype_dict.keys():
                 global_vars[argname] = dtype_dict[arg.type]
@@ -335,28 +419,25 @@ class Subroutine(object):
                 if inst not in global_vars:
                     global_vars[inst] = dtype
 
-        # Loop through subroutine and find any child subroutines
-        endline : int = -999
-        if self.cpp_startline:
-            if self.associate_end == 0:
-                ct = self.cpp_startline
-            else:
-                # Note: don't differentiate between cpp files and regular files
-                #       for location of the associate clause.
-                ct = self.associate_end
-            endline = self.cpp_endline
-        else:
-            if self.associate_end == 0:
-                ct = self.startline
-            else:
-                ct = self.associate_end
-            endline = self.endline
+        self.dtype_vars = self.get_dtype_vars(global_vars)
+        ok = self.check_variable_consistency()
+        if not ok:
+            print(f"Subroutine parsing has inconsistencies for {self.name} exiting...")
+            sys.exit(1)
+
+        file_info = self.get_file_info()
+        fn, ct, endline = file_info
+
+        file = open(fn, "r")
+        lines = file.readlines()
+        file.close()
+
+        regex_ptr = re.compile(r"\w+\s*(=>)\s*\w+(%)\w+")
 
         if self.associate_vars: 
             no_associate = False
         else:
             no_associate = True
-
 
         # Loop through the routine and find any child subroutines
         if not no_associate:
@@ -366,14 +447,13 @@ class Subroutine(object):
 
         while ct < endline:
             line = lines[ct]
-            # get rid of comments
             line = line.split("!")[0].strip()
             if not line:
                 ct += 1
                 continue
             match_ptr = regex_ptr.search(line)
             if match_ptr:
-                # A pointer may be mapped to multiple difference global variables (i.e., a case switch)
+                # A pointer may be mapped to multiple different global variables (i.e., a case switch)
                 # So, each gv is stored as a list instead. This requires extra care when extracting
                 # the read/write status.
                 ptrname, gv = match_ptr.group().split("=>")

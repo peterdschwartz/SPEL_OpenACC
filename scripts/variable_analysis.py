@@ -121,10 +121,7 @@ def determine_global_variable_status(
     # `check_global_vars` loops through each sub and looks for any matches
     for sub in all_subs.values():
         active_vars = check_global_vars(regex_variables, sub)
-        print("active_vars:", active_vars, regex_variables)
         if active_vars:
-            if verbose:
-                print(f"Subroutine {sub.name} adding {active_vars} ")
             for var in active_vars:
                 variables[var].active = True
                 sub.active_global_vars[var] = variables[var]

@@ -9,14 +9,11 @@ import re
 import subprocess as sp
 import sys
 from collections import namedtuple
-from pprint import pprint
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, List, Pattern
 
 if TYPE_CHECKING:
     from scripts.analyze_subroutines import Subroutine
 
-from scripts.fortran_parser.lexer import Lexer
-from scripts.fortran_parser.spel_parser import Parser
 from scripts.fortran_parser.tracing import Trace
 from scripts.mod_config import ELM_SRC, _bc
 
@@ -607,7 +604,6 @@ def determine_class_instance(sub, verbose=False):
     """
     Find out what the data structure 'this' corresponds to
     """
-    import subprocess as sp
 
     func_name = "determine_class_instance"
     filename = sub.filepath
@@ -1334,4 +1330,16 @@ def check_cpp_line(base_fn, og_lines, cpp_lines, cpp_ln, og_ln, verbose=False):
         m_cpp = regex_cpp_comment.search(cpp_lines[cpp_ln])
 
     return cpp_ln, og_ln, og_lines
+
+
+def search_in_file_section(fpath: str, start_ln:int, end_ln: int, pattern: Pattern,):
+    """
+    Function that iterates through the lines in a file using filter builtin.
+    """
+    with open(fpath, "r") as file:
+        lines = enumerate(file, start=0)
+        section = filter(lambda x: start_ln <= x[0] <= end_ln, lines)
+        matches = [line[1] for line in filter(lambda x: pattern.search(x[1]), section)]
+
+    return matches
 

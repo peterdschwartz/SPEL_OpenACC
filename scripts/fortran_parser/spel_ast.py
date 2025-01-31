@@ -144,7 +144,7 @@ class IntegerLiteral(Expression):
         return isinstance(other, IntegerLiteral) and self.value == other.value
 
     def to_dict(self):
-        return {"Node": "Int", "val": str(self)}
+        return {"Node": "IntegerLiteral", "Val": self.value}
 
 
 class FloatLiteral(Expression):
@@ -166,7 +166,7 @@ class FloatLiteral(Expression):
         return isinstance(other, FloatLiteral) and self.value == other.value
 
     def to_dict(self):
-        return {"Node": "Float", "val": str(self)}
+        return {"Node": "FloatExpression", "Val": self.value}
 
 
 class PrefixExpression(Expression):
@@ -308,6 +308,6 @@ class BoundsExpression(Expression):
 
     def to_dict(self):
         return {
-            "Node": "Bounds",
+            "Node": "BoundsExpression",
             "Val": str(self),
         }
