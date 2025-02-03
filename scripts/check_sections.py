@@ -1,25 +1,15 @@
 import re
-from dataclasses import dataclass
 
 from scripts.analyze_subroutines import Subroutine
 from scripts.mod_config import spel_output_dir
+from scripts.types import FunctionReturn, PreProcTuple
 from scripts.utilityFunctions import (
-    PreProcTuple,
     check_cpp_line,
     comment_line,
     intrinsic_type,
     line_unwrapper,
     split_func_line,
 )
-
-
-@dataclass
-class FunctionReturn:
-    return_type: str
-    name: str
-    result: str
-    start_ln: int
-    cpp_start: int
 
 
 def AdjustLine(a, b, c):

@@ -495,14 +495,15 @@ class Subroutine(object):
                 l_unwrp, ct = line_unwrapper(lines=lines, ct=ct)
 
                 # args is a list of arguments passed to subroutine
+                args=parse_subroutine_call(sub=self,sub_dict=main_sub_dict,input=l_unwrp, ilist=interface_list)
+
                 args = getArguments(l_unwrp)
-                parse_subroutine_call(sub=self,sub_dict=main_sub_dict,input=l_unwrp, ilist=interface_list)
 
                 # If child sub name is an interface, then
                 # find the actual subroutine name corresponding to the main subroutine dictionary
                 if child_sub_name in interface_list:
                     child_sub_name, childsub = resolve_interface(
-                        self,
+                        sub=self,
                         iname=child_sub_name,
                         args=args,
                         dtype_dict=global_vars,
@@ -663,7 +664,7 @@ class Subroutine(object):
 
             # Solution to avoid replacing regex in other functions for now?
             for i,mvar in enumerate(match_var):
-                line = line.replace(mvar,arr_of_structs[i])
+                line = line.replace(mvar, arr_of_structs[i])
             match_var = arr_of_structs.copy()
 
             if not match_call:

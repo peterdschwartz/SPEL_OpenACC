@@ -10,10 +10,10 @@ from scripts.fortran_modules import (FortranModule, get_filename_from_module,
                                      get_module_name_from_file,
                                      parse_only_clause)
 from scripts.mod_config import E3SM_SRCROOT, spel_output_dir
-from scripts.utilityFunctions import (PreProcTuple, check_cpp_line,
-                                      comment_line, find_variables,
-                                      get_interface_list, line_unwrapper,
-                                      parse_line_for_variables)
+from scripts.types import PreProcTuple
+from scripts.utilityFunctions import (check_cpp_line, comment_line,
+                                      find_variables, get_interface_list,
+                                      line_unwrapper, parse_line_for_variables)
 
 # Compile list of lower-case module names to remove
 # SPEL expects these all to be lower-case currently

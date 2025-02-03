@@ -2,29 +2,7 @@ import subprocess as sp
 import sys
 
 from scripts.mod_config import ELM_SRC, SHR_SRC, _bc
-
-
-# NOTE: Create Class for used objects that are aliased
-#   i.e.,    `ptr` => 'long_object_name'
-# This could be used for assiociate lists, but the only
-# current implementation is for determining which intrinsic type
-# global variables are used for a given calltree.
-class PointerAlias:
-    def __init__(self, ptr, obj):
-        self.ptr = ptr
-        self.obj = obj
-
-    def __eq__(self, other):
-        return (self.ptr == other.ptr) and (self.obj == other.obj)
-
-    def __str__(self):
-        if self.ptr:
-            return f"{ self.ptr } => { self.obj }"
-        else:
-            return f"{ self.obj }"
-
-    def __repr__(self):
-        return f"{self.ptr} => {self.obj}"
+from scripts.types import PointerAlias
 
 
 def get_module_name_from_file(fpath) -> tuple[int, str]:

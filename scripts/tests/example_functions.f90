@@ -107,25 +107,27 @@ contains
 
       type(bounds_type), intent(in) :: bounds
       real(r8), INTENT(IN) :: var1
-      real(r8), INTENT(IN) :: var2
+      real(r8), INTENT(IN) :: var2(bounds%begg:)
       real(r8), INTENT(IN) :: var3
       logical, intent(in) :: input4
 
-      integer :: x, y
+      integer :: x, y, g
+      g = 1
 
       if (input4)then 
-         x = bounds%begg + var1 + var2 + var3
+         x = bounds%begg + var1 + var2(g)+ var3
       else
-         x = bounds%endg + var1 + var2 + var3
+         x = bounds%endg + var1 + var2(g) + var3
       end if
    end subroutine test_parsing_sub
 
-   subroutine call_sub(bounds)
+   subroutine call_sub(numf, bounds)
+      integer, intent(in) :: numf
       type(bounds_type), intent(in) :: bounds
       real(r8) :: input1, input2(bounds%begg:bounds%endg), input3
       real(r8) :: local_var
       integer  :: g,j,c, N
-      integer  :: lbj, ubj, jtop(1:numf), numf
+      integer  :: lbj, ubj, jtop(1:numf)
       integer  :: filter(1:numf)
       real(r8) :: a_tri(bounds%begc:bounds%endc,0:nlevdecomp+1)
       real(r8) :: b_tri(bounds%begc:bounds%endc,0:nlevdecomp+1)
@@ -138,9 +140,9 @@ contains
       )
 
       call test_parsing_sub(bounds, max(input1*shr_const_pi, local_var+input2(g)), &
-         col_nf%m_n_to_litr_met_fire(c,1:N), landunit_is_special(g),input3+1)
+         col_nf%m_n_to_litr_met_fire(c,1:N), landunit_is_special(g),var3=input3+1)
 
-      call Tridiagonal(bounds, lbj, ubj, jtop, numf, filter, a_tri, b_tri, c_tri, r_tri, u_tri)
+      ! call Tridiagonal(bounds, lbj, ubj, jtop, numf, filter, a_tri, b_tri, c_tri, r_tri, u_tri)
 
       end associate
 

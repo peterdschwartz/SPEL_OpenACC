@@ -272,8 +272,6 @@ def determine_arg_name(matched_vars, child_sub, args, verbose=False) -> list:
 
     var_string = "|".join(matched_vars)
     var_string = f"({var_string})"
-    if child_sub.name == "dynamic_plant_alloc":
-        verbose = True
 
     if verbose:
         print(func_name, args)

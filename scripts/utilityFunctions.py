@@ -243,7 +243,7 @@ def removeBounds(line, verbose=False):
 
 
 @Trace.trace_decorator("getArguments")
-def getArguments(full_line, verbose=False):
+def getArguments(full_line, verbose=False)->List[str]:
     """
     Function that takes a string of the subroutine call
     as an argument and returns the variables

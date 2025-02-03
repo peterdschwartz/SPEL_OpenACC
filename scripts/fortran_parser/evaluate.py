@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sys
 from dataclasses import dataclass
-from enum import Enum
 from pprint import pprint
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -14,6 +13,7 @@ from scripts.fortran_parser.environment import Environment
 from scripts.fortran_parser.lexer import Lexer
 from scripts.fortran_parser.spel_parser import Parser
 from scripts.fortran_parser.tracing import Trace
+from scripts.types import ArgDesc, ArgNode, ArgType, IdentKind
 
 REAL = "real"
 INT = "integer"
@@ -22,46 +22,18 @@ INHERITED = "inherited"
 
 map_py_to_f_types = {int: INT, float: REAL,  str : CHAR, }
 
-class FortranTypes(Enum):
-    CHAR = 1
-    LOGICAL = 2
-    INT = 3
-    REAL = 4 
-    INHERITED = 5
-
-@dataclass(frozen=True)
-class ArgType:
-    datatype: str
-    dim: int
-
-
-class IdentKind(Enum):
-    intrinsic = 1
-    variable = 2
-    function = 3
-    infix = 4
-    prefix = 5
-    slice = 6
-    literal = 7
-
-
-@dataclass
-class ArgNode:
-    argn: int
-    ident: int|float|str
-    kind: IdentKind
-    nested_level: int
-    node: dict
-
-
 @dataclass
 class SymbolTable:
     vars: List[ArgNode]
     intrinsics: List[ArgNode]
     fns: List[ArgNode]
 
-
 class ArgTree:
+    """
+    node: ArgNode
+    children: List[ArgTree]
+    parent
+    """
     def __init__(self, node):
         self.node: ArgNode = node
         self.children: List[ArgTree] = []
@@ -136,6 +108,48 @@ intrinsic_fns = {
     "epsilon": ArgType(datatype=REAL, dim=0),
 }
 
+def construct_arg_tree(
+    args,
+    env: Environment,
+) -> List[ArgTree]:
+    """
+    Takes a list of expressions from subroutine call, returns
+    a List with the ith element corresponding the ith argument expression.
+    """
+    flat_tree: List[List[ArgNode]] = [[] for i in range(0, len(args))]
+    for arg_num, expr in enumerate(args):
+        evaluate(arg_num, expr, env, flat_tree, nested=0)
+
+    arg_trees : List[ArgTree] = []
+    for nodes in flat_tree:
+        arg_trees.append(make_tree(nodes))
+
+    return arg_trees
+
+
+def make_tree(flat_arg_nodes: List[ArgNode]) -> ArgTree:
+    """
+    Generates a linked tree structure for each argument node based on nested_level
+    """
+
+    root = ArgTree(flat_arg_nodes[0])
+    stack = [(flat_arg_nodes[0].nested_level, root)]  # Stack to track parents
+
+    for node in flat_arg_nodes[1:]:
+        node_tree = ArgTree(node)
+
+        # Find the correct parent by checking the stack
+        while stack and stack[-1][0] >= node.nested_level:
+            stack.pop()
+
+        if stack:
+            parent_tree = stack[-1][1]
+            parent_tree.add_child(node_tree)
+
+        stack.append((node.nested_level, node_tree))
+
+    return root
+
 
 @Trace.trace_decorator("parse_subroutine_call")
 def parse_subroutine_call(
@@ -169,58 +183,18 @@ def parse_subroutine_call(
 
     arg_tree = construct_arg_tree(arg_list, env)
 
-    map_arg_types(arg_tree, env)
+    arg_desc_list = create_arg_descr(arg_tree, env)
+
+    sort_variables(sub, arg_tree, arg_desc_list)
+
+    for desc in arg_desc_list:
+        print("Desc:\n",desc)
 
     if sub_name in ilist:
         print("Need to resolve interface")
 
     return
 
-
-def construct_arg_tree(
-    args,
-    env: Environment,
-) -> List[ArgTree]:
-    """
-    Takes a list of expressions from subroutine call, returns
-    a List with the ith element corresponding the ith argument expression.
-    """
-    flat_tree: List[List[ArgNode]] = [[] for i in range(0, len(args))]
-    for arg_num, expr in enumerate(args):
-        evaluate(arg_num, expr, env, flat_tree, nested=0)
-
-    arg_trees : List[ArgTree] = []
-    for nodes in flat_tree:
-        arg_trees.append(make_tree(nodes))
-    
-    for tree in arg_trees:
-        tree.print_tree()
-
-    return arg_trees
-
-
-def make_tree(flat_arg_nodes: List[ArgNode]) -> ArgTree:
-    """
-    Generates a linked tree structure for each argument node based on nested_level
-    """
-
-    root = ArgTree(flat_arg_nodes[0])
-    stack = [(flat_arg_nodes[0].nested_level, root)]  # Stack to track parents
-
-    for node in flat_arg_nodes[1:]:
-        node_tree = ArgTree(node)
-
-        # Find the correct parent by checking the stack
-        while stack and stack[-1][0] >= node.nested_level:
-            stack.pop()
-
-        if stack:
-            parent_tree = stack[-1][1]
-            parent_tree.add_child(node_tree)
-
-        stack.append((node.nested_level, node_tree))
-
-    return root
 
 
 def create_environment(
@@ -347,20 +321,47 @@ def evaluate(
     return
 
 
-def map_arg_types(
+def create_arg_descr(
     arg_tree: List[ArgTree],
     env: Environment,
-) -> None:
+) -> List[ArgDesc]:
     """
-    Function that assigns an Variable type to each function argument
+    Function that assigns an Variable type to each function argument and 
+    returns an overall description of each argument expression.
     """
-    args = []
-
-    print("ArgType, Branch")
-    for tree in arg_tree:
+    args: List[ArgDesc] = []
+    for argn, tree in enumerate(arg_tree):
         arg_type = check_arg_branch(tree, env)
-        print(arg_type, tree.node.node)
+        keyword = check_keyword(tree)
+        desc = ArgDesc(argn=argn,
+                       intent='',
+                       keyword=keyword,
+                       argtype=arg_type,
+                       locals=[],
+                       globals=[],
+                       dummy_args=[],
+                       )
+        args.append(desc)
 
+
+    return args
+
+def sort_variables(sub: Subroutine, arg_tree: List[ArgTree], args: List[ArgDesc]) -> None:
+    """
+    Function to fill out the locals and globals field in ArgDesc
+    """
+    globals = sub.dtype_vars | sub.active_global_vars
+    locals = sub.LocalVariables['arrays'] | sub.LocalVariables['scalars']
+    for argn, branch in enumerate(arg_tree):
+        for node in branch.traverse_preorder():
+            if node.node.kind == IdentKind.variable:
+                varname = node.node.ident
+                if varname in globals:
+                    args[argn].globals.append(globals[varname])
+                elif varname in locals:
+                    args[argn].locals.append(locals[varname])
+                elif varname in sub.Arguments:
+                    args[argn].dummy_args.append(sub.Arguments[varname])
     return
 
 
@@ -433,4 +434,9 @@ def adjust_dim(dim: int, branch: ArgTree) -> int:
     assert dim > 0, f"can't have negative dimension:\n {branch.node}"
     return dim
 
-
+def check_keyword(tree: ArgTree)->bool:
+    node = tree.node
+    if(node.kind != IdentKind.infix):
+        return False
+    else:
+        return bool(node.node['Op'] == '=')
