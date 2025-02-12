@@ -1,48 +1,31 @@
+from __future__ import annotations
+
 import re
 import sys
-from collections import namedtuple
+from pprint import pprint
+from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from scripts.analyze_subroutines import Subroutine
+
+import scripts.dynamic_globals as dg
+from scripts.DerivedType import DerivedType
+from scripts.fortran_parser.evaluate import parse_subroutine_call
 from scripts.log_functions import list_print
 from scripts.mod_config import _bc
-
-
-# Declare namedtuple for readwrite status of variables:
-class ReadWrite(object):
-    def __init__(self, status, ln):
-        self.status = status
-        self.ln = ln
-
-    def __eq__(self, other):
-        return self.status == other.status and self.ln == other.ln
-
-    def __repr__(self):
-        return f"{self.status}@L{self.ln}"
-
-
-# namedtuple to log the subroutines called and their arguments
-# to properly match read/write status of variables.
-# SubroutineCall = namedtuple('SubroutineCall',['subname','args'])
-# subclass namedtuple to allow overriding equality.
-class SubroutineCall(namedtuple("SubroutineCall", ["subname", "args", "ln"])):
-    def __eq__(self, other):
-        return (
-            (self.subname == other.subname)
-            and (self.args == other.args)
-            and (self.ln == other.ln)
-        )
-
-    def __str__(self):
-        return f"{self.subname}@{self.ln} ({self.args})"
+from scripts.types import CallDesc, ReadWrite, SubroutineCall
 
 
 def determine_variable_status(
-    matched_variables, line, ct, dtype_accessed, verbose=False
+    matched_variables: list[str],
+    line: str,
+    ct: int,
+    dtype_accessed: dict[str, list[ReadWrite]],
+    verbose: bool = False,
 ):
     """
     Function that loops through each var in match_variables and
     determines the ReadWrite status.
-
-    Move to utilityFunctions.py?  Use for loop variable analysis as well?
     """
     func_name = "determine_variable_status::"
     match_assignment = re.search(r"(?<![><=/])=(?![><=])", line)
@@ -175,13 +158,16 @@ def add_acc_routine_info(sub):
 
 
 def determine_argvar_status(
-    vars_as_arguments, subname, sub_dict, linenum, verbose=False
+    vars_as_arguments: dict[str, str],
+    subname: str,
+    sub_dict: dict[str, Subroutine],
+    linenum: int,
+    verbose: bool = False,
 ):
     """
     Function goes through a subroutine to classify their arguments as read,write status
     Inputs:
         vars_as_arguments : { 'dummy_arg' : 'global variable'}
-        sub_dict : dict {'subname' : Subroutine object}
     """
     func_name = "determine_argvar_status"
 
@@ -238,13 +224,15 @@ def summarize_read_write_status(var_access, map_names=[]):
     return summary
 
 
-def trace_derived_type_arguments(parent_sub, child_sub, verbose=False):
+def trace_derived_type_arguments(
+    parent_sub: Subroutine, child_sub: Subroutine, verbose: bool = False
+):
     """
     Function will check if the parent passed it's own argument to the child.
         parent_sub : Subroutine, child_sub: Subroutine
     """
     func_name = "trace_derived_type_arguments"
-    subcalls_by_parent = [
+    subcalls_by_parent: list[SubroutineCall] = [
         subcall
         for subcall in child_sub.subroutine_call
         if subcall.subname == parent_sub.name
@@ -325,3 +313,44 @@ def replace_ptr_with_targets(elmtype, type_dict, insts_to_type_dict, use_c13c14=
                 elmtype.update(targets_to_add)
 
     return elmtype
+
+
+def find_child_subroutines(
+    sub: Subroutine,
+    sub_dict: dict[str, Subroutine],
+    instance_dict: dict[str, DerivedType],
+) -> None:
+    """
+    Function that populates Subroutine fields that require
+    looking up in main dictionaries
+    """
+    lines = sub.get_sub_lines()
+
+    regex_call = re.compile(r"^\s*(call)\b")
+    matches = [line for line in filter(lambda x: regex_call.search(x.line), lines)]
+
+    for call_line in matches:
+        call_desc = parse_subroutine_call(
+            sub=sub,
+            sub_dict=sub_dict,
+            input=call_line,
+            ilist=dg.interface_list,
+            instance_dict=instance_dict,
+        )
+        if call_desc:
+            key = f"{call_desc.alias}@L{call_desc.ln}"
+            call_desc.aggregate_vars()
+            sub.sub_call_desc[key] = call_desc
+    return
+
+
+def check_nested_and_unnested_global_args(call_desc: CallDesc):
+    """
+    Function that goes through the global variables passed into
+    a subroutine call.
+    If the variable is not nested, then the variable
+    will inherit the rw status of the dummy arg.
+    If the variable is nested, then the variable is read-only.
+    """
+    unnested = [v for v in call_desc.globals if v.node.nested_level == 0]
+    return

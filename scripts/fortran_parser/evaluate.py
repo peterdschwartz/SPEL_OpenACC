@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import re
 import sys
 from dataclasses import dataclass
 from pprint import pprint
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+from scripts.DerivedType import DerivedType, expand_dtype
+from scripts.interfaces import resolve_interface2
 
 if TYPE_CHECKING:
     from scripts.analyze_subroutines import Subroutine
@@ -13,7 +17,8 @@ from scripts.fortran_parser.environment import Environment
 from scripts.fortran_parser.lexer import Lexer
 from scripts.fortran_parser.spel_parser import Parser
 from scripts.fortran_parser.tracing import Trace
-from scripts.types import ArgDesc, ArgNode, ArgType, IdentKind
+from scripts.types import (ArgDesc, ArgNode, ArgType, ArgVar, CallDesc,
+                           IdentKind, LineTuple)
 
 REAL = "real"
 INT = "integer"
@@ -108,6 +113,19 @@ intrinsic_fns = {
     "epsilon": ArgType(datatype=REAL, dim=0),
 }
 
+
+_ignore_subs = [
+    r'\bcpu_time\b',
+    r"\bget_curr_date\b",
+    r"\bt_start",
+    r"\bt_stop",
+    r"\bendrun\b",
+    r"\bupdate_vars",
+]
+ignore_str = "|".join(_ignore_subs)
+regex_ignore = re.compile(r"({})".format(ignore_str))
+
+
 def construct_arg_tree(
     args,
     env: Environment,
@@ -154,14 +172,15 @@ def make_tree(flat_arg_nodes: List[ArgNode]) -> ArgTree:
 @Trace.trace_decorator("parse_subroutine_call")
 def parse_subroutine_call(
     sub: Subroutine,
-    sub_dict: Dict[str, Subroutine],
-    input: str,
-    ilist: List[str],
-):
+    sub_dict: dict[str, Subroutine],
+    input: LineTuple,
+    ilist: list[str],
+    instance_dict: dict[str, DerivedType],
+) -> Optional[CallDesc]:
     """
-    Function to generate an AST for a subroutine call string
+    Function to generate and parse an AST for a subroutine call string
     """
-    lex = Lexer(input=input)
+    lex = Lexer(input=input.line)
     parser = Parser(lex=lex)
     program = parser.parse_program()
     if len(program.statements) > 1:
@@ -175,11 +194,21 @@ def parse_subroutine_call(
     if node_type != "SubCallStatement":
         print("Error -- Not a SubCallStatement!\n{input}\n")
         sys.exit(1)
-    sub_node: Dict[str, Any] = ast["Sub"]
+    sub_node: dict[str, Any] = ast["Sub"]
     sub_name = sub_node["Func"]
     arg_list = sub_node["Args"]
+    if regex_ignore.search(sub_name):
+        return None
 
-    env: Environment = create_environment(sub, sub_dict)
+    type_dict: dict[str,DerivedType] = {inst.type_name : inst for inst in instance_dict.values()}
+
+    if not sub.environment:
+        env: Environment = create_environment(sub, sub_dict, type_dict)
+        sub.environment = env
+        pprint(env)
+    else:
+        env = sub.environment
+
 
     arg_tree = construct_arg_tree(arg_list, env)
 
@@ -187,36 +216,77 @@ def parse_subroutine_call(
 
     sort_variables(sub, arg_tree, arg_desc_list)
 
-    for desc in arg_desc_list:
-        print("Desc:\n",desc)
-
     if sub_name in ilist:
-        print("Need to resolve interface")
+        fn = resolve_interface2(sub_name, arg_desc_list, sub_dict) 
+    elif "%" in sub_name:
+        fn = resolve_class_method(sub_name, instance_dict)
+    else:
+        fn = sub_name
+    if not fn:
+        print(f"Error - couldn't resolve interface or class method {sub_name}")
+        sys.exit(1)
 
-    return
+    return CallDesc(alias=sub_name,
+                    fn=fn,
+                    ln=input.ln,
+                    args=arg_desc_list,
+                    globals=[],
+                    locals=[],
+                    dummy_args=[])
 
+def resolve_class_method(subname: str, inst_dict: dict[str,DerivedType], )->str:
+    inst_var, method = subname.split('%')
+    dtype = inst_dict[inst_var]
+    return dtype.procedures[method]
 
 
 def create_environment(
     sub: Subroutine,
     sub_dict: Dict[str, Subroutine],
+    type_dict: dict[str, DerivedType],
 ) -> Environment:
     """
-    Package revelant variables and functions for this subroutine
+    Package revelant variables and functions for this subroutine.
+    variables are categorized as local, dummy argument, or "global"
     """
 
+    intrinsic_types = ["real", "integer", "character", "logical"]
+    local_vars: dict[str,Variable] = sub.LocalVariables["scalars"] | sub.LocalVariables["arrays"]
+
     for ptr, gv in sub.associate_vars.items():
+        if isinstance(gv,list):
+            gv = gv[0]
         sub.dtype_vars[ptr] = sub.dtype_vars[gv]
 
     variables: dict[str, Variable] = (
         sub.dtype_vars
         | sub.active_global_vars
-        | sub.LocalVariables["scalars"]
-        | sub.LocalVariables["arrays"]
-        | sub.Arguments
+        | local_vars
     )
 
-    return Environment(variables=variables, fns=sub_dict)
+    dtype_locals: list[Variable] = [ var for var in local_vars.values()
+        if var.type not in intrinsic_types
+    ]
+
+    expanded_dtypes = expand_dtype(dtype_locals, type_dict)
+    variables.update(expanded_dtypes)
+    local_dict: dict[str,Variable] = expanded_dtypes | local_vars
+
+    dtype_args: list[Variable] = [ var for var in sub.Arguments.values() 
+        if var. type not in intrinsic_types
+    ]
+    expanded_dtypes = expand_dtype(dtype_args, type_dict)
+    variables.update(expanded_dtypes)
+    variables.update(sub.Arguments)
+    dummy_dict: dict[str,Variable] = expanded_dtypes | sub.Arguments
+
+    global_dict: dict[str,Variable] = sub.dtype_vars | sub.active_global_vars
+
+    return Environment(variables=variables,
+                       locals=local_dict,
+                       dummy_args=dummy_dict,
+                       globals=global_dict,
+                       fns=sub_dict)
 
 
 def evaluate(
@@ -333,9 +403,11 @@ def create_arg_descr(
     for argn, tree in enumerate(arg_tree):
         arg_type = check_arg_branch(tree, env)
         keyword = check_keyword(tree)
+        key_ident = tree.node.node['Left'] if keyword else ''
         desc = ArgDesc(argn=argn,
                        intent='',
                        keyword=keyword,
+                       key_ident=key_ident,
                        argtype=arg_type,
                        locals=[],
                        globals=[],
@@ -350,18 +422,20 @@ def sort_variables(sub: Subroutine, arg_tree: List[ArgTree], args: List[ArgDesc]
     """
     Function to fill out the locals and globals field in ArgDesc
     """
-    globals = sub.dtype_vars | sub.active_global_vars
-    locals = sub.LocalVariables['arrays'] | sub.LocalVariables['scalars']
+    intrinsic_types = ["real", "integer", "character", "logical"]
+    globals = sub.environment.globals
+    locals = sub.environment.locals
+    dummy = sub.environment.dummy_args
     for argn, branch in enumerate(arg_tree):
         for node in branch.traverse_preorder():
             if node.node.kind == IdentKind.variable:
                 varname = node.node.ident
                 if varname in globals:
-                    args[argn].globals.append(globals[varname])
+                    args[argn].globals.append(ArgVar(node=node.node,var=globals[varname]))
                 elif varname in locals:
-                    args[argn].locals.append(locals[varname])
-                elif varname in sub.Arguments:
-                    args[argn].dummy_args.append(sub.Arguments[varname])
+                    args[argn].locals.append(ArgVar(node=node.node,var=locals[varname]))
+                elif varname in dummy:
+                    args[argn].dummy_args.append(ArgVar(node=node.node,var=dummy[varname]))
     return
 
 

@@ -1,7 +1,7 @@
 import re
 import subprocess as sp
 import sys
-from typing import Dict
+from typing import Dict, Optional
 
 import scripts.write_routines as wr
 from scripts.fortran_modules import get_module_name_from_file
@@ -154,7 +154,7 @@ class DerivedType(object):
         self.analyzed = False
         self.active = False
         self.init_sub = None
-        self.procedures = {}
+        self.procedures: dict[str,str] = {}
 
     def __repr__(self):
         return f"DerivedType({self.type_name})"
@@ -492,12 +492,29 @@ class DerivedType(object):
 
         return ln
 
-def get_component(instance_dict: Dict[str, DerivedType], dtype_field):
+def get_component(instance_dict: Dict[str, DerivedType], dtype_field: str)->Optional[Variable]:
     """
     Function that looks up inst%field in the instance dict.
     """
-
     inst_name, field = dtype_field.split('%')
-    var = instance_dict[inst_name].components[field]['var']
-    return var
+    inst = instance_dict[inst_name]
+    if field in inst.components:
+        var = inst.components[field]['var']
+        return var
+    else:
+        if field not in inst.procedures:
+            print (f"Error- Couldn't categorize {dtype_field}")
+        return None
+    
+
+def expand_dtype(dtype_vars: list[Variable], type_dict: dict[str, DerivedType])->dict[str,Variable]:
+    """Function to take a dtype and create a dict with a key for each var%field"""
+    result: dict[str,Variable] = {}
+    for dtype_var in dtype_vars:
+        dtype = type_dict[dtype_var.type]
+        fields = dtype.components.values()
+        temp: dict[str,Variable] = {f"{dtype_var.name}%{field['var'].name}": field['var'] for field in fields}
+        result.update(temp)
+    return result
+
 

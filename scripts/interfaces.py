@@ -1,6 +1,14 @@
+from __future__ import annotations
+
 import re
 import subprocess as sp
 import sys
+from typing import TYPE_CHECKING, Optional
+
+from scripts.types import ArgDesc, ArgType
+
+if TYPE_CHECKING:
+    from scripts.analyze_subroutines import Subroutine
 
 from scripts.fortran_modules import PointerAlias
 from scripts.mod_config import ELM_SRC, _bc
@@ -256,7 +264,12 @@ def match_input_arguments(l_args, sub, special, verbose=False):
     return matched
 
 
-def determine_arg_name(matched_vars, child_sub, args, verbose=False) -> list:
+def determine_arg_name(
+    matched_vars: list[str],
+    child_sub: Subroutine,
+    args: list[str],
+    verbose=False,
+) -> list[PointerAlias]:
     """
     Function that takes a list of vars passed as arguments to subroutine and
     checks if any correspond to any in 'matched_vars'
@@ -281,9 +294,9 @@ def determine_arg_name(matched_vars, child_sub, args, verbose=False) -> list:
     matches = [arg for arg in args if re.search(r"\b{}\b".format(var_string), arg)]
     match_locs = [args.index(m) for m in matches]
     for i, locs in enumerate(match_locs):
-        # Check if keyword:
         matched_arg = matches[i]
         if "=" in matched_arg:
+            # Check if keyword:
             keyword, m_var_name = matched_arg.split("=")
             keyword = keyword.strip()
             m_var_name = m_var_name.strip()
@@ -295,9 +308,110 @@ def determine_arg_name(matched_vars, child_sub, args, verbose=False) -> list:
             arg_key = arg_key_list[locs]
             actual_arg = child_sub.Arguments[arg_key]
             m_var_name = matched_arg
+
         arg_to_dtype = PointerAlias(actual_arg.name, m_var_name)
         if verbose:
             print(f"{func_name}{arg_to_dtype}")
         arg_vars_list.append(arg_to_dtype)
 
     return arg_vars_list
+
+
+def resolve_interface2(
+    iname: str,
+    args_desc: list[ArgDesc],
+    sub_dict: dict[str, Subroutine],
+) -> Optional[str]:
+
+    iprocs = get_interface_procedures(iname)
+    print("Interface procs: ", iprocs)
+
+    for proc in iprocs:
+        sub = sub_dict[proc]
+        resolved = compare_args(args_desc, sub)
+        if resolved:
+            return proc
+
+    return None
+
+
+def compare_args(
+    args_desc: list[ArgDesc],
+    sub: Subroutine,
+) -> bool:
+
+    test_arg_list = list(sub.Arguments.values())
+    num_args = len(args_desc)
+    argn = 0
+    keyword = args_desc[0].keyword
+    while not keyword:
+        test_arg = test_arg_list[argn]
+        parg_type = args_desc[argn].argtype
+        neqv = bool(parg_type != ArgType(datatype=test_arg.type, dim=test_arg.dim))
+        if neqv and not test_arg.optional:
+            return False
+        argn += 1
+        if argn > num_args - 1:
+            return True
+        keyword = args_desc[argn].keyword
+
+    if keyword:
+        for i in range(argn, num_args):
+            key_ident = args_desc[i].key_ident
+            if key_ident not in sub.Arguments:
+                return False
+            test_arg = sub.Arguments[key_ident]
+            neqv = bool(
+                args_desc[i].argtype
+                != ArgType(datatype=test_arg.type, dim=test_arg.dim)
+            )
+            if neqv:
+                return False
+
+    return True
+
+
+def get_interface_procedures(iname: str, verbose: bool = False) -> list[str]:
+    """ """
+
+    if verbose:
+        print(_bc.FAIL + f"Resolving interface for {iname}\n with args: {args}")
+    cmd = f'grep -rin --exclude-dir={ELM_SRC}external_models/ -E "^[[:space:]]+(interface {iname})" {ELM_SRC}*'
+    output = sp.getoutput(cmd)
+
+    # Get file and line number for interface
+    # list that goes:  [filename, linenumber, interface {iname}]
+    output = output.split(":")
+    if len(output) != 3:
+        sys.exit(
+            f"resolve_interface:: Couldn't find file with interface {iname}\n"
+            f"cmd: {cmd}\noutput: {output}"
+        )
+    fn, ln, _ = output
+
+    ln = int(ln)
+
+    # Read file:
+    ifile = open(fn, "r")
+    lines = ifile.readlines()
+    ifile.close()
+    # Get list of possible procedures within the interface
+
+    regex_end = re.compile(r"^\s*(end)\s+(interface)", re.IGNORECASE)
+    regex_procedure = re.compile(r"^\s*(module)\s+(procedure)\s+", re.IGNORECASE)
+
+    interface_sub_names = []  # list of subroutine names in the interface
+    ct = ln - 1
+    in_interface = True
+    while in_interface:
+        m_end = regex_end.search(lines[ct])
+        if m_end:
+            in_interface = False
+        else:
+            m_proc = regex_procedure.search(lines[ct])
+            if m_proc:
+                subname = lines[ct].replace(m_proc.group(), "").strip().lower()
+                interface_sub_names.extend([s.strip() for s in subname.split(",")])
+        ct += 1
+
+    return interface_sub_names

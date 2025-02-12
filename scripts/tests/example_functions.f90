@@ -50,8 +50,9 @@ module test
       real(r8), pointer :: hrv_deadstemn_to_prod10n(:) => null() ! dead stem N harvest mortality to 10-year product pool (gN/m2/s)
       real(r8), pointer :: hrv_deadstemn_to_prod100n(:) => null() ! dead stem N harvest mortality to 100-year product pool (gN/m2/s)
       real(r8), pointer :: m_n_to_litr_met_fire(:, :) => null() ! N from leaf, froot, xfer and storage N to litter labile N by fire (gN/m3/s)
+      real(r8), pointer :: m_n_to_litr_lig_fire(:, :) => null() ! N from leaf, froot, xfer and storage N to litter labile N by fire (gN/m3/s)
       contains
-         procedure, public :: Init       => col_nf_init
+         procedure, public :: Init  => col_nf_init
    end type
 
    type(column_nitrogen_flux), target :: col_nf
@@ -85,7 +86,6 @@ module test
   public :: Tridiagonal
   interface Tridiagonal
     module procedure Tridiagonal_sr
-    ! module procedure Tridiagonal_sr_with_var_bottom
     module procedure Tridiagonal_mr
   end interface Tridiagonal
 
@@ -96,11 +96,12 @@ contains
     !
     ! !ARGUMENTS:
     class(column_nitrogen_flux) :: this
-    integer, intent(in) :: begc,endc
+    integer, intent(in) :: begc, endc
 
     allocate(this%hrv_deadstemn_to_prod10n        (begc:endc))                   ; this%hrv_deadstemn_to_prod10n       (:)   = spval
     allocate(this%hrv_deadstemn_to_prod100n       (begc:endc))                   ; this%hrv_deadstemn_to_prod100n      (:)   = spval
     allocate(this%m_n_to_litr_met_fire            (begc:endc,1:nlevdecomp_full)) ; this%m_n_to_litr_met_fire           (:,:) = spval
+    allocate(this%m_n_to_litr_lig_fire            (begc:endc,1:nlevdecomp_full)) ; this%m_n_to_litr_lig_fire           (:,:) = spval
   end subroutine col_nf_init
 
    subroutine test_parsing_sub(bounds, var1, var2, input4, var3)
@@ -109,24 +110,27 @@ contains
       real(r8), INTENT(IN) :: var1
       real(r8), INTENT(IN) :: var2(bounds%begg:)
       real(r8), INTENT(IN) :: var3
-      logical, intent(in) :: input4
+      logical  :: input4
 
       integer :: x, y, g
       g = 1
 
       if (input4)then 
          x = bounds%begg + var1 + var2(g)+ var3
+         input4 = .not. input4
       else
          x = bounds%endg + var1 + var2(g) + var3
       end if
+
    end subroutine test_parsing_sub
 
    subroutine call_sub(numf, bounds)
       integer, intent(in) :: numf
       type(bounds_type), intent(in) :: bounds
+
       real(r8) :: input1, input2(bounds%begg:bounds%endg), input3
       real(r8) :: local_var
-      integer  :: g,j,c, N
+      integer  :: g,j,c, N, i_type
       integer  :: lbj, ubj, jtop(1:numf)
       integer  :: filter(1:numf)
       real(r8) :: a_tri(bounds%begc:bounds%endc,0:nlevdecomp+1)
@@ -134,19 +138,40 @@ contains
       real(r8) :: c_tri(bounds%begc:bounds%endc,0:nlevdecomp+1)
       real(r8) :: r_tri(bounds%begc:bounds%endc,0:nlevdecomp+1)
       real(r8) :: u_tri(bounds%begc:bounds%endc,0:nlevdecomp+1)
+      real(r8), pointer :: test_ptr(:,:)
 
       associate( &
         hrv_deadstemn_to_prod10n  => col_nf%hrv_deadstemn_to_prod10n &
       )
 
+      i_type = 1
+
+      select case (i_type)
+      case (1)  ! C
+         test_ptr => col_nf%m_n_to_litr_met_fire
+      case (2)  ! N
+         test_ptr => col_nf%m_n_to_litr_lig_fire
+      end select
+
+
       call test_parsing_sub(bounds, max(input1*shr_const_pi, local_var+input2(g)), &
          col_nf%m_n_to_litr_met_fire(c,1:N), landunit_is_special(g),var3=input3+1)
 
-      ! call Tridiagonal(bounds, lbj, ubj, jtop, numf, filter, a_tri, b_tri, c_tri, r_tri, u_tri)
+      call Tridiagonal(bounds, lbj, ubj, jtop, numf, filter, a_tri, b_tri, c_tri, r_tri, u_tri)
+      call col_nf%Init(bounds%begc, bounds%endc)
+
+      call ptr_test_sub(test_ptr)
+
+      test_ptr(:,:) = SHR_CONST_SPVAL
 
       end associate
 
    end subroutine call_sub
+
+   subroutine ptr_test_sub(arr)
+      real(r8) , intent(inout) :: arr(:,:)
+      arr(:,:) = 1.0_r8
+   end subroutine ptr_test_sub
 
    function landunit_is_special(ltype) result(is_special)
       !

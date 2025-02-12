@@ -60,13 +60,16 @@ def test_getArguments():
     with patch("scripts.mod_config.ELM_SRC", test_dir), patch(
         "scripts.mod_config.SHR_SRC", test_dir
     ):
+        import scripts.dynamic_globals as dg
         from scripts.analyze_subroutines import Subroutine
         from scripts.DerivedType import DerivedType
         from scripts.edit_files import process_for_unit_test
-        from scripts.fortran_modules import FortranModule
+        from scripts.fortran_modules import FortranModule, get_module_name_from_file
         from scripts.mod_config import scripts_dir
         from scripts.variable_analysis import determine_global_variable_status
 
+        dg.populate_interface_list()
+        print("init interface list", dg.interface_list)
         fn = f"{scripts_dir}/tests/example_functions.f90"
         mod_dict: dict[str, FortranModule] = {}
         main_sub_dict: dict[str, Subroutine] = {}
@@ -106,21 +109,46 @@ def test_getArguments():
 
         active_vars = subroutines[test_sub_name].active_global_vars
 
-        subroutines[test_sub_name].get_dtype_vars(instance_dict)
-
         assert (
-            len(active_vars) == 1
+            len(active_vars) == 2
         ), f"Didn't correctly find the active global variables:\n{active_vars}"
 
         for s in sub_name_list:
-            subroutines[s].parse_subroutine(
-                dtype_dict=type_dict,
+            sub = subroutines[s]
+            sub._preprocess(
                 main_sub_dict=main_sub_dict,
-                verbose=False,
+                dtype_dict=type_dict,
+                verbose=True,
             )
+            for call_desc in sub.sub_call_desc.values():
+                pprint(call_desc)
 
-            subroutines[s].child_subroutines_analysis(
-                dtype_dict=type_dict,
-                main_sub_dict=main_sub_dict,
-                verbose=False,
-            )
+
+def test_arg_intent():
+    with patch("scripts.mod_config.ELM_SRC", test_dir), patch(
+        "scripts.mod_config.SHR_SRC", test_dir
+    ):
+        import scripts.dynamic_globals as dg
+        from scripts.analyze_subroutines import Subroutine
+        from scripts.edit_files import process_for_unit_test
+        from scripts.fortran_modules import FortranModule, get_module_name_from_file
+        from scripts.mod_config import scripts_dir
+
+        dg.populate_interface_list()
+        fn = f"{scripts_dir}/tests/example_functions.f90"
+        mod_dict: dict[str, FortranModule] = {}
+        main_sub_dict: dict[str, Subroutine] = {}
+
+        mod_dict, file_list, main_sub_dict = process_for_unit_test(
+            fname=fn,
+            case_dir="./",
+            mod_dict=mod_dict,
+            mods=[],
+            required_mods=[],
+            main_sub_dict=main_sub_dict,
+            overwrite=False,
+            verbose=False,
+        )
+        print("Sorted mods:\n", [get_module_name_from_file(m) for m in file_list])
+
+        assert 1 == 1

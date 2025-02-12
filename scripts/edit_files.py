@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import re
 import subprocess as sp
 import sys
@@ -307,10 +309,7 @@ def get_used_mods(ifile, mods, singlefile, mod_dict, verbose=False):
                     # and assume it's all used.
                     fort_mod.modules[mod] = "all"
 
-                # Needed since FORTRAN is not case-sensitive!
-                # NOTE: the below doesn't make sense if the file and module names
-                #   do not match. Should use `get_module_from_filename` function?
-                lower_mods = [m.lower().replace(".F90", "") for m in mods]
+                lower_mods = [get_module_name_from_file(m)[1] for m in mods] 
                 if (
                     mod not in needed_mods
                     and mod not in lower_mods
@@ -321,8 +320,6 @@ def get_used_mods(ifile, mods, singlefile, mod_dict, verbose=False):
 
     # Done with first pass through the file.
     # Check against already used Mods
-    # NOTE: Could refactor this loop into a function
-    #       that takes a module name and returns the filepath.
     files_to_parse = []
     for m in needed_mods:
         if m.lower() in bad_modules:
@@ -337,18 +334,16 @@ def get_used_mods(ifile, mods, singlefile, mod_dict, verbose=False):
             if m.lower() in fort_mod.modules:
                 fort_mod.modules.pop(m.lower())
         elif needed_modfile not in mods:
-
             files_to_parse.append(needed_modfile)
             mods.append(needed_modfile)
 
     # Store user-defined types in the module object
     # and find any global variables that have the user-defined type
-    #
+
     list_type_names = [key for key in user_defined_types.keys()]
     for gvar in fort_mod.global_vars:
         if gvar.type in list_type_names:
             if gvar.name not in user_defined_types[gvar.type].instances:
-                print(f"Adding {gvar.name} to {gvar.type} instances")
                 user_defined_types[gvar.type].instances[gvar.name] = gvar
 
     fort_mod.defined_types = user_defined_types
@@ -697,7 +692,7 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
                 cpp_startline = ct
             else:
                 sub_start = ct
-            func_init = check_function_start(l_cont, start_ln_pair, regex_func, verbose)
+            func_init = check_function_start(l_cont, start_ln_pair, verbose)
 
         elif match_end_func:
             if not in_subroutine:
@@ -728,10 +723,10 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
 
 
 def process_for_unit_test(
-    fname,
-    case_dir,
-    mod_dict,
-    mods=[],
+    fname: str,
+    case_dir: str,
+    mod_dict: dict[str, FortranModule],
+    mods: list[str]=[],
     required_mods=[],
     main_sub_dict={},
     overwrite=False,
@@ -778,13 +773,11 @@ def process_for_unit_test(
             mod_dict=mod_dict,
         )
 
-    new_mods = [m.split("/")[-1] for m in mods if m not in initial_mods]
 
     # Next process required modules if they are not already in the list
-    # save current processed mods:
-    temp_mods = mods[:]
 
     required_mod_paths = [get_filename_from_module(m) for m in required_mods]
+
     for rmod in required_mod_paths:
         if rmod not in mods:
             mods.append(rmod)
@@ -795,16 +788,22 @@ def process_for_unit_test(
                 singlefile=singlefile,
                 mod_dict=mod_dict,
             )
+
+    # Sort the file dependencies
+    linenumber, unit_test_module = get_module_name_from_file(fpath=fname)
+    file_list = sort_file_dependency(mod_dict, unit_test_module)
     if verbose:
         print("Newly added mods after processing required mods:")
-        for m in mods:
-            if m not in temp_mods:
-                print(m.split("/")[-1])
+        new_mods = [m.split("/")[-1] for m in mods if m not in initial_mods]
+        print( new_mods)
 
     # Next, each needed module is parsed for subroutines and removal of
     # any dependencies that are not needed for an ELM unit test (eg., I/O libs,...)
-    for mod_file in mods:
-        ln, mod_name = get_module_name_from_file(mod_file)
+    # Note:
+    #    Modules are parsed starting with leaf nodes to decrease the likelihood of
+    #    a child subroutine not having been instantiated
+    for mod_file in file_list:
+        _, mod_name = get_module_name_from_file(mod_file)
         # Avoid preprocessing files over and over
         if mod_dict[mod_name].modified:
             continue
@@ -827,13 +826,6 @@ def process_for_unit_test(
         if subname not in main_sub_dict:
             main_sub_dict[subname] = sub
 
-    # Sort the file dependencies
-    # (NOTE: Could write a make file to do this instead and
-    # read the results back into SPEL?)
-    linenumber, unit_test_module = get_module_name_from_file(fpath=fname)
-    file_list = sort_file_dependency(mod_dict, unit_test_module)
-    for m in required_mods:
-        file_list = sort_file_dependency(mod_dict, m.lower())
 
     if verbose:
         print(f"File list for Unit Test: {case_dir}")

@@ -9,7 +9,7 @@ import re
 import subprocess as sp
 import sys
 from collections import namedtuple
-from typing import TYPE_CHECKING, Dict, List, Pattern
+from typing import TYPE_CHECKING, Dict, List, Pattern, Tuple
 
 if TYPE_CHECKING:
     from scripts.analyze_subroutines import Subroutine
@@ -56,12 +56,12 @@ class Variable(object):
 
     def __init__(
         self,
-        type,
-        name,
-        subgrid,
-        ln,
-        dim,
-        parameter=False,
+        type:str,
+        name:str,
+        subgrid: str,
+        ln: int,
+        dim: int,
+        parameter:bool=False,
         declaration="",
         optional=False,
         keyword="",
@@ -70,32 +70,34 @@ class Variable(object):
         private=False,
         bounds="",
         ptrscalar=False,
+        intent="",
     ):
-        self.type = type
-        self.name = name
+        self.type: str = type
+        self.name: str = name
         self.subgrid = subgrid
-        self.ln = ln
-        self.dim = dim
-        self.parameter = parameter
+        self.ln: int = ln
+        self.dim: int = dim
+        self.parameter: bool = parameter
         # These are used for Argument variables
-        self.optional = optional
+        self.optional: bool = optional
         self.keyword = keyword
+        self.intent: str = intent
         # filter_used corresponds to adjusting memory allocations
         self.filter_used = ""
         self.subs = []
+
         # Mostly used for global derived-type variables
         if declaration:
             self.declaration = declaration
         else:
             self.declaration = ""
-        self.active = active
-        self.private = private
+        self.active: bool = active
+        self.private: bool = private
         self.default_value = None
-        self.pointer = pointer.copy()
-        self.bounds = bounds
+        self.pointer: list[str] = pointer.copy()
+        self.bounds: str = bounds
         self.ptrscalar = ptrscalar
 
-    # Define equality for comparison of two Variables
     def __eq__(self, other):
         if (
             self.name == other.name
@@ -106,7 +108,6 @@ class Variable(object):
         else:
             return False
 
-    # Override __str__ for easy printing
     def __str__(self):
         if self.dim > 0:
             return f"{self.type} {self.name} {self.bounds}"
@@ -1100,7 +1101,7 @@ def determine_filter_access(sub, verbose=False):
         )
 
 
-def line_unwrapper(lines, ct, verbose=False):
+def line_unwrapper(lines: list[str], ct: int, verbose: bool=False) -> Tuple[str, int]:
     """
     Function that takes code segment that has line continuations
     and returns it all on one line.
@@ -1128,8 +1129,9 @@ def line_unwrapper(lines, ct, verbose=False):
 
     # Debug check:
     if verbose:
-        print("Original lines:\n", lines[ct:newct])
+        print("Original lines:\n", lines[ct:newct+1])
         print("Single line\n:", full_line)
+        print("old, new ln:", ct, newct)
 
     return full_line, newct
 

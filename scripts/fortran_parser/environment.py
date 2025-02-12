@@ -11,4 +11,7 @@ if TYPE_CHECKING:
 @dataclass
 class Environment:
     variables: Dict[str, Variable]
+    locals: dict[str, Variable]
+    globals: dict[str, Variable]
+    dummy_args: dict[str, Variable]
     fns: Dict[str, Subroutine]

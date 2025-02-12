@@ -1,7 +1,7 @@
 from collections import namedtuple
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from scripts.utilityFunctions import Variable
 
@@ -12,6 +12,12 @@ class FortranTypes(Enum):
     INT = 3
     REAL = 4
     INHERITED = 5
+
+
+class FileInfo(NamedTuple):
+    fpath: str
+    startln: int
+    endln: int
 
 
 @dataclass(frozen=True)
@@ -38,23 +44,62 @@ class ArgNode:
     nested_level: int
     node: dict
 
+    def to_dict(self):
+        return asdict(self)
+
+
+@dataclass
+class ArgVar:
+    node: ArgNode
+    var: Variable
+
+    def to_dict(self):
+        return asdict(self)
+
 
 @dataclass
 class ArgDesc:
     argn: int  # argument number
     intent: str  # in/out/inout => 'r', 'w', 'rw'
     keyword: bool  # passed as a keyword argument
+    key_ident: str  # identifier of keyword
     argtype: ArgType  # overall type and dimension
-    locals: list[Variable]  # local variables passed to this argument
-    globals: list[Variable]  # global variables passed to this argument
-    dummy_args: list[Variable]  # track dummy arguments
+    locals: list[ArgVar]  # local variables passed to this argument
+    globals: list[ArgVar]  # global variables passed to this argument
+    dummy_args: list[ArgVar]  # track dummy arguments
+
+    def to_dict(self):
+        return asdict(self)
 
 
 @dataclass
 class CallDesc:
-    fn: str  # Name of called subroutine
+    alias: str  # Interface name, class method alias, or actual name
+    fn: str  # real Name of called subroutine
     ln: int  # line number of Subroutine Call
     args: list[ArgDesc]
+    # summary of the ArgDesc fields
+    globals: list[ArgVar]
+    locals: list[ArgVar]
+    dummy_args: list[ArgVar]
+
+    def to_dict(self):
+        return asdict(self)
+
+    def aggregate_vars(self) -> None:
+        """
+        Populates the globals, locals, and dummy_args field for the entire CallDesc
+        """
+        for arg in self.args:
+            temp = [v for v in arg.globals if v not in self.globals]
+            self.globals.extend(temp)
+
+            temp = [v for v in arg.locals if v not in self.locals]
+            self.locals.extend(temp)
+
+            temp = [v for v in arg.dummy_args if v not in self.dummy_args]
+            self.dummy_args.extend(temp)
+        return
 
 
 class PointerAlias:
@@ -96,3 +141,38 @@ class FunctionReturn:
 # Named tuple used to store line numbers
 # for preprocessed and original files
 PreProcTuple = namedtuple("PreProcTuple", ["cpp_ln", "ln"])
+
+LineTuple = namedtuple("LineTuple", ["line", "ln"])
+
+
+class ReadWrite(object):
+    """
+    Declare namedtuple for readwrite status of variables:
+    """
+
+    def __init__(self, status, ln):
+        self.status = status
+        self.ln = ln
+
+    def __eq__(self, other):
+        return self.status == other.status and self.ln == other.ln
+
+    def __repr__(self):
+        return f"{self.status}@L{self.ln}"
+
+
+class SubroutineCall(namedtuple("SubroutineCall", ["subname", "args", "ln"])):
+    """
+    namedtuple to log the subroutines called and their arguments
+    to properly match read/write status of variables.
+    """
+
+    def __eq__(self, other):
+        return (
+            (self.subname == other.subname)
+            and (self.args == other.args)
+            and (self.ln == other.ln)
+        )
+
+    def __str__(self):
+        return f"{self.subname}@{self.ln} ({self.args})"

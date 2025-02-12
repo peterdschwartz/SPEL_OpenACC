@@ -1,6 +1,8 @@
 import re
 
+import scripts.dynamic_globals as dg
 from scripts.analyze_subroutines import Subroutine
+from scripts.fortran_parser.evaluate import parse_subroutine_call
 from scripts.mod_config import spel_output_dir
 from scripts.types import FunctionReturn, PreProcTuple
 from scripts.utilityFunctions import (
@@ -20,7 +22,11 @@ def AdjustLine(a, b, c):
     return a + (b - c)
 
 
-def check_function_start(line, ln_pair, regex_func, verbose=False):
+def check_function_start(
+    line: str,
+    ln_pair: PreProcTuple,
+    verbose: bool = False,
+):
     """
     Function to parse function start for result type and name
     """
@@ -61,11 +67,11 @@ def check_function_start(line, ln_pair, regex_func, verbose=False):
 
 
 def create_function(
-    fn,
+    fn: str,
     ln_pair: PreProcTuple,
     func_init: FunctionReturn,
-    sub_dict,
-    verbose=False,
+    sub_dict: dict[str, Subroutine],
+    verbose: bool = False,
 ):
     """
     Function to instantiate function if not in sub_dict
