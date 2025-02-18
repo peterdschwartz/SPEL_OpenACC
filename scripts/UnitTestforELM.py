@@ -1,5 +1,11 @@
+import cProfile
+import pstats
+from pprint import pprint
+
+import scripts.dynamic_globals as dg
 from scripts.DerivedType import DerivedType
-from scripts.helper_functions import replace_ptr_with_targets
+from scripts.helper_functions import (construct_call_tree,
+                                      replace_ptr_with_targets)
 
 
 def main() -> None:
@@ -48,13 +54,11 @@ def main() -> None:
     case_dir = unittests_dir + casename
 
     # List of subroutines to be analyzed
-    # sub_name_list = ["LakeTemperature", "SoilTemperature"]
     sub_name_list = [
         "Allocation1_PlantNPDemand",
         "Allocation2_ResolveNPLimit",
         "Allocation3_PlantCNPAlloc",
     ]
-    # sub_name_list = ["SoilLittVertTransp"]
     if args.sub_names:
         sub_name_list = [s.lower() for s in args.sub_names]
 
@@ -87,6 +91,8 @@ def main() -> None:
             os.system(f"rm {scripts_dir}/*.pkl")
             preprocess = True
 
+    # Retrieve possible interfaces
+    dg.populate_interface_list()
     # Initialize dictionary that will hold instance of all subroutines encountered.
     main_sub_dict = {}
 
@@ -103,8 +109,6 @@ def main() -> None:
     mod_dict: dict[str, FortranModule] = {}
     for s in sub_name_list:
         # Get general info of the subroutine
-        # subroutines[s] = Subroutine(s, calltree=["elm_drv"])
-
         # Process files by removing certain modules
         # so that a standalone unit test can be compiled.
         # All file information will be stored in `mod_dict` and `main_sub_dict`
@@ -117,39 +121,12 @@ def main() -> None:
                 mods=needed_mods,
                 required_mods=default_mods,
                 main_sub_dict=main_sub_dict,
-                overwrite=True,
+                overwrite=False,
                 verbose=False,
             )
-            # NOTE: direct assignment here means that changes to subroutines[s] object
-            #       below will be reflected immediately in main_sub_dict. Make explicit instead?
             subroutines[s] = main_sub_dict[s]
             subroutines[s].unit_test_function = True
 
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-    # examineLoops performs adjustments that go beyond the "naive"                  #
-    # reliance on the "!$acc routine" directive.                                    #
-    #    * adjust_allocation : rewrites local variable allocation and indexing      #
-    #    * add_acc : accelerated via "!$acc parallel loop" directives               #
-    #              which relies on using processor level filters in main.F90.       #
-    #                                                                               #
-    # NOTE: avoid having both adjust_allocation and add_acc both True for now       #
-    #       as they don't currently communicate and they both modify the same files #
-    #       which may cause subroutine line numbers to change, etc...               #
-    # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
-    # TODO: Adjust expected arguments to examineLoops after recent refactoring.
-    # if opt:
-    #     for s in sub_name_list:
-    #         if subroutines[s].name not in main_sub_dict:
-    #             main_sub_dict[subroutines[s].name] = subroutines[s]
-    #         subroutines[s].examineLoops(
-    #             global_vars=[],
-    #             varlist=var_list,
-    #             main_sub_dict=main_sub_dict,
-    #             verbose=False,
-    #             add_acc=add_acc,
-    #             adjust_allocation=adjust_allocation,
-    #         )
-    #     print("Done running in Optimization Mode")
 
     if not mod_dict:
         print(f"{func_name}::Error didn't find any modules related to subroutines")
@@ -176,22 +153,34 @@ def main() -> None:
         for instance in dtype.instances.values():
             instance_to_user_type[instance.name] = type_name
 
-    # 'main_sub_dict' contains Subroutine instances for all subroutines
-    # in any needed modules. Next, each subroutine within the call trees of the user
-    # specified subroutines will be further analyzed to trace usage of global variables
-    #
+    determine_global_variable_status(mod_dict, main_sub_dict)
+
+    print("Starting Subroutine parsing!")
     for s in sub_name_list:
-        #
-        # Parsing means getting info on the variables read and written
-        # to by the subroutine and any of its callees
-        #
-        subroutines[s].parse_subroutine(
-            dtype_dict=type_dict, main_sub_dict=main_sub_dict, verbose=False
+        sub = subroutines[s]
+        sub.parse_subroutine(
+            dtype_dict=type_dict,
+            main_sub_dict=main_sub_dict,
+            verbose=False,
+        )
+        flat_list = construct_call_tree(
+            sub=sub,
+            sub_dict=main_sub_dict,
+            dtype_dict=type_dict,
+            nested=0,
         )
 
-        subroutines[s].child_subroutines_analysis(
-            dtype_dict=type_dict, main_sub_dict=main_sub_dict, verbose=False
-        )
+        if sub.abstract_call_tree:
+            sub.abstract_call_tree.print_tree()
+            print("postorder:")
+            for node in sub.abstract_call_tree.traverse_postorder():
+                print(node)
+
+        # subroutines[s].child_subroutines_analysis(
+        #     dtype_dict=type_dict, main_sub_dict=main_sub_dict, verbose=False
+        # )
+
+    return
 
     for sub in subroutines.values():
 

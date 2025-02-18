@@ -64,7 +64,8 @@ def test_getArguments():
         from scripts.analyze_subroutines import Subroutine
         from scripts.DerivedType import DerivedType
         from scripts.edit_files import process_for_unit_test
-        from scripts.fortran_modules import FortranModule, get_module_name_from_file
+        from scripts.fortran_modules import FortranModule
+        from scripts.helper_functions import construct_call_tree
         from scripts.mod_config import scripts_dir
         from scripts.variable_analysis import determine_global_variable_status
 
@@ -101,8 +102,6 @@ def test_getArguments():
         instance_to_user_type = {}
         instance_dict: dict[str, DerivedType] = {}
         for type_name, dtype in type_dict.items():
-            if "bounds" in type_name:
-                continue
             for instance in dtype.instances.values():
                 instance_to_user_type[instance.name] = type_name
                 instance_dict[instance.name] = dtype
@@ -115,13 +114,21 @@ def test_getArguments():
 
         for s in sub_name_list:
             sub = subroutines[s]
-            sub._preprocess(
-                main_sub_dict=main_sub_dict,
+            sub.parse_subroutine(
                 dtype_dict=type_dict,
+                main_sub_dict=main_sub_dict,
                 verbose=True,
             )
-            for call_desc in sub.sub_call_desc.values():
-                pprint(call_desc)
+            flat_list = construct_call_tree(
+                sub=sub,
+                sub_dict=main_sub_dict,
+                dtype_dict=type_dict,
+                nested=0,
+            )
+
+            if sub.abstract_call_tree:
+                for node in sub.abstract_call_tree.traverse_postorder():
+                    print(node)
 
 
 def test_arg_intent():
@@ -131,7 +138,8 @@ def test_arg_intent():
         import scripts.dynamic_globals as dg
         from scripts.analyze_subroutines import Subroutine
         from scripts.edit_files import process_for_unit_test
-        from scripts.fortran_modules import FortranModule, get_module_name_from_file
+        from scripts.fortran_modules import (FortranModule,
+                                             get_module_name_from_file)
         from scripts.mod_config import scripts_dir
 
         dg.populate_interface_list()

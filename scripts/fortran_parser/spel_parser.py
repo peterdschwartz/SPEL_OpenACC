@@ -2,20 +2,14 @@ from enum import Enum
 from typing import Callable, Dict, List, Optional
 
 import scripts.fortran_parser.lexer as lexer
-from scripts.fortran_parser.spel_ast import (
-    BoundsExpression,
-    Expression,
-    ExpressionStatement,
-    FloatLiteral,
-    FuncExpression,
-    Identifier,
-    InfixExpression,
-    IntegerLiteral,
-    PrefixExpression,
-    Program,
-    Statement,
-    SubCallStatement,
-)
+from scripts.fortran_parser.spel_ast import (BoundsExpression, Expression,
+                                             ExpressionStatement,
+                                             FieldAccessExpression,
+                                             FloatLiteral, FuncExpression,
+                                             Identifier, InfixExpression,
+                                             IntegerLiteral, PrefixExpression,
+                                             Program, Statement,
+                                             SubCallStatement)
 from scripts.fortran_parser.tokens import Token, TokenTypes
 from scripts.fortran_parser.tracing import Trace
 
@@ -40,6 +34,7 @@ precedences = {
     TokenTypes.ASTERISK: Precedence.PRODUCT,
     TokenTypes.LPAREN: Precedence.CALL,
     TokenTypes.COLON: Precedence.BOUNDS,
+    TokenTypes.PERCENT: Precedence.BOUNDS,
     TokenTypes.EXP: Precedence.PRODUCT,
     TokenTypes.EQUIV: Precedence.EQUALS,
 }
@@ -78,6 +73,7 @@ class Parser:
         self.register_infix_fns(TokenTypes.LPAREN, self.parse_func_expr)
         self.register_infix_fns(TokenTypes.COLON, self.parse_infix_bounds_expr)
         self.register_infix_fns(TokenTypes.EQUIV, self.parse_infix_expr)
+        self.register_infix_fns(TokenTypes.PERCENT, self.parse_field_access_expr)
 
         self.next_token()
         self.next_token()
@@ -236,6 +232,21 @@ class Parser:
 
         expression.right_expr = self.parse_expression(prec)
         return expression
+
+    @Trace.trace_decorator("parse_field_access_expr")
+    def parse_field_access_expr(self, left: Expression) -> Expression:
+        tok = self.cur_token
+
+        prec = self.cur_precedence()
+        self.next_token()
+
+        right_expr: Expression = self.parse_expression(prec)
+
+        return FieldAccessExpression(
+            tok=tok,
+            left=left,
+            field=right_expr,
+        )
 
     @Trace.trace_decorator("parse_func_expr")
     def parse_func_expr(self, func: Expression) -> Expression:

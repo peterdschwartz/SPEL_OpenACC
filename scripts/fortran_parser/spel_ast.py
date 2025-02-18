@@ -73,7 +73,7 @@ class Identifier(Expression):
         return isinstance(other, Identifier) and self.value == other.value
 
     def to_dict(self):
-        return {"Node": "Ident", "val": str(self)}
+        return {"Node": "Ident", "Val": str(self)}
 
 
 # Statement Classes
@@ -243,7 +243,50 @@ class InfixExpression(Expression):
         }
 
 
+class FieldAccessExpression(Expression):
+
+    def __init__(
+        self,
+        tok: Token,
+        left: Expression,
+        field: Expression,
+    ):
+        self.token: Token = tok  # '%'
+        self.left: Expression = left
+        self.field: Expression = field
+
+    def expression_node(self) -> None:
+        pass
+
+    def token_literal(self) -> str:
+        return self.token.literal
+
+    def __str__(self):
+        return f"{self.left}%{self.field}"
+
+    def __eq__(self, other):
+        if not isinstance(other, FieldAccessExpression):
+            return False
+        else:
+            return (
+                self.token == other.token
+                and self.left == other.left
+                and self.field == other.field
+            )
+
+    def to_dict(self):
+        return {
+            "Node": "FieldAccessExpression",
+            "Left": self.left.to_dict(),
+            "Field": self.field.to_dict(),
+        }
+
+
 class FuncExpression(Expression):
+    """
+    Expression for functions or arrays. Infix operator expression
+    """
+
     def __init__(
         self,
         tok: Token,

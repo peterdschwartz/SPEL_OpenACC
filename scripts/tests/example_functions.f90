@@ -24,24 +24,6 @@ module test
      integer :: begp, endp                       ! beginning and ending pft index
      integer :: begCohort, endCohort             ! beginning and ending cohort indices
 
-     ! The following variables correspond to "Ghost/Halo" quantites
-     integer :: begg_ghost, endg_ghost           ! beginning and ending gridcell index
-     integer :: begt_ghost, endt_ghost           ! beginning and ending topounit index
-     integer :: begl_ghost, endl_ghost           ! beginning and ending landunit index
-     integer :: begc_ghost, endc_ghost           ! beginning and ending column index
-     integer :: begp_ghost, endp_ghost           ! beginning and ending pft index
-     integer :: begCohort_ghost, endCohort_ghost ! beginning and ending cohort indices
-
-     ! The following variables correspond to "ALL" (=Local + Ghost) quantites
-     integer :: begg_all, endg_all               ! beginning and ending gridcell index
-     integer :: begt_all, endt_all               ! beginning and ending topounit index
-     integer :: begl_all, endl_all               ! beginning and ending landunit index
-     integer :: begc_all, endc_all               ! beginning and ending column index
-     integer :: begp_all, endp_all               ! beginning and ending pft index
-     integer :: begCohort_all, endCohort_all     ! beginning and ending cohort indices
-
-     integer :: level                            ! whether defined on the proc or clump level
-     integer :: clump_index                      ! if defined on the clump level, this gives the clump index
   end type bounds_type
   public bounds_type
 
@@ -81,6 +63,13 @@ module test
      real(r8), pointer :: growing_new_fraction(:) => null()
    end type
 
+   type :: clump_filter 
+      integer :: num_soilc
+      integer, ALLOCATABLE :: soilc(:)
+   end type
+
+   type(clump_filter), allocatable :: filter(:)
+
 
   ! !PUBLIC MEMBER FUNCTIONS:
   public :: Tridiagonal
@@ -91,6 +80,43 @@ module test
 
 contains
 
+   subroutine allocate_filter(this, begc, endc)
+      type(clump_filter) , INTENT(INOUT) :: this
+      integer, intent(in) :: begc, endc
+      allocate(this%soilc(1:endc-begc+1)); this%soilc(:) = -1
+   end subroutine allocate_filter
+
+   function constructor(bounds) result(this)
+    !
+    ! !DESCRIPTION:
+    ! Initialize a patch_state_updater_type object
+    !
+    ! !USES:
+    !
+    ! !ARGUMENTS:
+    type(patch_state_updater_type) :: this  ! function result
+    type(bounds_type), intent(in) :: bounds
+    !
+    ! !LOCAL VARIABLES:
+    integer :: begp, endp
+    integer :: begc, endc
+
+    character(len=*), parameter :: subname = 'constructor'
+    !-----------------------------------------------------------------------
+
+    begp = bounds%begp
+    endp = bounds%endp
+    begc = bounds%begc
+    endc = bounds%endc
+
+    allocate(this%pwtgcell_old(begp:endp))
+    allocate(this%pwtgcell_new(begp:endp))
+    allocate(this%cwtgcell_old(begc:endc))
+    allocate(this%dwt(begp:endp))
+    allocate(this%growing_old_fraction(begp:endp))
+    allocate(this%growing_new_fraction(begp:endp))
+
+  end function constructor
 
   subroutine col_nf_init(this, begc, endc)
     !
@@ -122,6 +148,8 @@ contains
          x = bounds%endg + var1 + var2(g) + var3
       end if
 
+      call add(x, var3)
+
    end subroutine test_parsing_sub
 
    subroutine call_sub(numf, bounds)
@@ -132,7 +160,7 @@ contains
       real(r8) :: local_var
       integer  :: g,j,c, N, i_type
       integer  :: lbj, ubj, jtop(1:numf)
-      integer  :: filter(1:numf)
+      integer  :: soilc(1:numf)
       real(r8) :: a_tri(bounds%begc:bounds%endc,0:nlevdecomp+1)
       real(r8) :: b_tri(bounds%begc:bounds%endc,0:nlevdecomp+1)
       real(r8) :: c_tri(bounds%begc:bounds%endc,0:nlevdecomp+1)
@@ -153,14 +181,16 @@ contains
          test_ptr => col_nf%m_n_to_litr_lig_fire
       end select
 
+      filter(i_type)%num_soilc = 10
+      filter(i_type)%soilc(:) = 4
 
       call test_parsing_sub(bounds, max(input1*shr_const_pi, local_var+input2(g)), &
          col_nf%m_n_to_litr_met_fire(c,1:N), landunit_is_special(g),var3=input3+1)
 
-      call Tridiagonal(bounds, lbj, ubj, jtop, numf, filter, a_tri, b_tri, c_tri, r_tri, u_tri)
+      call Tridiagonal(bounds, -lbj+1, ubj, jtop, numf, soilc, a_tri, b_tri, c_tri, r_tri, u_tri)
       call col_nf%Init(bounds%begc, bounds%endc)
 
-      call ptr_test_sub(test_ptr)
+      call ptr_test_sub(filter(i_type)%num_soilc, filter(i_type)%soilc, test_ptr)
 
       test_ptr(:,:) = SHR_CONST_SPVAL
 
@@ -168,8 +198,11 @@ contains
 
    end subroutine call_sub
 
-   subroutine ptr_test_sub(arr)
+   subroutine ptr_test_sub(numf, soilc, arr)
+      integer , intent(in) :: numf
+      integer, intent(in) :: soilc(:)
       real(r8) , intent(inout) :: arr(:,:)
+
       arr(:,:) = 1.0_r8
    end subroutine ptr_test_sub
 
@@ -448,5 +481,13 @@ contains
 
 
   end subroutine Tridiagonal_mr
+
+  subroutine add(x,y)
+   real(r8), intent(in) :: x
+   real(r8), intent(inout) :: y
+
+   y = x+y
+
+   end subroutine add
 
 end module test

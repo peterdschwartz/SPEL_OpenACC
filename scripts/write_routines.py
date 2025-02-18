@@ -6,7 +6,6 @@ import sys
 from collections import namedtuple
 from typing import TYPE_CHECKING, Dict
 
-from scripts.fortran_modules import get_module_name_from_file
 from scripts.mod_config import (ELM_SRC, PHYSICAL_PROP_TYPE_LIST, _bc,
                                 elm_dir_regex, preproc_list, shr_dir_regex,
                                 spel_mods_dir, spel_output_dir,
@@ -17,6 +16,7 @@ from scripts.utilityFunctions import (Variable, comment_line,
 
 if TYPE_CHECKING:
     from scripts.analyze_subroutines import Subroutine
+    from scripts.DerivedType import DerivedType
 TAB_WIDTH = 2
 indent = 1
 
@@ -243,8 +243,8 @@ def insert_at_token(lines, token, lines_to_add):
 
 def find_parent_subroutine_call(
     subroutines: Dict[str, Subroutine],
-    type_dict,
-    inst_to_type,
+    type_dict: dict[str, DerivedType],
+    inst_to_type: dict[str,str],
 ):
     """
     Function that for a list of Subroutines, finds a call signature to
@@ -403,7 +403,12 @@ def get_filter_members(filter_type):
     return member_list
 
 
-def prepare_main(subroutines, type_dict, instance_to_type, casedir):
+def prepare_main(
+        subroutines: dict[str,Subroutine],
+        type_dict: dict[str,DerivedType],
+        instance_to_type: dict[str,str],
+        casedir:str,
+):
     """
     Function to insert USE dependencies into main.F90 and subroutine calls for the FUT subs
     """
@@ -416,7 +421,7 @@ def prepare_main(subroutines, type_dict, instance_to_type, casedir):
     call_token = "!#CALL_SUB"
     modules_to_add = []
     for s in subroutines.values():
-        _, mod = get_module_name_from_file(s.filepath)
+        mod = s.module
         modules_to_add.append(f"use {mod}, only : {s.name}\n")
 
     additions = find_parent_subroutine_call(subroutines, type_dict, instance_to_type)

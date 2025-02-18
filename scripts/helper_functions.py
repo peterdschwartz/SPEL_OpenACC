@@ -13,7 +13,7 @@ from scripts.DerivedType import DerivedType
 from scripts.fortran_parser.evaluate import parse_subroutine_call
 from scripts.log_functions import list_print
 from scripts.mod_config import _bc
-from scripts.types import CallDesc, ReadWrite, SubroutineCall
+from scripts.types import CallDesc, CallTree, CallTuple, ReadWrite, SubroutineCall
 
 
 def determine_variable_status(
@@ -324,7 +324,7 @@ def find_child_subroutines(
     Function that populates Subroutine fields that require
     looking up in main dictionaries
     """
-    lines = sub.get_sub_lines()
+    lines = sub.sub_lines
 
     regex_call = re.compile(r"^\s*(call)\b")
     matches = [line for line in filter(lambda x: regex_call.search(x.line), lines)]
@@ -341,7 +341,68 @@ def find_child_subroutines(
             key = f"{call_desc.alias}@L{call_desc.ln}"
             call_desc.aggregate_vars()
             sub.sub_call_desc[key] = call_desc
+            if call_desc.alias == "tridiagonal":
+                pprint(call_desc.to_dict(), sort_dicts=False)
+
     return
+
+
+def construct_call_tree(
+    sub: Subroutine,
+    sub_dict: dict[str, Subroutine],
+    dtype_dict: dict[str, DerivedType],
+    nested: int,
+) -> list[CallTuple]:
+    """
+    Function that constructs a CallTree for the input subroutine
+    """
+
+    for childsub in sub.child_subroutines.values():
+        if childsub.preprocessed or childsub.library:
+            continue
+        childsub.collect_var_and_call_info(sub_dict, dtype_dict)
+
+    flat_call_list: list[CallTuple] = [
+        CallTuple(
+            nested=nested,
+            subname=sub.name,
+        )
+    ]
+
+    for childsub in sub.child_subroutines.values():
+        if childsub.library:
+            continue
+        child_list = construct_call_tree(
+            childsub,
+            sub_dict,
+            dtype_dict,
+            nested + 1,
+        )
+        flat_call_list.extend(child_list)
+    sub.abstract_call_tree = make_call_tree(flat_call_list)
+
+    return flat_call_list
+
+
+def make_call_tree(flat_calls: list[CallTuple]) -> CallTree:
+    """
+    Build a subroutine call tree from a flat list of CallTuple
+    Assumes the first tuple is the root.
+    """
+    root = CallTree(flat_calls[0])
+    stack = [(flat_calls[0].nested, root)]
+
+    for call in flat_calls[1:]:
+        node_tree = CallTree(call)
+        # Pop from stack until we find the parent
+        while stack and stack[-1][0] >= call.nested:
+            stack.pop()
+        if stack:
+            parent_tree = stack[-1][1]
+            parent_tree.add_child(node_tree)
+        stack.append((call.nested, node_tree))
+
+    return root
 
 
 def check_nested_and_unnested_global_args(call_desc: CallDesc):

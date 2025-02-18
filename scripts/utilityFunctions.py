@@ -426,7 +426,7 @@ def get_interface_list():
     return interface_list
 
 
-def getLocalVariables(sub, verbose=False, class_var=False):
+def getLocalVariables(sub: Subroutine, verbose=False, class_var=False):
     """
     this function will retrieve  the local variables from
     the subroutine at startline, endline in the given file
@@ -436,15 +436,13 @@ def getLocalVariables(sub, verbose=False, class_var=False):
 
     filename = sub.filepath
     subname = sub.name
-    file = open(filename, "r")
-    lines = file.readlines()
-    file.close()
-    startline = sub.startline
-    endline = sub.endline
+    lines = sub.sub_lines
 
     args_present = bool(sub.dummy_args_list)
     if verbose:
-        print(f"{func_name}::{filename},{subname} at L{startline}-{endline}")
+        fileinfo = sub.get_file_info()
+        print(f"{func_name}::{fileinfo}")
+
     cc = "."
     # non-greedy capture
     ng_regex_array = re.compile(r"\w+?\s*\({}+?\)".format(cc))
@@ -467,10 +465,9 @@ def getLocalVariables(sub, verbose=False, class_var=False):
     user_type = re.compile(r"^(class\s*\(|type\s*\()", re.IGNORECASE)
     ng_array_ind = re.compile(r"(?<=\w)\s*(\(.+?\))")
 
-    ln = startline+1
-    while ln < endline:
-        line, ln = line_unwrapper(lines=lines, ct=ln)
-        line = line.strip().lower()
+    for line_pair in lines:
+        ln = line_pair.ln
+        line = line_pair.line
 
         match_variable = find_variables.search(line)
 

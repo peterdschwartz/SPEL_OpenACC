@@ -12,6 +12,7 @@ from scripts.fortran_modules import (FortranModule, get_filename_from_module,
                                      get_module_name_from_file,
                                      parse_only_clause)
 from scripts.mod_config import E3SM_SRCROOT, spel_output_dir
+from scripts.profiler_context import profile_ctx
 from scripts.types import PreProcTuple
 from scripts.utilityFunctions import (check_cpp_line, comment_line,
                                       find_variables, get_interface_list,
@@ -214,7 +215,13 @@ def process_fates_or_betr(lines, mode):
     return lines
 
 
-def get_used_mods(ifile, mods, singlefile, mod_dict, verbose=False):
+def get_used_mods(
+        ifile: str, # fpath
+        mods: list[str], # list[fpath]
+        singlefile: bool,
+        mod_dict: dict[str, FortranModule],
+        verbose: bool=False,
+):
     """
     Checks to see what mods are needed to compile the file
     """
@@ -279,7 +286,7 @@ def get_used_mods(ifile, mods, singlefile, mod_dict, verbose=False):
 
             # Check for variable declarations
             variable_list = parse_line_for_variables(
-                ifile=ifile, l=l, ln=ct, verbose=verbose
+                ifile=ifile, l=l, ln=ct, verbose=verbose,
             )
             # Store variable as Variable Class object and add to Module object
             if variable_list:
@@ -373,7 +380,14 @@ def AdjustLine(a, b, c):
     return a + (b - c)
 
 
-def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
+def modify_file(
+        lines: list[str],
+        fn: str,
+        sub_dict: dict[str, Subroutine],
+        mod_name: str,
+        verbose: bool=False,
+        overwrite: bool=False,
+):
     """
     Function that modifies the source code of the file
     Occurs after parsing the file for subroutines and modules
@@ -665,10 +679,14 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
                         + f"L{sub_start}-{endline} in {base_fn}"
                     )
 
+
+                mod_lines: list[str] = lines[:] if not cpp_file else cpp_lines[:]
                 sub = Subroutine(
-                    subname,
-                    fn,
-                    [""],
+                    name=subname,
+                    mod_name=mod_name,
+                    file=fn,
+                    calltree=[""],
+                    mod_lines=mod_lines,
                     start=sub_start,
                     end=endline,
                     cpp_start=cpp_startline,
@@ -700,7 +718,9 @@ def modify_file(lines, fn, sub_dict, verbose=False, overwrite=False):
                 print("cpp:", cpp_file, f"@Line {ct}: {l_cont}")
                 sys.exit(1)
             in_subroutine = False
-            create_function(fn, start_ln_pair, func_init, sub_dict, verbose)
+
+            mod_lines: list[str] = lines[:] if not cpp_file else cpp_lines[:]
+            create_function(fn, start_ln_pair, func_init, sub_dict, mod_lines, mod_name, verbose,)
 
         # Check if anything was commented out:
         if "!#py" in lines[start_ln_pair.ln]:
@@ -763,26 +783,11 @@ def process_for_unit_test(
     else:
         lower_mods = []
 
-    # Find if this file has any not-processed mods
-    if not singlefile:
-        mods, mod_dict = get_used_mods(
-            ifile=fname,
-            mods=mods,
-            verbose=verbose,
-            singlefile=singlefile,
-            mod_dict=mod_dict,
-        )
-
-
-    # Next process required modules if they are not already in the list
-
-    required_mod_paths = [get_filename_from_module(m) for m in required_mods]
-
-    for rmod in required_mod_paths:
-        if rmod not in mods:
-            mods.append(rmod)
+    with profile_ctx(enabled=False, section="get_used_mods") as pc:
+        # Find if this file has any not-processed mods
+        if not singlefile:
             mods, mod_dict = get_used_mods(
-                ifile=rmod,
+                ifile=fname,
                 mods=mods,
                 verbose=verbose,
                 singlefile=singlefile,
@@ -790,42 +795,48 @@ def process_for_unit_test(
             )
 
     # Sort the file dependencies
-    linenumber, unit_test_module = get_module_name_from_file(fpath=fname)
-    file_list = sort_file_dependency(mod_dict, unit_test_module)
-    if verbose:
-        print("Newly added mods after processing required mods:")
-        new_mods = [m.split("/")[-1] for m in mods if m not in initial_mods]
-        print( new_mods)
+    with profile_ctx(enabled=False, section="sort_file_dependency") as pc:
+        linenumber, unit_test_module = get_module_name_from_file(fpath=fname)
+        file_list = sort_file_dependency(mod_dict, unit_test_module)
+        if verbose:
+            print("Newly added mods after processing required mods:")
+            new_mods = [m.split("/")[-1] for m in mods if m not in initial_mods]
+            print( new_mods)
 
     # Next, each needed module is parsed for subroutines and removal of
     # any dependencies that are not needed for an ELM unit test (eg., I/O libs,...)
     # Note:
     #    Modules are parsed starting with leaf nodes to decrease the likelihood of
     #    a child subroutine not having been instantiated
-    for mod_file in file_list:
-        _, mod_name = get_module_name_from_file(mod_file)
-        # Avoid preprocessing files over and over
-        if mod_dict[mod_name].modified:
-            continue
-        file = open(mod_file, "r")
-        lines = file.readlines()
-        file.close()
-        sub_dict = modify_file(
-            lines, mod_file, sub_dict, verbose=verbose, overwrite=overwrite
-        )
-        mod_dict[mod_name].modified = True
-        if overwrite:
-            out_fn = mod_file
-            if verbose:
-                print("Writing to file:", out_fn)
-            with open(out_fn, "w") as ofile:
-                ofile.writelines(lines)
+    with profile_ctx(enabled=False,section="modify_file") as pc:
+        for mod_file in file_list:
+            _, mod_name = get_module_name_from_file(mod_file)
+            # Avoid preprocessing files over and over
+            if mod_dict[mod_name].modified:
+                continue
+            file = open(mod_file, "r")
+            lines = file.readlines()
+            file.close()
+            sub_dict = modify_file(
+                lines,
+                mod_file,
+                sub_dict,
+                mod_name,
+                verbose=verbose,
+                overwrite=overwrite,
+            )
+            mod_dict[mod_name].modified = True
+            if overwrite:
+                out_fn = mod_file
+                if verbose:
+                    print("Writing to file:", out_fn)
+                with open(out_fn, "w") as ofile:
+                    ofile.writelines(lines)
 
     # Transfer subroutines to main dictionary
     for subname, sub in sub_dict.items():
         if subname not in main_sub_dict:
             main_sub_dict[subname] = sub
-
 
     if verbose:
         print(f"File list for Unit Test: {case_dir}")

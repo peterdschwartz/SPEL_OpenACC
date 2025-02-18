@@ -1,15 +1,20 @@
 import subprocess as sp
+from typing import Optional, Tuple
 
 from scripts.mod_config import ELM_SRC
 
 interface_list: list[str] = []
+
+map_module_name_to_fpath: dict[str, Optional[str]] = {}
+map_fpath_to_module_name: dict[str, Tuple[int, str]] = {}
+
+map_module_lines: dict[str, list[str]] = {}
 
 
 def populate_interface_list():
     """
     returns a list of all interfaces
     """
-
     cmd = f'grep -rin --exclude-dir={ELM_SRC}external_models/ -E "^[[:space:]]+(interface)" {ELM_SRC}*'
     output = sp.getoutput(cmd)
     output = output.split("\n")

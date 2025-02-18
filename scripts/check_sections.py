@@ -71,6 +71,8 @@ def create_function(
     ln_pair: PreProcTuple,
     func_init: FunctionReturn,
     sub_dict: dict[str, Subroutine],
+    mod_lines: list[str],
+    mod_name: str,
     verbose: bool = False,
 ):
     """
@@ -89,6 +91,8 @@ def create_function(
             print(f"{' '*len(func_name)} ln: L{func_init.start_ln}-{ln_pair.ln}")
         sub = Subroutine(
             func_init.name,
+            mod_name,
+            mod_lines,
             fn,
             [""],
             start=func_init.start_ln,

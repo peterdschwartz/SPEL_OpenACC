@@ -25,6 +25,7 @@ class TokenTypes(Enum):
     RPAREN = ")"
     NEWLINE = "\n"
     COLON = ":"
+    PERCENT = "%"
     # keywords
     SUBROUTINE = "SUBROUTINE"
     FUNCTION = "FUNCTION"

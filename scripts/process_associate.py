@@ -1,77 +1,73 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from analyze_subroutines import Subroutine
+
 import re
 import sys
 
-from scripts.utilityFunctions import line_unwrapper
+from scripts.types import LineTuple
 
 
-def getAssociateClauseVars(sub, verbose=False):
+def getAssociateClauseVars(sub: Subroutine, verbose=False):
     """
     Funtion to extract the associated variables in a subroutine
     """
     func_name = "getAssociateClauseVars::"
 
     subroutine_name = sub.name
-    if sub.cpp_startline:
-        subroutine_start_line = sub.cpp_startline
-        subroutine_end_line = sub.cpp_endline
-        fn = sub.cpp_filepath
-    else:
-        subroutine_start_line = sub.startline
-        subroutine_end_line = sub.endline
-        fn = sub.filepath
+    lines = sub.sub_lines
 
-    ifile = open(fn, "r")
-    lines = ifile.readlines()
-    ifile.close()
     associate_vars = {}
     associate_start = 0
     associate_end = 0
-    ct = subroutine_start_line
-    while ct < subroutine_end_line:
-        line = lines[ct]
-        line = line.strip().split("!")[0]
-        match = re.search(r"\b(associate)\b(?=\()", line)  # find start of assoicate(
-        if match and ct < subroutine_end_line:
-            if verbose:
-                print(f"{func_name}::matched associate start {match}\n{line}")
-            associate_start = ct
-            break
-        ct = ct + 1
+    regex_associate = re.compile(r"\b(associate)\b(?=\()")
+    matches: list[LineTuple] = [
+        line for line in filter(lambda x: regex_associate.search(x.line), lines)
+    ]
+
+    if len(matches) > 1:
+        print(f"{func_name}:: multiple associate clauses founds! {sub.name}")
+        print(matches)
+        sys.exit(1)
+    if not matches:
+        return associate_vars, associate_start, associate_end
 
     if verbose:
         print(f"{func_name}::associate start {associate_start} {sub.cpp_startline}")
 
-    if associate_start != 0:
-        line, ct = line_unwrapper(lines, ct)
-        line = line.strip()
-        associate_end = ct
-        regex_str = re.compile(r"(?<=\()(.+)(?=\))")
-        associate_string = regex_str.search(line).group(0)
+    associate_line = matches[0]
+    associate_start = associate_line.ln
 
-        if verbose:
-            print(f"{func_name}::{associate_string}")
-        regex_remove_index = re.compile(r"(\()(.+)(\))")
-        for pair in associate_string.split(","):
-            parsed = pair.split("=>")
-            # find_ex = the ptr name to find in routine
-            # repl_ex = the variable to replace it with
-            find_ex = parsed[0].strip()
-            repl_ex = parsed[1].strip()
-            repl_ex = regex_remove_index.sub("", repl_ex)
-            find_ex = find_ex.lower().strip()
-            repl_ex = repl_ex.lower().strip()
-            if find_ex in associate_vars:
-                print(
-                    f"{func_name}::Error! Multiple associations for {find_ex} in {subroutine_name}"
-                )
-                sys.exit(1)
-            associate_vars[find_ex] = repl_ex
+    associate_end = next((l.ln for l in lines if l.ln > associate_start), None)
+    regex_str = re.compile(r"(?<=\()(.+)(?=\))")
+    associate_string = regex_str.search(associate_line.line).group(0)
 
-        if verbose:
-            print(f"{func_name}:: Found associate variables for {subroutine_name}")
-            for key in associate_vars:
-                print(f"{key} => {associate_vars[key]}")
+    if verbose:
+        print(f"{func_name}::{associate_string}")
 
-        if verbose:
+    regex_remove_index = re.compile(r"(\()(.+)(\))")
+    for pair in associate_string.split(","):
+        parsed = pair.split("=>")
+        # find_ex = the ptr name to find in routine
+        # repl_ex = the variable to replace it with
+        find_ex = parsed[0].strip()
+        repl_ex = parsed[1].strip()
+        repl_ex = regex_remove_index.sub("", repl_ex)
+        find_ex = find_ex.lower().strip()
+        repl_ex = repl_ex.lower().strip()
+        if find_ex in associate_vars:
+            print(
+                f"{func_name}::Error! Multiple associations for {find_ex} in {subroutine_name}"
+            )
             sys.exit(1)
+        associate_vars[find_ex] = repl_ex
+
+    if verbose:
+        print(f"{func_name}:: Found associate variables for {subroutine_name}")
+        for key in associate_vars:
+            print(f"{key} => {associate_vars[key]}")
+
     return associate_vars, associate_start, associate_end

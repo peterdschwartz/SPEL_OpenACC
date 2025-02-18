@@ -1,28 +1,43 @@
+from __future__ import annotations
+
 import subprocess as sp
 import sys
+from typing import TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from scripts.analyze_subroutines import Subroutine
+
+import scripts.dynamic_globals as dg
 from scripts.mod_config import ELM_SRC, SHR_SRC, _bc
 from scripts.types import PointerAlias
 
 
-def get_module_name_from_file(fpath) -> tuple[int, str]:
+def get_module_name_from_file(fpath: str) -> tuple[int, str]:
     """
     Given a file path, returns the name of the module
     """
-    cmd = f'grep -rin -E "^[[:space:]]*module [[:space:]]*[[:alnum:]]+" {fpath}'
-    # the module declaration will be the first one. Any others will be interfaces
-    module_name = sp.getoutput(cmd).split("\n")[0]
-    # grep will have pattern <line_number>:module <module_name>
-    linenumber, module_name = module_name.split(":")
-    module_name = module_name.split()[1]
+    if fpath not in dg.map_fpath_to_module_name:
+        cmd = f'grep -rin -E "^[[:space:]]*module [[:space:]]*[[:alnum:]]+" {fpath}'
+        # the module declaration will be the first one. Any others will be interfaces
+        module_name = sp.getoutput(cmd).split("\n")[0]
+        # grep will have pattern <line_number>:module <module_name>
+        linenumber, module_name = module_name.split(":")
+        module_name = module_name.split()[1].lower()
+        linenumber = int(linenumber)
+        dg.map_fpath_to_module_name[fpath] = (linenumber, module_name)
+    else:
+        linenumber, module_name = dg.map_fpath_to_module_name[fpath]
 
-    return int(linenumber), module_name.lower()
+    return linenumber, module_name
 
 
-def get_filename_from_module(module_name, verbose=False):
+def get_filename_from_module(module_name: str, verbose: bool = False):
     """
     Given a module name, returns the file path of the module
     """
+    if module_name in dg.map_module_name_to_fpath:
+        return dg.map_module_name_to_fpath[module_name]
+
     cmd = f'grep -rin --exclude-dir=external_models/ "module {module_name}" {ELM_SRC}*'
     elm_output = sp.getoutput(cmd)
     if not elm_output:
@@ -44,6 +59,9 @@ def get_filename_from_module(module_name, verbose=False):
             file_path = shr_output.split("\n")[0].split(":")[0]
     else:
         file_path = elm_output.split("\n")[0].split(":")[0]
+
+    dg.map_module_name_to_fpath[module_name] = file_path
+
     return file_path
 
 
@@ -64,7 +82,11 @@ def unravel_module_dependencies(modtree, mod_dict, mod, depth=0):
     return modtree
 
 
-def print_spel_module_dependencies(mod_dict, subs, depth=0):
+def print_spel_module_dependencies(
+    mod_dict: dict[str, FortranModule],
+    subs: dict[str, Subroutine],
+    depth=0,
+):
     """
     Given a dictionary of modules needed for this unit-test
     this prints their dependencies with the modules containing
@@ -75,7 +97,7 @@ def print_spel_module_dependencies(mod_dict, subs, depth=0):
 
     for sub in subs.values():
         depth = 0
-        linenumber, module_name = get_module_name_from_file(sub.filepath)
+        module_name = sub.module
         sub_module = mod_dict[module_name]
         modtree.append({"module": module_name, "depth": depth})
         depth += 1

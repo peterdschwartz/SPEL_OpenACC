@@ -23,7 +23,7 @@ from scripts.interfaces import determine_arg_name, resolve_interface
 from scripts.LoopConstructs import Loop, exportVariableDependency
 from scripts.mod_config import _bc, _no_colors, spel_dir
 from scripts.process_associate import getAssociateClauseVars
-from scripts.types import CallDesc, FileInfo, LineTuple
+from scripts.types import CallDesc, CallTree, FileInfo, LineTuple
 from scripts.utilityFunctions import (Variable, determine_filter_access,
                                       find_file_for_subroutine,
                                       get_interface_list, getArguments,
@@ -63,6 +63,8 @@ class Subroutine(object):
     def __init__(
         self,
         name,
+        mod_name,
+        mod_lines=[],
         file="",
         calltree=[],
         start=0,
@@ -95,6 +97,7 @@ class Subroutine(object):
         self.filepath: str = file
         self.startline: int = start
         self.endline: int = end
+        self.module: str = mod_name
         if self.endline == 0 or self.startline == 0 or not self.filepath:
             print(
                 f"Error in finding subroutine {self.name} {self.filepath} {self.startline} {self.endline}"
@@ -104,6 +107,9 @@ class Subroutine(object):
         # Initialize call tree
         self.calltree = list(calltree)
         self.calltree.append(name)
+
+        # CallTree where repeated child subroutines are not considered.
+        self.abstract_call_tree: Optional[CallTree] = None
 
         # Initialize arguments and local variables
         self.Arguments: dict[str, Variable] = {}
@@ -126,7 +132,7 @@ class Subroutine(object):
         self.cpp_filepath: str | None = cpp_fn
 
         # Process the Associate Clause
-        self.associate_vars = {}
+        self.associate_vars: dict[str,str] = {}
         self.associate_start: int = -1
         self.associate_end: int = -1
         self.dummy_args_list: List[str] = []
@@ -134,12 +140,15 @@ class Subroutine(object):
         self.result_name = function.result if function else ""
         self.result: Variable|None = None
 
-        self.dtype_vars: Dict[str,Variable] = {}
+        self.dtype_vars: dict[str, Variable] = {}
+        self.sub_lines: list[LineTuple] = []
 
         if not lib_func:
+            self.sub_lines = self.get_sub_lines(mod_lines)
             self.associate_vars, jstart, jend = getAssociateClauseVars(self)
             self.associate_start = jstart
             self.associate_end = jend
+
             self.dummy_args_list = self._get_dummy_args()
             getLocalVariables(self, verbose=verbose)
 
@@ -163,25 +172,28 @@ class Subroutine(object):
             self.Arguments = sort_args.copy()
 
         # These 3 dictionaries will be summaries of ReadWrite Status for the FUT subroutines as a whole
-        self.elmtype_r: dict[str, ReadWrite] = {}
-        self.elmtype_w : dict[str, ReadWrite]= {}
-        self.elmtype_rw : dict[str, ReadWrite]= {}
+        self.elmtype_r : dict[str,str] = {}
+        self.elmtype_w : dict[str,str] = {}
+        self.elmtype_rw: dict[str,str] = {}
 
         self.elmtype_access_by_ln: Dict[str,List[ReadWrite]] = {}
 
         self.subroutine_call: List[SubroutineCall] = []
-        self.child_Subroutine = {}
+        self.child_subroutines: dict[str, Subroutine] = {}
         self.sub_call_desc: dict[str,CallDesc] = {}
 
-        self.acc_status: bool = False
         self.DoLoops = []
-        self.analyzed_child_subroutines: bool = False
 
         # non-derived type variables used in the subroutine
         self.active_global_vars: Dict[str,Variable] = {}
 
+        ## Section for flags to avoid re-processing subroutines
+
         # Flag that denotes subroutines that were user requested 
         self.unit_test_function: bool = False
+        self.acc_status: bool = False
+        self.analyzed_child_subroutines: bool = False
+        self.preprocessed : bool = False
 
         self.environment: Optional[Environment] = None
 
@@ -236,9 +248,9 @@ class Subroutine(object):
                 ofile.write(f"{tab}{arg}\n")
 
         # print Child Subroutines
-        if self.child_Subroutine:
+        if self.child_subroutines:
             ofile.write(c.WARNING + "Child Subroutines:\n")
-            for s in self.child_Subroutine.values():
+            for s in self.child_subroutines.values():
                 ofile.write(f"{tab}{s.name}\n")
         ofile.write(c.ENDC)
         return None
@@ -252,13 +264,10 @@ class Subroutine(object):
         func_name = "_get_dummy_args"
         tabs = ' '*len(func_name)
 
-        ifile = open(self.filepath, "r")
-        lines = ifile.readlines()
-        ifile.close()
+        lines = self.sub_lines
         regex = re.compile(r'(?<=\()[\w\s,]+(?=\))')
 
-        ln = self.startline
-        full_line,ln = line_unwrapper(lines=lines,ct=ln)
+        full_line = lines[0].line
         if self.func:
             _ftype, _f , func_rest = split_func_line(full_line)
             args_and_res = regex.findall(func_rest)
@@ -321,36 +330,36 @@ class Subroutine(object):
 
     def get_dtype_vars(self, instance_dict: Dict[str, DerivedType])-> Dict[str,Variable]:
         """
-        Function
+        Function 
         """
+        regex_paren = re.compile(r"\((.+)\)") # for removing array of struct index
         regex_dtype_var = re.compile(r"\w+(?:\(\w+\))?%\w+")
-        fileinfo = self.get_file_info(all=True)
 
-        matched_lines = search_in_file_section(
-            fpath=fileinfo.fpath,
-            start_ln=fileinfo.startln,
-            end_ln=fileinfo.endln,
-            pattern=regex_dtype_var,
-        )
+        lines = self.sub_lines
+        matched_lines = [line for line in filter(lambda x: regex_dtype_var.search(x.line), lines)]
 
         def check_local_decls(my_dict):
             return lambda key: key in my_dict
 
-        local_and_args_dict = self.Arguments | self.LocalVariables['arrays'] | self.LocalVariables['scalars']
+        def sub_soa(name: str)->str:
+            inst, field = name.split("%")
+            inst = regex_paren.sub("(index)", inst)
+            return f"{inst}%{field}"
+
+        local_and_args_dict = self.LocalVariables['arrays'] | self.LocalVariables['scalars']
         is_arg_or_local = check_local_decls(local_and_args_dict)
 
         dtype_vars: dict[str,Variable] = {}
-        ln = 0
-        while(ln<len(matched_lines)):
-            full_line, ln = line_unwrapper(matched_lines, ln)
-            m_vars = regex_dtype_var.findall(full_line)
-
+        for lpair in matched_lines:
+            m_vars = regex_dtype_var.findall(lpair.line)
             for dtype in m_vars:
+                dtype = sub_soa(dtype)
                 if dtype not in dtype_vars and not is_arg_or_local(dtype.split('%')[0]):
                     dtype_var = get_component(instance_dict, dtype)
                     if dtype_var:
+                        dtype_var.name = dtype
                         dtype_vars[dtype] = dtype_var
-            ln += 1
+
         return dtype_vars
 
     def get_ptr_vars(self):
@@ -361,7 +370,7 @@ class Subroutine(object):
         fileinfo = self.get_file_info()
         regex_ptr = re.compile(r"\w+\s*(=>)\s*\w+(%)\w+")
 
-        sub_lines = self.get_sub_lines()
+        sub_lines = self.sub_lines if self.sub_lines else self.get_sub_lines()
         sub_lines = [lpair for lpair in sub_lines if lpair.ln >= fileinfo.startln]
 
         total_matches: list[LineTuple] = []
@@ -384,17 +393,22 @@ class Subroutine(object):
         return None
 
 
-    def get_sub_lines(self)-> list[LineTuple]:
+    def get_sub_lines(self, mod_lines=[])-> list[LineTuple]:
         """
         Function that returns lines of a subroutine after trimming comments,
         removing line continuations, and lower-case
         """
         fileinfo = self.get_file_info(all=True)
         regex_all = re.compile(r'(.*)')
-        lines = search_in_file_section(fpath=fileinfo.fpath,
-                                       start_ln=fileinfo.startln,
-                                       end_ln=fileinfo.endln,
-                                       pattern=regex_all,)
+        if not mod_lines:
+            lines = search_in_file_section(fpath=fileinfo.fpath,
+                                           start_ln=fileinfo.startln,
+                                           end_ln=fileinfo.endln,
+                                           pattern=regex_all,)
+        else:
+            indexed_lines = enumerate(mod_lines,start=0)
+            section = filter(lambda x: fileinfo.startln <= x[0] <= fileinfo.endln, indexed_lines)
+            lines = [ line[1] for line in filter(lambda x: regex_all.search(x[1]), section) ]
 
         fline_list: list[LineTuple] = []
         ln: int = 0
@@ -404,7 +418,7 @@ class Subroutine(object):
                 fline_list.append(LineTuple(line=full_line,ln=ln))
             ln = new_ln + 1
 
-        fline_list = [LineTuple(line=f.line,ln=f.ln+fileinfo.startln) for f in fline_list]
+        fline_list = [ LineTuple(line=f.line,ln=f.ln+fileinfo.startln) for f in fline_list ]
         return fline_list
 
 
@@ -413,12 +427,9 @@ class Subroutine(object):
         Attempts to assign intent in/out/inout -> 'r', 'w', 'rw'
          Also check if one of the args is a class
         """
-        fileinfo = self.get_file_info(all=True)
-        regex_all = re.compile(r'(.*)')
-        lines = search_in_file_section(fpath=fileinfo.fpath,
-                                       start_ln=fileinfo.startln,
-                                       end_ln=fileinfo.endln,
-                                       pattern=regex_all,)
+        flines = self.sub_lines if self.sub_lines else self.get_sub_lines()
+
+        lookup_lines = { lpair.ln: lpair.line for lpair in flines }
 
         regex_intent = re.compile(r'intent\s*\(\s*(in\b|inout\b|out\b)\s*\)', re.IGNORECASE)
         regex_class= re.compile(r'class\s*\(\s*\w+\s*\)', re.IGNORECASE)
@@ -432,11 +443,11 @@ class Subroutine(object):
                 case "inout":
                     return 'rw'
                 case _:
-                    print("Error--Wrong Intent For Argument")
+                    print("Error - Wrong Intent For Argument")
                     sys.exit(1)
 
         for arg in self.Arguments.values():
-            line = lines[arg.ln-fileinfo.startln].strip()
+            line = lookup_lines[arg.ln]
             m_ = regex_intent.search(line.lower())
             cl = regex_class.search(line.lower())
             if(m_):
@@ -506,8 +517,11 @@ class Subroutine(object):
 
 
     @Trace.trace_decorator("_preprocess_file")
-    def _preprocess(
-        self, main_sub_dict, dtype_dict,  verbose=False
+    def collect_var_and_call_info(
+        self,
+        main_sub_dict: dict[str,Subroutine],
+        dtype_dict: dict[str,DerivedType],
+        verbose=False,
     ):
         """
         This function will find child subroutines and variables used
@@ -516,20 +530,20 @@ class Subroutine(object):
             * dtype_dict : dict of user type defintions
             * interface_list : contains names of known interfaces
         """
-        func_name = "_preprocess"
+        func_name = "collect_var_and_call_info"
 
-        global_vars: Dict[str, DerivedType] = {}
+        global_vars: Dict[str,DerivedType] = {}
         for argname, arg in self.Arguments.items():
             if arg.type in dtype_dict.keys():
                 global_vars[argname] = dtype_dict[arg.type]
 
-        for typename, dtype in dtype_dict.items():
+        for dtype in dtype_dict.values():
             for inst in dtype.instances.keys():
                 if inst not in global_vars:
                     global_vars[inst] = dtype
 
         self.dtype_vars = self.get_dtype_vars(global_vars)
-        pprint(self.dtype_vars)
+
         ok = self.check_variable_consistency()
         if not ok:
             print(f"Subroutine parsing has inconsistencies for {self.name} exiting...")
@@ -550,6 +564,8 @@ class Subroutine(object):
                 )
                 childsub: Subroutine = Subroutine(
                     name=actual_sub_name,
+                    mod_name="lib",
+                    mod_lines=[],
                     calltree=[],
                     file="lib.F90",
                     start=-999,
@@ -559,12 +575,11 @@ class Subroutine(object):
             else:
                 childsub: Subroutine = main_sub_dict[actual_sub_name]
 
-            child_sub_names = [s for s in self.child_Subroutine.keys()]
+            child_sub_names = [s for s in self.child_subroutines.keys()]
             if actual_sub_name not in child_sub_names:
                 childsub.calltree = self.calltree.copy()
                 childsub.calltree.append(actual_sub_name)
-                self.child_Subroutine[actual_sub_name] = childsub
-
+                self.child_subroutines[actual_sub_name] = childsub
 
             # Transform args to list of PointerAlias with dummy_arg => passed_var
             # if not childsub.library:
@@ -576,6 +591,8 @@ class Subroutine(object):
             #     subcall = SubroutineCall(self.name, args_matched, call_ln)
             #     if subcall not in childsub.subroutine_call:
             #         childsub.subroutine_call.append(subcall)
+
+        self.preprocessed = True
 
         return None
 
@@ -595,7 +612,7 @@ class Subroutine(object):
                 return None
 
     @Trace.trace_decorator("_analyze_variables")
-    def _analyze_variables(self, sub_dict, global_vars, interface_list, verbose=False):
+    def _analyze_variables(self, sub_dict, verbose=False):
         """
         Function used to determine read and write variables
         If var is written to first, then rest of use is ignored.
@@ -619,11 +636,6 @@ class Subroutine(object):
         startline = fileinfo.startln
         endline = fileinfo.endln
 
-
-        file = open(fn, "r")
-        lines = file.readlines()
-        file.close()
-
         # Create regex to match any variable in the associate clause:
         if not self.associate_vars:
             no_associate = True
@@ -644,6 +656,9 @@ class Subroutine(object):
         regex_ptr_simple = re.compile(r"\w+\s*(=>)\s*\w+")
 
         call_lns = [desc.ln for desc in self.sub_call_desc.values()]
+
+        sub_lines = self.sub_lines
+        sub_lines = [ lpair for lpair in sub_lines if lpair.ln >= startline ]
 
         # dtype_accessed is a dictonary to keep track of derived type vars accessed in the subroutine.
         #        {'inst%component' : [ list of ReadWrite ] }
@@ -813,7 +828,12 @@ class Subroutine(object):
         return None
 
     @Trace.trace_decorator("parse_subroutine")
-    def parse_subroutine(self, dtype_dict, main_sub_dict, child=False, verbose=False):
+    def parse_subroutine(
+        self,
+        dtype_dict: dict[str,DerivedType],
+        main_sub_dict: dict[str,Subroutine],
+        verbose: bool=False,
+    ):
         """
         This function parses subroutine to find which variables are ro,wo,rw
         elmvars is a list of DerivedType.
@@ -826,27 +846,18 @@ class Subroutine(object):
         """
         func_name = "parse_subroutine::"
 
-        self._preprocess(
+
+        self.collect_var_and_call_info(
             main_sub_dict=main_sub_dict,
             dtype_dict=dtype_dict,
             verbose=verbose,
         )
 
-        global_vars: Dict[str,DerivedType] = {}
-        for argname, arg in self.Arguments.items():
-            if arg.type in dtype_dict.keys():
-                global_vars[argname] = dtype_dict[arg.type]
-
-        for typename, dtype in dtype_dict.items():
-            for inst in dtype.instances.keys():
-                if inst not in global_vars:
-                    global_vars[inst] = dtype
+        return
 
         # Determine read/write status of variables
         self._analyze_variables(
             sub_dict=main_sub_dict,
-            global_vars=global_vars,
-            interface_list=dg.interface_list,
             verbose=verbose,
         )
 
@@ -869,7 +880,7 @@ class Subroutine(object):
         func_name = "child_subroutines_analysis"
 
         # child_subroutine_list is a list of Subroutine instances
-        for child_sub in self.child_Subroutine.values():
+        for child_sub in self.child_subroutines.values():
             if child_sub.library:
                 print(
                     f"{func_name}::{child_sub.name} is a library function -- Skipping."
@@ -888,7 +899,7 @@ class Subroutine(object):
                 verbose=verbose,
             )
 
-            if child_sub.child_Subroutine:
+            if child_sub.child_subroutines:
                 if "_oacc" not in child_sub.name:
                     child_sub.child_subroutines_analysis(
                         dtype_dict=dtype_dict,
@@ -928,7 +939,7 @@ class Subroutine(object):
                 if varname in self.elmtype_w.keys():
                     self.elmtype_w.pop(varname)
 
-        for s in self.child_Subroutine.values():
+        for s in self.child_subroutines.values():
             self.calltree.append(s.calltree)
             if child_sub in interface_list:
                 continue
@@ -1209,7 +1220,7 @@ class Subroutine(object):
                         print(f"Adding {len(childloops)} loops from {childsub.name}")
                     self.DoLoops.extend(childloops)
                     self.child_subroutine_list.append(childsub)
-                    self.child_Subroutine[child_sub_name] = childsub
+                    self.child_subroutines[child_sub_name] = childsub
 
             if m_do:
                 # get index

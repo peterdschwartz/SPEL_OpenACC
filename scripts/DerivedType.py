@@ -53,10 +53,9 @@ def get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=Fa
                 else:
                     pot_ptr = False
                 lprime = re.sub(r"(?<={})(.+)(?=::)".format(datatype), "", full_line)
-
                 lprime = re.sub(r"(\s*=>\s*null\(\))", "", lprime)
                 variable_list = parse_line_for_variables(
-                    ifile=ifile, l=lprime, ln=ct, ptr=pot_ptr
+                    ifile=ifile, l=lprime, ln=ct, ptr=pot_ptr, verbose=verbose,
                 )
                 if verbose:
                     print(f"variable list : {variable_list}")
@@ -142,6 +141,7 @@ class DerivedType(object):
                 for el in output:
                     if "external_models" not in el:
                         self.filepath = el
+
         if not self.filepath:
             sys.exit(
                 f"Couldn't find file for {type_name}\ncmd:{cmd}\n" f"output: {output}\n"
@@ -248,6 +248,7 @@ class DerivedType(object):
                         var_inst = member_arr_or_ptr[varname]
                         regex_b = re.compile(r"(?<=(%{}))\s*\((.+?)\)".format(varname))
                         bounds = regex_b.search(full_line).group()
+                        var_inst.bounds = bounds.strip()
                         beg_x = re.search(r"(?<=(beg))[a-z]", bounds, re.IGNORECASE)
                         if beg_x:
                             end_x = re.search(r"(?<=(end))[a-z]", bounds, re.IGNORECASE)
@@ -273,7 +274,6 @@ class DerivedType(object):
             else:
                 self.init_sub = init_sub
 
-        # member scalars:
         for scalar in member_scalars.values():
             self.components[scalar.name] = {
                 "active": False,
@@ -496,24 +496,33 @@ def get_component(instance_dict: Dict[str, DerivedType], dtype_field: str)->Opti
     """
     Function that looks up inst%field in the instance dict.
     """
+    regex_paren = re.compile(r"\((.+)\)") # for removing array of struct index
     inst_name, field = dtype_field.split('%')
-    inst = instance_dict[inst_name]
-    if field in inst.components:
-        var = inst.components[field]['var']
+    inst_name = regex_paren.sub("",inst_name)
+    dtype = instance_dict[inst_name]
+    if field in dtype.components:
+        var: Variable = dtype.components[field]['var']
         return var
     else:
-        if field not in inst.procedures:
+        if field not in dtype.procedures:
             print (f"Error- Couldn't categorize {dtype_field}")
         return None
-    
 
 def expand_dtype(dtype_vars: list[Variable], type_dict: dict[str, DerivedType])->dict[str,Variable]:
+
     """Function to take a dtype and create a dict with a key for each var%field"""
+    def adj_var_name(var,inst_var):
+        dim_str = "(index)" if inst_var.dim>0 else ""
+        var.name = f"{ inst_var.name }{dim_str}%{var.name}"
+        return var
+
     result: dict[str,Variable] = {}
     for dtype_var in dtype_vars:
         dtype = type_dict[dtype_var.type]
         fields = dtype.components.values()
-        temp: dict[str,Variable] = {f"{dtype_var.name}%{field['var'].name}": field['var'] for field in fields}
+        temp: dict[str,Variable] = {
+          f"{dtype_var.name}%{field['var'].name}": adj_var_name(field['var'],dtype_var) for field in fields
+        }
         result.update(temp)
     return result
 

@@ -65,13 +65,35 @@ class ArgTree:
 
     def print_tree(self, level: int = 0):
         """Recursively prints the tree in a hierarchical format."""
-        indent = "|--" * level  # Indentation based on depth level
+        indent = "|--" * level
         print(
-            f"{indent}-{self.node.argn} {self.node.ident}(kind: {self.node.kind.name})"
+            f"{indent}-{self.node.argn} {self.node.node}(kind: {self.node.kind.name})"
         )
 
         for child in self.children:
             child.print_tree(level + 1)
+
+    def remove(self):
+        """
+        Removes this node from the tree by reattaching its children to its parent.
+        Raises a ValueError if attempting to remove the root node.
+        -- self must be a child node!
+        """
+        if self.parent is None:
+            raise ValueError("Cannot remove the root node.")
+
+        parent = self.parent
+        index = parent.children.index(self)
+
+        # Update parent references for this node's children.
+        for child in self.children:
+            child.parent = parent
+
+        # Short-hand slice syntax to replace child node with it's children
+        parent.children[index:index+1] = self.children
+
+        self.children = []
+        self.parent = None
 
 
 # Dictionary to hold intrinsic Fortran functions.
@@ -176,6 +198,7 @@ def parse_subroutine_call(
     input: LineTuple,
     ilist: list[str],
     instance_dict: dict[str, DerivedType],
+    verbose: bool = False,
 ) -> Optional[CallDesc]:
     """
     Function to generate and parse an AST for a subroutine call string
@@ -205,7 +228,9 @@ def parse_subroutine_call(
     if not sub.environment:
         env: Environment = create_environment(sub, sub_dict, type_dict)
         sub.environment = env
-        pprint(env)
+        if verbose:
+            print("Environment: \n")
+            pprint(env.to_dict(),sort_dicts=False)
     else:
         env = sub.environment
 
@@ -242,14 +267,13 @@ def resolve_class_method(subname: str, inst_dict: dict[str,DerivedType], )->str:
 
 def create_environment(
     sub: Subroutine,
-    sub_dict: Dict[str, Subroutine],
+    sub_dict: dict[str, Subroutine],
     type_dict: dict[str, DerivedType],
 ) -> Environment:
     """
-    Package revelant variables and functions for this subroutine.
+    Package relevant variables and functions for this subroutine.
     variables are categorized as local, dummy argument, or "global"
     """
-
     intrinsic_types = ["real", "integer", "character", "logical"]
     local_vars: dict[str,Variable] = sub.LocalVariables["scalars"] | sub.LocalVariables["arrays"]
 
@@ -272,8 +296,8 @@ def create_environment(
     variables.update(expanded_dtypes)
     local_dict: dict[str,Variable] = expanded_dtypes | local_vars
 
-    dtype_args: list[Variable] = [ var for var in sub.Arguments.values() 
-        if var. type not in intrinsic_types
+    dtype_args: list[Variable] = [
+        var for var in sub.Arguments.values() if var.type not in intrinsic_types
     ]
     expanded_dtypes = expand_dtype(dtype_args, type_dict)
     variables.update(expanded_dtypes)
@@ -282,16 +306,26 @@ def create_environment(
 
     global_dict: dict[str,Variable] = sub.dtype_vars | sub.active_global_vars
 
+    instance_dict: Dict[str,DerivedType] = {}
+    for argname, arg in sub.Arguments.items():
+        if arg.type in type_dict.keys():
+            instance_dict[argname] = type_dict[arg.type]
+
+    for dtype in type_dict.values():
+        for inst in dtype.instances.keys():
+            if inst not in instance_dict:
+                instance_dict[inst] = dtype
+
     return Environment(variables=variables,
                        locals=local_dict,
                        dummy_args=dummy_dict,
                        globals=global_dict,
-                       fns=sub_dict)
-
+                       fns=sub_dict,
+                       inst_dict=instance_dict)
 
 def evaluate(
     argn: int,
-    expr,
+    expr:dict[str,Any],
     env: Environment,
     arg_tree_flat: List[List[ArgNode]],
     nested: int,
@@ -303,7 +337,7 @@ def evaluate(
     node = expr["Node"]
     match node:
         case "Ident":
-            var = expr["val"]
+            var = expr["Val"]
             arg_tree_flat[argn].append(
                 ArgNode(argn=argn, ident=var, kind=IdentKind.variable, nested_level=nested, node=expr)
             )
@@ -322,6 +356,20 @@ def evaluate(
             arg_tree_flat[argn].append(arg_node)
             for argexpr in arg_list:
                 evaluate(argn, argexpr, env, arg_tree_flat, nested + 1)
+
+        case "FieldAccessExpression":
+            arg_tree_flat[argn].append(
+                ArgNode(
+                    argn=argn,
+                    ident="FieldAccessExpression",
+                    kind=IdentKind.field,
+                    nested_level=nested,
+                    node=expr,
+                )
+            )
+            expr_list = [ expr["Left"], expr["Field"]]
+            for opexpr in expr_list:
+                evaluate(argn, opexpr, env, arg_tree_flat, nested + 1)
 
         case "InfixExpression":
             arg_tree_flat[argn].append(
@@ -422,7 +470,6 @@ def sort_variables(sub: Subroutine, arg_tree: List[ArgTree], args: List[ArgDesc]
     """
     Function to fill out the locals and globals field in ArgDesc
     """
-    intrinsic_types = ["real", "integer", "character", "logical"]
     globals = sub.environment.globals
     locals = sub.environment.locals
     dummy = sub.environment.dummy_args
@@ -468,8 +515,64 @@ def evaluate_arg_node(branch: ArgTree, env: Environment) -> ArgType:
         case IdentKind.literal:
             datatype = map_py_to_f_types[type(node.ident)]
             return ArgType(datatype=datatype, dim=0)
+        case IdentKind.field:
+            return evaluate_field_access(branch,env)
+        case IdentKind.prefix:
+            return evaluate_prefix_arg(branch,env)
         case _:
             return ArgType(datatype="default", dim=0)
+
+def evaluate_field_access(branch: ArgTree, env: Environment) -> ArgType:
+    """
+    The return ArgType will be the type of the field being accessed.
+    Side Effects:
+        branch.node will be modified to be an identifier with ident
+        value equal
+
+    TODO: Handle case where field is an accessed by index and adjust dimensions
+    """
+    field_name= get_ident(branch.node.node["Field"])
+    inst_node = branch.node.node["Left"]
+
+    # FieldAccessExpression only gets used if the instance is AoS
+    inst_name = get_ident(inst_node)
+    inst = env.inst_dict[inst_name]
+    field_var: Variable = inst.components[field_name]["var"]
+
+
+    branch.node.ident = inst_name+"(index)%"+field_name
+    branch.node.kind = IdentKind.variable
+
+    for child in branch.children:
+        child.remove()
+
+    # dim = adjust_dim(var.dim, branch) if branch.children else var.dim
+    arg_type = ArgType(datatype=field_var.type, dim=field_var.dim)
+
+    return arg_type
+
+
+def get_ident(node: dict[str,Any])->str:
+
+    if node["Node"] == "FuncExpression":
+        return node["Func"]
+    elif node["Node"] == "Ident":
+        return node["Val"]
+    else:
+        print("Unexpected Expression in FieldAccessExpression:\n",node)
+        sys.exit(1)
+
+
+def evaluate_prefix_arg(branch: ArgTree, env: Environment)-> ArgType:
+    """
+    Evaluate prefix expression by evaluating the it's child node.
+    """
+    if len(branch.children) != 1:
+        print("Error - prefix expression has more than one child")
+        branch.print_tree()
+
+    child = branch.children[0]
+    return evaluate_arg_node(child, env)
 
 
 def evaluate_infix_arg(branch: ArgTree, env: Environment) -> ArgType:
@@ -485,6 +588,7 @@ def evaluate_infix_arg(branch: ArgTree, env: Environment) -> ArgType:
         # There is a mixed datatype expression.
         if(not arg_dim_equals(unique_types) or not valid_mixed_types(unique_types)):
             print("Error -- Infix Operation on non-equal dimension or compatible types")
+            pprint(branch.node.node,sort_dicts=False)
             branch.print_tree()
             sys.exit(1)
         return next(filter(lambda arg: arg.datatype == REAL, unique_types))

@@ -1,52 +1,39 @@
-import re
-import sys
-from typing import Dict
+from __future__ import annotations
 
-from scripts.analyze_subroutines import Subroutine
+import re
+from typing import TYPE_CHECKING, Dict
+
+from scripts.types import LineTuple
+
+if TYPE_CHECKING:
+    from scripts.analyze_subroutines import Subroutine
+
 from scripts.fortran_modules import FortranModule, get_module_name_from_file
 from scripts.utilityFunctions import Variable
 
 
-def check_global_vars(regex_variables, sub: Subroutine) -> list:
+def check_global_vars(regex_variables, sub: Subroutine) -> set[str]:
     """
     Function that checks sub for usage of any variables matched by
     regex_variables.
     """
     func_name = "check_global_vars"
-    if sub.cpp_filepath:
-        fn = sub.cpp_filepath
-    else:
-        fn = sub.filepath
-    file = open(fn, "r")
-    lines = file.readlines()
-    file.close()
-    if sub.associate_end == 0:
-        if sub.cpp_startline:
-            startline = sub.cpp_startline
-        else:
-            startline = sub.startline
-    else:
-        startline = sub.associate_end
+    sub_lines = sub.sub_lines
+    fileinfo = sub.get_file_info()
 
-    if sub.cpp_endline:
-        endline = sub.cpp_endline
-    else:
-        endline = sub.endline
+    lines = [lpair for lpair in sub_lines if lpair.ln >= fileinfo.startln]
+
+    matched_lines: list[LineTuple] = [
+        lpair for lpair in filter(lambda x: regex_variables.search(x.line), lines)
+    ]
 
     # Loop through subroutine line by line starting after the associate clause
-    active_vars = []
-    ct = startline
-    while ct < endline:
-        line = lines[ct]
-        line = line.split("!")[0].strip().lower()
-        if not line:
-            ct += 1
-            continue
-        match_var = regex_variables.findall(line)
+    active_vars: set[str] = set()
+    for lpair in matched_lines:
+        match_var = regex_variables.findall(lpair.line)
         for var in match_var:
             if var not in active_vars:
-                active_vars.append(var)
-        ct += 1
+                active_vars.add(var)
     return active_vars
 
 
@@ -67,14 +54,11 @@ def determine_global_variable_status(
     all_subs: Dict[str, Subroutine] = {}
     for sub in subroutines.values():
         all_subs[sub.name] = sub
-        # for child_sub in sub.child_Subroutine.values():
-        #     if child_sub.name not in all_subs:
-        #         all_subs[child_sub.name] = child_sub
 
     # Create dict of modules containing unit-test subroutines
     test_modules: Dict[str, FortranModule] = {}
     for sub in all_subs.values():
-        modln, modname = get_module_name_from_file(sub.filepath)
+        modname = sub.module
         sub_mod = mod_dict[modname]
         if modname not in test_modules:
             sub_mod.sort_used_variables(mod_dict)

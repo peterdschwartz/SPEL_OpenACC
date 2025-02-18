@@ -1,5 +1,3 @@
-import sys
-
 import scripts.fortran_parser.tokens as tokens
 
 
@@ -110,6 +108,8 @@ class Lexer:
                 tok = new_token(tokens.TokenTypes.NEWLINE, self.ch)
             case ":":
                 tok = new_token(tokens.TokenTypes.COLON, self.ch)
+            case "%":
+                tok = new_token(tokens.TokenTypes.PERCENT, self.ch)
             case _:
                 cur_ch = self.ch
                 if cur_ch.isalpha() or cur_ch == "_":

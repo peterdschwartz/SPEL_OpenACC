@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 from collections import namedtuple
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import NamedTuple, Optional
+from typing import Any, NamedTuple, Optional, Tuple
 
 from scripts.utilityFunctions import Variable
 
@@ -34,6 +36,7 @@ class IdentKind(Enum):
     prefix = 5
     slice = 6
     literal = 7
+    field = 8
 
 
 @dataclass
@@ -83,8 +86,11 @@ class CallDesc:
     locals: list[ArgVar]
     dummy_args: list[ArgVar]
 
-    def to_dict(self):
-        return asdict(self)
+    def to_dict(self, long=False):
+        if long:
+            return asdict(self)
+        else:
+            return {k: v for k, v in asdict(self).items() if k not in ["args"]}
 
     def aggregate_vars(self) -> None:
         """
@@ -161,11 +167,16 @@ class ReadWrite(object):
         return f"{self.status}@L{self.ln}"
 
 
-class SubroutineCall(namedtuple("SubroutineCall", ["subname", "args", "ln"])):
+class SubroutineCall:
     """
     namedtuple to log the subroutines called and their arguments
     to properly match read/write status of variables.
     """
+
+    def __init__(self, subname, args, ln):
+        self.subname: str = subname
+        self.args: list[Any] = args
+        self.ln: int = ln
 
     def __eq__(self, other):
         return (
@@ -176,3 +187,73 @@ class SubroutineCall(namedtuple("SubroutineCall", ["subname", "args", "ln"])):
 
     def __str__(self):
         return f"{self.subname}@{self.ln} ({self.args})"
+
+    def __repr__(self):
+        return str(self)
+
+
+class CallTuple(NamedTuple):
+    nested: int
+    subname: str
+
+
+class CallTree:
+    """
+    Represents node for subroutine and function calls in a call Tree
+    """
+
+    def __init__(self, node):
+        self.node: CallTuple = node
+        self.children: list[CallTree] = []
+        self.parent: Optional[CallTree] = None
+
+    def add_child(self, child: CallTree):
+        child.parent = self
+        self.children.append(child)
+
+    def traverse_preorder(self):
+        """Pre-order traversal (node -> children)."""
+        yield self
+        for child in self.children:
+            yield from child.traverse_preorder()
+
+    def traverse_postorder(self):
+        """Post-order traversal (children -> node)."""
+        for child in self.children:
+            yield from child.traverse_postorder()
+        yield self
+
+    def __repr__(self):
+        return f"CallTree({self.node.subname}, children={len(self.children)})"
+
+    def print_tree(self, level: int = 0):
+        """Recursively prints the tree in a hierarchical format."""
+        if level == 0:
+            print("CallTree for ", self.node.subname)
+        indent = "|--" * level
+        print(f"{indent}>{self.node.subname}")
+
+        for child in self.children:
+            child.print_tree(level + 1)
+
+    def remove(self):
+        """
+        Removes this node from the tree by reattaching its children to its parent.
+        Raises a ValueError if attempting to remove the root node.
+        -- self must be a child node!
+        """
+        if self.parent is None:
+            raise ValueError("CallTree:::Cannot remove the root node.")
+
+        parent = self.parent
+        index = parent.children.index(self)
+
+        # Update parent references for this node's children.
+        for child in self.children:
+            child.parent = parent
+
+        # Short-hand slice syntax to replace child node with it's children
+        parent.children[index : index + 1] = self.children
+
+        self.children = []
+        self.parent = None
