@@ -11,4 +11,14 @@ urlpatterns = [
     path("table/<str:table_name>", views.view_table, name="view_table"),
     path("query/<str:table_name>", views.fake, name="spec"),
     path("query", views.query, name="query"),
+    path(
+        "subroutine-details/<str:subroutine_name>/",
+        views.subroutine_details,
+        name="subroutine_details",
+    ),
+    path(
+        "type-details/<str:type_name>/",
+        views.type_details,
+        name="type_details",
+    ),
 ]

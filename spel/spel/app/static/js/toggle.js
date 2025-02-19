@@ -29,7 +29,18 @@ document.addEventListener("DOMContentLoaded", (event) => {
 
 // Attach listeners after HTMX updates (if HTMX is used)
 document.body.addEventListener('htmx:afterSwap', () => {
-    console.log("HTMX content swapped. Attaching toggle listeners.");
+    console.log("HTMX content swapped.");
+
+    console.log("event:");
+    if (event.detail.target.id === "modalContent") {
+        console.log("Showing Modal")
+        document.getElementById("modalOverlay").style.display = 'flex';
+    }
     attachToggleListeners();
+});
+
+// Hide the modal if the overlay is clicked.
+document.getElementById("modalOverlay").addEventListener("click", function() {
+    this.style.display = "none";
 });
 

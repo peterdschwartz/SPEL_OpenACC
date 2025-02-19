@@ -78,6 +78,7 @@ def get_module_calltree(mod_name):
     return json.dumps(r)
 
 
+
 def get_subroutine_details(instance, member, mode):
     from django.db.models import F
 
@@ -128,7 +129,6 @@ def get_subroutine_details(instance, member, mode):
             m=F("member__member_name"),
             rw=F("status"),
         )
-    # Extract the subroutine names
     return results
 
 

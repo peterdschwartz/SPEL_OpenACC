@@ -147,24 +147,14 @@ class Modules(models.Model):
         db_table = "modules"
 
 
-class SubroutineActiveGlobalVars(models.Model):
-    objects = models.Manager()
-    variable_id = models.AutoField(primary_key=True, default=1)
-    subroutine = models.ForeignKey("Subroutines", on_delete=models.CASCADE, default=1)
-    instance = models.ForeignKey(
-        "UserTypeInstances", models.DO_NOTHING, blank=True, null=True
-    )
-    member = models.ForeignKey("TypeDefinitions", models.DO_NOTHING, default=1)
-    status = models.CharField(max_length=2, default="xx")
-
-    class Meta:
-        db_table = "subroutine_active_global_vars"
-        unique_together = (("instance", "member", "subroutine"),)
-
-
 class SubroutineArgs(models.Model):
     arg_id = models.AutoField(primary_key=True)
-    subroutine = models.ForeignKey("Subroutines", models.CASCADE, default=1)
+    subroutine = models.ForeignKey(
+        "Subroutines",
+        models.CASCADE,
+        related_name="subroutine_args",
+        default=1,
+    )
     arg_type = models.CharField(max_length=100)
     arg_name = models.CharField(max_length=100)
     dim = models.IntegerField()
@@ -179,12 +169,13 @@ class SubroutineCalltree(models.Model):
     parent_subroutine = models.ForeignKey(
         "Subroutines",
         on_delete=models.CASCADE,
+        related_name="parent_subroutine",
         default=1,
     )
     child_subroutine = models.ForeignKey(
         "Subroutines",
         on_delete=models.CASCADE,
-        related_name="subroutinecalltree_child_subroutine_set",
+        related_name="child_subroutine",
         default=1,
     )
 
@@ -193,8 +184,14 @@ class SubroutineCalltree(models.Model):
 
 
 class SubroutineLocalArrays(models.Model):
+    objects = models.Manager()
     local_arry_id = models.AutoField(primary_key=True)
-    subroutine = models.ForeignKey("Subroutines", on_delete=models.CASCADE, default=1)
+    subroutine = models.ForeignKey(
+        "Subroutines",
+        on_delete=models.CASCADE,
+        default=1,
+        related_name="subroutine_locals",
+    )
     array_name = models.CharField(max_length=100)
     dim = models.IntegerField()
 
@@ -203,9 +200,15 @@ class SubroutineLocalArrays(models.Model):
 
 
 class Subroutines(models.Model):
+    objects = models.Manager()
     subroutine_id = models.AutoField(primary_key=True)
     subroutine_name = models.CharField(unique=True, max_length=100)
-    module = models.ForeignKey(Modules, on_delete=models.CASCADE, default=1)
+    module = models.ForeignKey(
+        Modules,
+        on_delete=models.CASCADE,
+        related_name="subroutine_module",
+        default=1,
+    )
 
     class Meta:
         db_table = "subroutines"
@@ -214,10 +217,47 @@ class Subroutines(models.Model):
         return f"{self.subroutine_name}"
 
 
+class SubroutineActiveGlobalVars(models.Model):
+    objects = models.Manager()
+    variable_id = models.AutoField(primary_key=True, default=1)
+    subroutine = models.ForeignKey(
+        "Subroutines",
+        on_delete=models.CASCADE,
+        related_name="subroutine_dtype_vars",
+        default=1,
+    )
+    instance = models.ForeignKey(
+        "UserTypeInstances",
+        models.DO_NOTHING,
+        related_name="active_instances",
+        blank=True,
+        null=True,
+    )
+    member = models.ForeignKey(
+        "TypeDefinitions",
+        models.DO_NOTHING,
+        default=1,
+        related_name="active_member",
+    )
+    status = models.CharField(max_length=2, default="xx")
+
+    class Meta:
+        db_table = "subroutine_active_global_vars"
+        unique_together = (("instance", "member", "subroutine"),)
+
+
 class TypeDefinitions(models.Model):
     define_id = models.AutoField(primary_key=True)
-    module = models.ForeignKey(Modules, models.DO_NOTHING)
-    user_type = models.ForeignKey("UserTypes", models.DO_NOTHING)
+    module = models.ForeignKey(
+        Modules,
+        models.DO_NOTHING,
+        related_name="type_def_module",
+    )
+    user_type = models.ForeignKey(
+        "UserTypes",
+        models.DO_NOTHING,
+        related_name="user_type_def",
+    )
     member_type = models.CharField(max_length=100)
     member_name = models.CharField(max_length=100)
     dim = models.IntegerField()
@@ -232,7 +272,11 @@ class TypeDefinitions(models.Model):
 
 class UserTypeInstances(models.Model):
     instance_id = models.AutoField(primary_key=True)
-    instance_type = models.ForeignKey("UserTypes", models.DO_NOTHING)
+    instance_type = models.ForeignKey(
+        "UserTypes",
+        models.DO_NOTHING,
+        related_name="instance_type",
+    )
     instance_name = models.CharField(max_length=100)
 
     class Meta:
@@ -242,7 +286,11 @@ class UserTypeInstances(models.Model):
 
 class UserTypes(models.Model):
     user_type_id = models.AutoField(primary_key=True)
-    module = models.ForeignKey(Modules, models.DO_NOTHING)
+    module = models.ForeignKey(
+        Modules,
+        models.DO_NOTHING,
+        related_name="user_type_module",
+    )
     user_type_name = models.CharField(unique=True, max_length=100)
 
     class Meta:

@@ -1,5 +1,6 @@
 from django import template
 from django.db import connection, models
+from django.db.models.query import Prefetch
 from django.shortcuts import HttpResponse, render
 from django.views.decorators.http import require_http_methods
 
@@ -177,9 +178,7 @@ def execute(statement):
 def modules_calltree(request):
     if request.method == "POST":
         data = request.POST.get("mod")
-
         tree = get_module_calltree(data)
-
     else:
         return render(request, "modules_calltree.html", {})
 
@@ -229,14 +228,27 @@ def process_node(node: Node):
 
     if node.children:
         html += f'<li><span class="box">{node.name}</span>'
+        html += add_details_btn(node.name)
         html += '<ul class="child">'
         for child in node.children:
             html += process_node(child)
         html += "</ul>"
         html += "</li>"
     else:
-        html += f'<li class="parent">{node.name}</li>'
+        html += f'<li><span class="parent">{node.name}</span>'
+        html += add_details_btn(node.name)
+        html += "</li>"
 
+    return html
+
+
+def add_details_btn(name: str) -> str:
+    """
+    Adds html for button that sends requests via htmx
+    """
+    html = f'<button class="details-btn" aria-label="View Details" hx-get="/subroutine-details/{name}/" '
+    html += 'hx-target="#modalContent" hx-trigger="click" hx-swap="innerHTML">'
+    html += "</button>"
     return html
 
 
@@ -253,7 +265,6 @@ def view_table(request, table_name):
 
     model = table["name"]
     display_fields = table["fields"]
-    print(table)
     title = table["title"]
     if request.method == "POST":
         sort_by = request.POST.get("sort_by", None)
@@ -295,6 +306,69 @@ def view_table(request, table_name):
         return render(request, "partials/dynamic_table.html", context)
 
     return render(request, "partials/table_view.html", context)
+
+
+def type_details(request, type_name):
+
+    context = {"type_name": type_name, "details": "Testing type details"}
+
+    return render(
+        request,
+        "partials/type_details.html",
+        context,
+    )
+
+
+def subroutine_details(request, subroutine_name):
+
+    subroutine = (
+        Subroutines.objects.filter(subroutine_name=subroutine_name)
+        .select_related("module")
+        .prefetch_related(
+            Prefetch(
+                "parent_subroutine",
+                queryset=SubroutineCalltree.objects.filter(
+                    parent_subroutine__subroutine_name=subroutine_name
+                ),
+            )
+        )
+        .first()
+    )
+
+    if subroutine:
+        module = subroutine.module.module_name
+        args = [
+            (v.arg_type, v.arg_name, v.dim) for v in subroutine.subroutine_args.all()
+        ]
+        callees = {
+            f"{s.child_subroutine.module.module_name}::{s.child_subroutine.subroutine_name}"
+            for s in subroutine.parent_subroutine.all()
+        }
+        dtype_vars = [
+            (
+                v.instance.instance_type.user_type_name,
+                f"{v.instance.instance_name}%{v.member.member_name}",
+                v.status,
+            )
+            for v in subroutine.subroutine_dtype_vars.all()
+        ]
+        dtype_vars.sort(key=lambda x: x[1])
+
+        context = {
+            "subroutine": subroutine.subroutine_name,
+            "module": module,
+            "args": args,
+            "callees": callees,
+            "dtype_vars": dtype_vars,
+        }
+
+        return render(
+            request,
+            "partials/subroutine_details.html",
+            context,
+        )
+    else:
+        return HttpResponse(b"Subroutine not found.", status=404)
 
 
 def home(request):
