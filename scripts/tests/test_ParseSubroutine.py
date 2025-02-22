@@ -53,7 +53,7 @@ def test_Functions():
                 assert ans == comp, f"Failed for function: {key}"
 
 
-def test_getArguments():
+def test_getArguments(subtests):
     """
     Test for parsing function/subroutine calls
     """
@@ -69,8 +69,62 @@ def test_getArguments():
         from scripts.mod_config import scripts_dir
         from scripts.variable_analysis import determine_global_variable_status
 
+        expected_arg_status = {
+            "test_parsing_sub": {
+                "bounds": "r",
+                "bounds%begg": "r",
+                "bounds%endg": "r",
+                "var1": "r",
+                "var2": "r",
+                "var3": "rw",
+                "input4": "rw",
+            },
+            "add": {
+                "x": "r",
+                "y": "rw",
+            },
+            "ptr_test_sub": {
+                "numf": "-",
+                "soilc": "-",
+                "arr": "w",
+            },
+            "tridiagonal_sr": {
+                "bounds": "r",
+                "bounds%begc": "r",
+                "bounds%endc": "r",
+                "lbj": "r",
+                "ubj": "r",
+                "jtop": "r",
+                "numf": "r",
+                "filter": "r",
+                "a": "r",
+                "b": "r",
+                "c": "r",
+                "r": "r",
+                "u": "w",
+                "is_col_active": "r",
+            },
+            "call_sub": {
+                "numf": "r",
+                "bounds": "r",
+                "bounds%begc": "r",
+                "bounds%endc": "r",
+                "mytype": "w",
+                "mytype%field2": "w",
+                "mytype%field1": "w",
+            },
+            "col_nf_init": {
+                "begc": "r",
+                "endc": "r",
+                "this": "w",
+                "this%hrv_deadstemn_to_prod100n": "w",
+                "this%hrv_deadstemn_to_prod10n": "w",
+                "this%m_n_to_litr_lig_fire": "w",
+                "this%m_n_to_litr_met_fire": "w",
+            },
+        }
+
         dg.populate_interface_list()
-        print("init interface list", dg.interface_list)
         fn = f"{scripts_dir}/tests/example_functions.f90"
         mod_dict: dict[str, FortranModule] = {}
         main_sub_dict: dict[str, Subroutine] = {}
@@ -92,12 +146,15 @@ def test_getArguments():
             s: main_sub_dict[s] for s in sub_name_list
         }
 
-        determine_global_variable_status(mod_dict, subroutines)
+        determine_global_variable_status(mod_dict, main_sub_dict)
 
         type_dict: dict[str, DerivedType] = {}
         for mod in mod_dict.values():
             for utype, dtype in mod.defined_types.items():
                 type_dict[utype] = dtype
+
+        for dtype in type_dict.values():
+            dtype.find_instances(mod_dict)
 
         instance_to_user_type = {}
         instance_dict: dict[str, DerivedType] = {}
@@ -127,8 +184,17 @@ def test_getArguments():
             )
 
             if sub.abstract_call_tree:
-                for node in sub.abstract_call_tree.traverse_postorder():
-                    print(node)
+                for tree in sub.abstract_call_tree.traverse_postorder():
+                    subname = tree.node.subname
+                    childsub = main_sub_dict[subname]
+                    if not childsub.args_analyzed:
+                        childsub.parse_arguments(main_sub_dict, type_dict)
+                        test_dict = {
+                            k: rw.status
+                            for k, rw in childsub.arguments_read_write.items()
+                        }
+                        with subtests.test(msg=subname):
+                            assert expected_arg_status[subname] == test_dict
 
 
 def test_arg_intent():
@@ -138,8 +204,7 @@ def test_arg_intent():
         import scripts.dynamic_globals as dg
         from scripts.analyze_subroutines import Subroutine
         from scripts.edit_files import process_for_unit_test
-        from scripts.fortran_modules import (FortranModule,
-                                             get_module_name_from_file)
+        from scripts.fortran_modules import FortranModule, get_module_name_from_file
         from scripts.mod_config import scripts_dir
 
         dg.populate_interface_list()

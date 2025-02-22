@@ -13,17 +13,18 @@ from scripts.fortran_parser.environment import Environment
 from scripts.fortran_parser.evaluate import regex_ignore
 from scripts.fortran_parser.tracing import Trace
 from scripts.helper_functions import (ReadWrite, SubroutineCall,
-                                      determine_argvar_status,
+                                      analyze_sub_variables, check_arguments,
+                                      combine_status, determine_argvar_status,
                                       determine_level_in_tree,
                                       determine_variable_status,
-                                      find_child_subroutines,
+                                      find_child_subroutines, is_derived_type,
                                       summarize_read_write_status,
                                       trace_derived_type_arguments)
 from scripts.interfaces import determine_arg_name, resolve_interface
 from scripts.LoopConstructs import Loop, exportVariableDependency
 from scripts.mod_config import _bc, _no_colors, spel_dir
 from scripts.process_associate import getAssociateClauseVars
-from scripts.types import CallDesc, CallTree, FileInfo, LineTuple
+from scripts.types import ArgLabel, CallDesc, CallTree, FileInfo, LineTuple
 from scripts.utilityFunctions import (Variable, determine_filter_access,
                                       find_file_for_subroutine,
                                       get_interface_list, getArguments,
@@ -120,7 +121,7 @@ class Subroutine(object):
         self.class_type: Optional[str] = None
 
         # Create another argument dict that stores the read,write status of them:
-        self.arguments_read_write: dict[str,ReadWrite] = {}
+        self.arguments_read_write: dict[str, ReadWrite]= {}
 
         # Store when the arguments/local variable declarations start and end
         self.var_declaration_startl: int = 0
@@ -133,8 +134,12 @@ class Subroutine(object):
 
         # Process the Associate Clause
         self.associate_vars: dict[str,str] = {}
+        self.reverse_associate_map: dict[str,str] = {}
+        self.ptr_vars: dict[str, str] = {}
+
         self.associate_start: int = -1
         self.associate_end: int = -1
+
         self.dummy_args_list: List[str] = []
         self.return_type = function.return_type if function else ""
         self.result_name = function.result if function else ""
@@ -148,6 +153,7 @@ class Subroutine(object):
             self.associate_vars, jstart, jend = getAssociateClauseVars(self)
             self.associate_start = jstart
             self.associate_end = jend
+            self.reverse_associate_map = {val : key for key, val in self.associate_vars.items()}
 
             self.dummy_args_list = self._get_dummy_args()
             getLocalVariables(self, verbose=verbose)
@@ -180,7 +186,7 @@ class Subroutine(object):
 
         self.subroutine_call: List[SubroutineCall] = []
         self.child_subroutines: dict[str, Subroutine] = {}
-        self.sub_call_desc: dict[str,CallDesc] = {}
+        self.sub_call_desc: dict[int,CallDesc] = {}
 
         self.DoLoops = []
 
@@ -194,6 +200,7 @@ class Subroutine(object):
         self.acc_status: bool = False
         self.analyzed_child_subroutines: bool = False
         self.preprocessed : bool = False
+        self.args_analyzed: bool = False
 
         self.environment: Optional[Environment] = None
 
@@ -346,7 +353,7 @@ class Subroutine(object):
             inst = regex_paren.sub("(index)", inst)
             return f"{inst}%{field}"
 
-        local_and_args_dict = self.LocalVariables['arrays'] | self.LocalVariables['scalars']
+        local_and_args_dict = self.Arguments | self.LocalVariables['arrays'] | self.LocalVariables['scalars']
         is_arg_or_local = check_local_decls(local_and_args_dict)
 
         dtype_vars: dict[str,Variable] = {}
@@ -389,7 +396,8 @@ class Subroutine(object):
             gv = gv.strip()
             if gv in self.associate_vars:
                 gv = self.associate_vars[gv]
-            self.associate_vars.setdefault(ptrname, []).append(gv)
+            self.ptr_vars[gv] = ptrname
+
         return None
 
 
@@ -415,7 +423,9 @@ class Subroutine(object):
         while ln < len(lines):
             full_line, new_ln = line_unwrapper(lines, ln)
             if(full_line):
-                fline_list.append(LineTuple(line=full_line,ln=ln))
+                statements = full_line.split(";")
+                for stmt in statements:
+                    fline_list.append(LineTuple(line=stmt.strip(),ln=ln))
             ln = new_ln + 1
 
         fline_list = [ LineTuple(line=f.line,ln=f.ln+fileinfo.startln) for f in fline_list ]
@@ -655,29 +665,23 @@ class Subroutine(object):
         # Checks for local variables used as targets
         regex_ptr_simple = re.compile(r"\w+\s*(=>)\s*\w+")
 
-        call_lns = [desc.ln for desc in self.sub_call_desc.values()]
 
-        sub_lines = self.sub_lines
-        sub_lines = [ lpair for lpair in sub_lines if lpair.ln >= startline ]
+        sub_lines = [ lpair for lpair in self.sub_lines if lpair.ln >= startline ]
 
         # dtype_accessed is a dictonary to keep track of derived type vars accessed in the subroutine.
         #        {'inst%component' : [ list of ReadWrite ] }
         dtype_accessed: dict[str,list[ReadWrite]] = {}
         user_type_args = {}
-        ct: int = startline
-        while ct < endline:
-            call_ln = ct
-            match_call: bool = True if call_ln in call_lns else False
-            line, ct = line_unwrapper(lines, ct)
-            line = line.strip().lower()
+        for line in sub_lines:
+            match_call: bool = line.ln in self.sub_call_desc
 
             # Get list of all global variables used in this line and for arrays, remove index
-            match_var = regex_dtype_var.findall(line)
+            match_var = regex_dtype_var.findall(line.line)
             arr_of_structs = [regex_paren.sub('',mvar) for mvar in match_var]
 
             # Solution to avoid replacing regex in other functions for now?
             for i,mvar in enumerate(match_var):
-                line = line.replace(mvar, arr_of_structs[i])
+                line.line = line.line.replace(mvar, arr_of_structs[i])
             match_var = arr_of_structs.copy()
 
             if not match_call:
@@ -693,34 +697,30 @@ class Subroutine(object):
                         }
                         user_type_args.update(temp)
 
-                    m_ptr_local = regex_ptr_simple.search(line)
+                    m_ptr_local = regex_ptr_simple.search(line.line)
                     if(m_ptr_local):
                         print(_bc.OKGREEN+"Line is assoicating ptr - Do not parse"+_bc.ENDC)
                     else:
                         dtype_accessed = determine_variable_status(
-                            match_var, line, ct, dtype_accessed, verbose=verbose
+                            match_var, line.line, line.ln, dtype_accessed, verbose=verbose
                         )
 
                 # Do the same for any variables in the associate clause
                 if not no_associate:
-                    match_ptrs = regex_associated_ptr.findall(line)
-                    m_ptr_local = regex_ptr_simple.search(line)
+                    match_ptrs = regex_associated_ptr.findall(line.line)
+                    m_ptr_local = regex_ptr_simple.search(line.line)
                     if match_ptrs and not m_ptr_local:
                         dtype_accessed = determine_variable_status(
-                            match_ptrs, line, ct, dtype_accessed
+                            match_ptrs, line.line, line.ln, dtype_accessed
                         )
             else:
                 # Found child subroutine!
                 # Dictionary that holds the global variables passed in as arguments
                 #       { 'dummy_arg' : 'global variable'}
                 vars_passed_as_args: dict[str,str] = {}
-                subname = line.split()[1].split("(")[0]
-                if regex_ignore.search(subname):
-                    ct+=1
-                    continue
 
-                call_key = f"{subname}@{call_ln}"
-                call_desc = self.sub_call_desc[call_key]
+                call_desc = self.sub_call_desc[line.ln]
+                subname = call_desc.fn
 
                 if call_desc.globals:
                     # Remove duplicates and make regex string for all matched variables
@@ -732,10 +732,10 @@ class Subroutine(object):
 
                 # Do the same for any variables in the associate clause
                 if not no_associate:
-                    match_ptrs = regex_associated_ptr.findall(line)
+                    match_ptrs = regex_associated_ptr.findall(line.line)
                     if match_ptrs:
                         match_ptrs = list(set(match_ptrs))
-                        args = getArguments(line)
+                        args = getArguments(line.line)
                         child_sub = sub_dict[subname]
                         arg_to_dtype = determine_arg_name(match_ptrs, child_sub, args)
                         vars_passed_as_args.update(
@@ -749,7 +749,7 @@ class Subroutine(object):
                         vars_as_arguments=vars_passed_as_args,
                         subname=subname,
                         sub_dict=sub_dict,
-                        linenum=ct,
+                        linenum=line.ln,
                     )
                     vars_to_update = {
                         key: dtype_accessed[key] + updated_var_status[key]
@@ -765,7 +765,6 @@ class Subroutine(object):
                             if key not in dtype_accessed
                         }
                     )
-            ct += 1
 
         if user_type_args:
             keys_to_replace = [
@@ -1670,113 +1669,65 @@ class Subroutine(object):
             print(_bc.BOLD + _bc.WARNING + "NO CHANGE" + _bc.ENDC)
         return None
 
-    def parse_arguments(self, sub_dict: dict[str,Subroutine], verbose=False):
+
+    def parse_arguments(self, sub_dict: dict[str,Subroutine], type_dict: dict[str,DerivedType],verbose=False,):
         """
         Function that will analyze the variable status for only the arguments
-            'sub.arguments_read_write' : { `arg` : `list of ReadWrite status`}
-        where,
-            ReadWrite = namedtuple("ReadWrite", ["status", "ln"])
-
-        NOTE: Ideally, this should just be a mode of the original _analyze_variables function
-              as much of it is duplicated. 1st, get this working for as intended.
-              Then do the re-factor taking care that nothing is broken in the process.
+            'sub.arguments_read_write' : { `arg` : ReadWrite}
         """
-        func_name = "parse_args::"
+        func_name = "parse_arguments::"
+        associate_set: set[str] = set()
+        var_dict = self.Arguments.copy()
 
-        args_to_match: list[str] = [
-            arg for arg, var in self.Arguments.items() if not var.intent
-        ]
-        arg_match_string = "|".join(args_to_match)
-        regex_args = re.compile(r"\b({})\b".format(arg_match_string), re.IGNORECASE)
-        regex_ptr = re.compile(r"\w+\s*(=>)\s*({})(%)\w+".format(arg_match_string))
+        for key, val in self.associate_vars.items():
+            if val.split("%")[0] in var_dict:
+                associate_set.add(key)
+        if associate_set:
+            var_inst_dict: dict[str,DerivedType] = {
+                var.name: type_dict[var.type] for var in var_dict.values() if is_derived_type(var)
+            }
+            for key in associate_set:
+                field_name = self.associate_vars[key]
+                dtype_var = get_component(var_inst_dict, field_name)
+                if dtype_var:
+                    var_dict[key] = dtype_var
 
-
-        fileinfo = self.get_file_info()
-        fn = fileinfo.fpath
-        endline: int = fileinfo.endln
-
-        arg_decl_ln = [var.ln for var in self.Arguments.values()]
-        startline = max(arg_decl_ln)
-
-        file = open(fn, "r")
-        lines = file.readlines()
-        file.close()
-
-        args_accessed: dict[str,list[ReadWrite]] = {}
-        line_num = startline
-        while line_num < endline:
-            og_ln = line_num
-            line, line_num = line_unwrapper(lines, line_num)
-            line = line.strip().lower()
-
-            # match subroutine call - will require recursive `parse_arguments`
-            match_call = re.search(r"^\s*(call) ", line)
-            match_arg_use: list[str] = regex_args.findall(line)
-
-            # Need checks to make sure we are
-            if match_arg_use:
-                if not match_call:
-                    # check if a Derived Type argument is being associated with another ptr
-                    # I do not _think_ that we need to capture this alias as in this routine
-                    # we are interested in how the argument in used.
-                    match_ptr = regex_ptr.search(line)
-                    if(match_ptr):
-                        line_num +=1
-                        continue
-
-                    match_arg_use = list(set(match_arg_use))
-                    args_accessed = determine_variable_status(
-                        match_arg_use, line, line_num, args_accessed, verbose=verbose
-                    )
-                    if not args_accessed:
-                        print(_bc.FAIL+f"{func_name}::Failed to finds args ", match_arg_use,_bc.ENDC)
-                        print(self.name,line_num, line)
-                        sys.exit(1)
-
-                else:
-                    # Case of argument being passed to another subroutine:
-                    subname: str = line.split()[1].split("(")[0]
-                    child_sub: Subroutine = sub_dict[subname]
-                    if not child_sub.arguments_read_write:
-                        child_sub.parse_arguments(sub_dict, verbose=verbose)
-
-                    new_passed_args = getArguments(line)
-
-                    arg_to_dtype = determine_arg_name(
-                        match_arg_use, child_sub, new_passed_args
-                    )
-
-                    inactive_args = [
-                        arg_var.ptr
-                        for arg_var in arg_to_dtype
-                        if arg_var.ptr not in child_sub.arguments_read_write.keys()
-                    ]
-                    if inactive_args:
-                        arg_to_dtype = [
-                            arg for arg in arg_to_dtype 
-                            if arg.ptr not in inactive_args
-                        ]
-                    for arg_var in arg_to_dtype:
-                        argname = arg_var.ptr
-                        dtypename = arg_var.obj
-                        arg_status = child_sub.arguments_read_write[argname].status
-                        if(isinstance(arg_status, ReadWrite)):
-                            print(f"ERROR:{argname} has nested ReadWrite from {child_sub.name}")
-                            sys.exit()
-                        arg_status = ReadWrite(status=arg_status, ln=line_num)
-                        args_accessed.setdefault(dtypename, []).append(arg_status)
-            line_num += 1
+        args_accessed = analyze_sub_variables(
+            self,
+            sub_dict,
+            var_dict,
+            mode=ArgLabel.dummy,
+            verbose=verbose,
+        )
+        # Substitute any associated pointer names
+        for key in associate_set:
+            full_name = self.associate_vars[key]
+            ptr_status = args_accessed.pop(key)
+            args_accessed.setdefault(full_name,[]).extend(ptr_status)
 
         # All args should have been processed. Store information into Subroutine
         arg_status_summary = summarize_read_write_status(args_accessed)
         for arg, status in arg_status_summary.items():
             self.arguments_read_write[arg] = ReadWrite(status, -999)
+            if '%' in arg:
+                inst,_ = arg.split('%')
+                if inst not in self.arguments_read_write:
+                    self.arguments_read_write[inst] = ReadWrite(status, -999)
+                else:
+                    val = self.arguments_read_write[inst].status
+                    cstat = combine_status(status, val)
+                    self.arguments_read_write[inst].status = cstat
 
-        if not self.arguments_read_write:
+        if not self.arguments_read_write and not self.Arguments:
             print(f"{func_name}::ERROR: Failed to analyze arguments for {self.name}")
             sys.exit(1)
+
+        for arg in self.Arguments:
+            if arg not in self.arguments_read_write:
+                self.arguments_read_write[arg] = ReadWrite('-',-999)
         return None
-    
+
+
     def print_elmtype_access(self):
         """
         Function to print the read/write status of all derived type members

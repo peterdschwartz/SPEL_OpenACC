@@ -83,7 +83,25 @@ MODULE shr_const_mod
    ! For best numerics in CAM5
    real(R8),parameter :: SHR_CONST_RSTD_H2ODEV   = 1.0_R8      ! Rstd Dev Use
 
+  type, public :: test_type
+    real(r8) :: field1(:)
+    real(r8) :: field2(:)
+    integer  :: active
+    contains 
+    procedure, public :: Init => test_init
+  end type test_type
+
 contains
+
+  subroutine test_init(this,begc,endc)
+    class(test_type), INTENT(INOUT) :: this
+    integer , intent(in) :: begc, endc
+
+    allocate(this%field1(begc:endc))
+    allocate(this%field2(begc:endc))
+    this%active = 1
+
+  end subroutine test_init
 
 !-----------------------------------------------------------------------------
 

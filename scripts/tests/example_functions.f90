@@ -135,7 +135,7 @@ contains
       type(bounds_type), intent(in) :: bounds
       real(r8), INTENT(IN) :: var1
       real(r8), INTENT(IN) :: var2(bounds%begg:)
-      real(r8), INTENT(IN) :: var3
+      real(r8), INTENT(inout) :: var3
       logical  :: input4
 
       integer :: x, y, g
@@ -152,9 +152,12 @@ contains
 
    end subroutine test_parsing_sub
 
-   subroutine call_sub(numf, bounds)
+   subroutine call_sub(numf, bounds, mytype)
+      use shr_const_mod, only : test_type
+
       integer, intent(in) :: numf
       type(bounds_type), intent(in) :: bounds
+      type(test_type), INTENT(INOUT) :: mytype
 
       real(r8) :: input1, input2(bounds%begg:bounds%endg), input3
       real(r8) :: local_var
@@ -169,7 +172,8 @@ contains
       real(r8), pointer :: test_ptr(:,:)
 
       associate( &
-        hrv_deadstemn_to_prod10n  => col_nf%hrv_deadstemn_to_prod10n &
+        hrv_deadstemn_to_prod10n  => col_nf%hrv_deadstemn_to_prod10n, &
+        field1 => mytype%field1 &
       )
 
       i_type = 1
@@ -183,6 +187,10 @@ contains
 
       filter(i_type)%num_soilc = 10
       filter(i_type)%soilc(:) = 4
+
+      mytype%field2(:) = test_ptr(:,1)
+
+      field1(c) = shr_const_pi*mytype%field2(c)
 
       call test_parsing_sub(bounds, max(input1*shr_const_pi, local_var+input2(g)), &
          col_nf%m_n_to_litr_met_fire(c,1:N), landunit_is_special(g),var3=input3+1)

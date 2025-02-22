@@ -94,7 +94,7 @@ def main() -> None:
     # Retrieve possible interfaces
     dg.populate_interface_list()
     # Initialize dictionary that will hold instance of all subroutines encountered.
-    main_sub_dict = {}
+    main_sub_dict: dict[str, Subroutine] = {}
 
     # Initialize lists that will hold global variables based on read/write status
     read_types = []
@@ -127,7 +127,6 @@ def main() -> None:
             subroutines[s] = main_sub_dict[s]
             subroutines[s].unit_test_function = True
 
-
     if not mod_dict:
         print(f"{func_name}::Error didn't find any modules related to subroutines")
         sys.exit(1)
@@ -140,6 +139,9 @@ def main() -> None:
     for mod in mod_dict.values():
         for utype, dtype in mod.defined_types.items():
             type_dict[utype] = dtype
+
+    for dtype in type_dict.values():
+        dtype.find_instances(mod_dict)
 
     instance_to_user_type = {}
     for type_name, dtype in type_dict.items():
@@ -155,7 +157,6 @@ def main() -> None:
 
     determine_global_variable_status(mod_dict, main_sub_dict)
 
-    print("Starting Subroutine parsing!")
     for s in sub_name_list:
         sub = subroutines[s]
         sub.parse_subroutine(
@@ -171,10 +172,18 @@ def main() -> None:
         )
 
         if sub.abstract_call_tree:
-            sub.abstract_call_tree.print_tree()
-            print("postorder:")
-            for node in sub.abstract_call_tree.traverse_postorder():
-                print(node)
+            for tree in sub.abstract_call_tree.traverse_postorder():
+                subname = tree.node.subname
+                childsub = main_sub_dict[subname]
+                if not childsub.args_analyzed:
+                    childsub.parse_arguments(main_sub_dict, type_dict)
+                    test_dict = {
+                        k: rw.status
+                        for k, rw in childsub.arguments_read_write.items()
+                    }
+                    print(f"======= {subname} arg status ===============")
+                    pprint(test_dict,sort_dicts=False)
+
 
         # subroutines[s].child_subroutines_analysis(
         #     dtype_dict=type_dict, main_sub_dict=main_sub_dict, verbose=False

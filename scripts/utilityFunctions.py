@@ -5,6 +5,7 @@ have broad utility for several modules in SPEL
 
 from __future__ import annotations
 
+import copy
 import re
 import subprocess as sp
 import sys
@@ -119,6 +120,9 @@ class Variable(object):
             return f"Variable({self.type} {self.name} {self.bounds})"
         else:
             return f"Variable({self.type} {self.name})"
+    
+    def copy(self):
+        return copy.deepcopy(self)
 
     def printVariable(self, ofile=sys.stdout):
         ofile.write(f"{self}\n")

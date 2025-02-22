@@ -152,6 +152,7 @@ class FortranModule:
         self.defined_types = {}  # user types defined in the module
         self.modified = False  # if module has been through modify_file or not.
         self.variables_sorted = False
+        self.end_of_head_ln: int = 99999999
 
     def __repr__(self):
         return f"FortranModule({self.name})"

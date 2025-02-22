@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from scripts.analyze_subroutines import Subroutine
     from scripts.utilityFunctions import Variable
 
-from scripts.fortran_parser.environment import Environment
+from scripts.fortran_parser.environment import Environment, add_ptr_vars
 from scripts.fortran_parser.lexer import Lexer
 from scripts.fortran_parser.spel_parser import Parser
 from scripts.fortran_parser.tracing import Trace
@@ -62,6 +62,13 @@ class ArgTree:
 
     def __repr__(self):
         return f"ArgTree({self.node.ident}, children={len(self.children)})"
+
+    def inc_argn(self):
+        """
+        Increment argn for each node in ArgTree. Used for Class Methods
+        """
+        for node in self.traverse_preorder():
+            node.node.argn += 1
 
     def print_tree(self, level: int = 0):
         """Recursively prints the tree in a hierarchical format."""
@@ -239,17 +246,18 @@ def parse_subroutine_call(
 
     arg_desc_list = create_arg_descr(arg_tree, env)
 
-    sort_variables(sub, arg_tree, arg_desc_list)
 
     if sub_name in ilist:
         fn = resolve_interface2(sub_name, arg_desc_list, sub_dict) 
     elif "%" in sub_name:
-        fn = resolve_class_method(sub_name, instance_dict)
+        fn = resolve_class_method(sub_name, instance_dict, arg_desc_list, arg_tree)
     else:
         fn = sub_name
     if not fn:
         print(f"Error - couldn't resolve interface or class method {sub_name}")
         sys.exit(1)
+
+    sort_variables(sub, arg_tree, arg_desc_list)
 
     return CallDesc(alias=sub_name,
                     fn=fn,
@@ -259,11 +267,49 @@ def parse_subroutine_call(
                     locals=[],
                     dummy_args=[])
 
-def resolve_class_method(subname: str, inst_dict: dict[str,DerivedType], )->str:
-    inst_var, method = subname.split('%')
-    dtype = inst_dict[inst_var]
-    return dtype.procedures[method]
+def resolve_class_method(
+    subname: str,
+    inst_dict: dict[str,DerivedType],
+    arg_desc_list: list[ArgDesc],
+    tree: list[ArgTree],
+)->str:
+    """
+    Function that returns the name of the class method.
+    Side-effects:
+        New arg_desc is added for class var, and the argn's are incremented
+    """
+    inst_name, method = subname.split('%')
+    dtype = inst_dict[inst_name]
+    for arg in arg_desc_list:
+        arg.increment_arg_number()
 
+    class_arg_node = ArgNode(
+        argn=0,
+        ident=inst_name,
+        kind=IdentKind.variable,
+        nested_level=0,
+        node={"Node":"Ident", "Val": inst_name},
+    )
+    for branch in tree:
+        branch.inc_argn()
+
+    cl_tree = ArgTree(class_arg_node)
+    tree.insert(0, cl_tree)
+
+    arg_type = ArgType(datatype=dtype.type_name, dim=0)
+    class_arg_desc = ArgDesc(argn=0,
+                       intent='',
+                       keyword=False,
+                       key_ident='',
+                       argtype=arg_type,
+                       locals=[],
+                       globals=[],
+                       dummy_args=[],
+                       )
+
+    arg_desc_list.insert(0,class_arg_desc)
+
+    return dtype.procedures[method]
 
 def create_environment(
     sub: Subroutine,
@@ -277,44 +323,58 @@ def create_environment(
     intrinsic_types = ["real", "integer", "character", "logical"]
     local_vars: dict[str,Variable] = sub.LocalVariables["scalars"] | sub.LocalVariables["arrays"]
 
-    for ptr, gv in sub.associate_vars.items():
-        if isinstance(gv,list):
-            gv = gv[0]
-        sub.dtype_vars[ptr] = sub.dtype_vars[gv]
+    for ptr, gv_key in sub.associate_vars.items():
+        if gv_key in sub.dtype_vars:
+            sub.dtype_vars[ptr] = sub.dtype_vars[gv_key]
 
     variables: dict[str, Variable] = (
         sub.dtype_vars
         | sub.active_global_vars
         | local_vars
     )
+    global_dict: dict[str,Variable] = sub.dtype_vars | sub.active_global_vars
 
+    # Local Variables
     dtype_locals: list[Variable] = [ var for var in local_vars.values()
         if var.type not in intrinsic_types
     ]
 
     expanded_dtypes = expand_dtype(dtype_locals, type_dict)
     variables.update(expanded_dtypes)
+
     local_dict: dict[str,Variable] = expanded_dtypes | local_vars
 
+    # Argument Variables
     dtype_args: list[Variable] = [
         var for var in sub.Arguments.values() if var.type not in intrinsic_types
     ]
     expanded_dtypes = expand_dtype(dtype_args, type_dict)
+
+    # Add associated names for argument derived types to expanded arg dict.
+    for ptr, var in sub.associate_vars.items():
+        gv_key = var[0] if isinstance(var,list) else var
+        if gv_key in expanded_dtypes:
+            expanded_dtypes[ptr] = expanded_dtypes[gv_key]
+
     variables.update(expanded_dtypes)
     variables.update(sub.Arguments)
+
     dummy_dict: dict[str,Variable] = expanded_dtypes | sub.Arguments
 
-    global_dict: dict[str,Variable] = sub.dtype_vars | sub.active_global_vars
-
     instance_dict: Dict[str,DerivedType] = {}
+    inst_var_dict: Dict[str, Variable] = {}
+
+    for dtype in type_dict.values():
+        for inst_name, inst_var in dtype.instances.items():
+            if inst_name not in instance_dict:
+                instance_dict[inst_name] = dtype
+            inst_var_dict[inst_name] = inst_var
+
+    global_dict.update(inst_var_dict)
+
     for argname, arg in sub.Arguments.items():
         if arg.type in type_dict.keys():
             instance_dict[argname] = type_dict[arg.type]
-
-    for dtype in type_dict.values():
-        for inst in dtype.instances.keys():
-            if inst not in instance_dict:
-                instance_dict[inst] = dtype
 
     return Environment(variables=variables,
                        locals=local_dict,
@@ -450,7 +510,7 @@ def create_arg_descr(
     args: List[ArgDesc] = []
     for argn, tree in enumerate(arg_tree):
         arg_type = check_arg_branch(tree, env)
-        keyword = check_keyword(tree)
+        keyword = check_keyword(tree.node)
         key_ident = tree.node.node['Left'] if keyword else ''
         desc = ArgDesc(argn=argn,
                        intent='',
@@ -612,8 +672,7 @@ def adjust_dim(dim: int, branch: ArgTree) -> int:
     assert dim > 0, f"can't have negative dimension:\n {branch.node}"
     return dim
 
-def check_keyword(tree: ArgTree)->bool:
-    node = tree.node
+def check_keyword(node: ArgNode)->bool:
     if(node.kind != IdentKind.infix):
         return False
     else:

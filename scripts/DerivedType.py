@@ -1,7 +1,12 @@
+from __future__ import annotations
+
 import re
 import subprocess as sp
 import sys
-from typing import Dict, Optional
+from typing import TYPE_CHECKING, Dict, Optional
+
+if TYPE_CHECKING:
+    from scripts.fortran_modules import FortranModule
 
 import scripts.write_routines as wr
 from scripts.fortran_modules import get_module_name_from_file
@@ -72,45 +77,6 @@ def get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=Fa
         print(f"File: {ifile}, start line {ln}")
         sys.exit(1)
 
-    # Find all instances of the derived type:
-    grep = "grep -rin --exclude-dir=external_models/"
-    cmd = (
-        f'{grep} "type\s*(\s*{type_name}\s*)" {ELM_SRC}* | grep "::" | grep -v "intent"'
-    )
-    output = sp.getoutput(cmd)
-
-    regex_paren = re.compile(r"\((.+)\)")
-    #
-    # Each element in output should have the format:
-    # <filepath> : <ln> : type(<type_name>) :: <instance_name>
-    instance_list = {}
-    if output:
-        output = output.split("\n")
-        for el in output:
-            inst_name = el.split("::")[-1]
-            inst_name = inst_name.split("!")[0].strip().lower()
-
-            filepath = el.split(":")[0].strip()
-            ln = int(el.split(":")[1].strip())
-            mod_ln, module_name = get_module_name_from_file(filepath)
-
-            dim = inst_name.count(":")
-            inst_name = regex_paren.sub("", inst_name)
-
-            inst_var = Variable(
-                type=type_name,
-                name=inst_name,
-                subgrid="?",
-                ln=ln,
-                dim=dim,
-                declaration=module_name,
-            )
-            if inst_var.name not in instance_list:
-                instance_list[inst_var.name] = inst_var
-                if verbose:
-                    print(f"Adding instance {type_name} {inst_name},{dim}")
-
-    user_derived_type.instances = instance_list.copy()
 
     return user_derived_type, ct
 
@@ -158,6 +124,50 @@ class DerivedType(object):
 
     def __repr__(self):
         return f"DerivedType({self.type_name})"
+
+    def find_instances(self, mod_dict: dict[str,FortranModule]):
+        # Find all instances of the derived type:
+        grep = "grep -rin --exclude-dir=external_models/"
+        cmd = (
+            rf'{grep} "type\s*(\s*{self.type_name}\s*)" {ELM_SRC}* | grep "::" | grep -v "intent"'
+        )
+        output = sp.getoutput(cmd)
+
+        regex_paren = re.compile(r"\((.+)\)")
+        #
+        # Each element in output should have the format:
+        # <filepath> : <ln> : type(<type_name>) :: <instance_name>
+        instance_list = {}
+        if output:
+            output = output.split("\n")
+            for el in output:
+                inst_name = el.split("::")[-1]
+                inst_name = inst_name.split("!")[0].strip().lower()
+
+                filepath = el.split(":")[0].strip()
+                ln = int(el.split(":")[1].strip())
+                _, module_name = get_module_name_from_file(filepath)
+                if module_name not in mod_dict:
+                    continue
+                fort_mod = mod_dict[module_name]
+                if ln > fort_mod.end_of_head_ln:
+                    continue
+
+                dim = inst_name.count(":")
+                inst_name = regex_paren.sub("", inst_name)
+
+                inst_var = Variable(
+                    type=self.type_name,
+                    name=inst_name,
+                    subgrid="?",
+                    ln=ln,
+                    dim=dim,
+                    declaration=module_name,
+                )
+                if inst_var.name not in instance_list:
+                    instance_list[inst_var.name] = inst_var
+
+        self.instances = instance_list.copy()
 
     def _add_components(
         self,
@@ -509,12 +519,12 @@ def get_component(instance_dict: Dict[str, DerivedType], dtype_field: str)->Opti
         return None
 
 def expand_dtype(dtype_vars: list[Variable], type_dict: dict[str, DerivedType])->dict[str,Variable]:
-
     """Function to take a dtype and create a dict with a key for each var%field"""
     def adj_var_name(var,inst_var):
         dim_str = "(index)" if inst_var.dim>0 else ""
-        var.name = f"{ inst_var.name }{dim_str}%{var.name}"
-        return var
+        new_var = var.copy()
+        new_var.name = f"{ inst_var.name }{dim_str}%{var.name}"
+        return new_var
 
     result: dict[str,Variable] = {}
     for dtype_var in dtype_vars:

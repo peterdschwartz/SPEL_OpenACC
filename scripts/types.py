@@ -8,6 +8,12 @@ from typing import Any, NamedTuple, Optional, Tuple
 from scripts.utilityFunctions import Variable
 
 
+class ArgLabel(Enum):
+    dummy = 1
+    globals = 2
+    locals = 3
+
+
 class FortranTypes(Enum):
     CHAR = 1
     LOGICAL = 2
@@ -73,6 +79,21 @@ class ArgDesc:
 
     def to_dict(self):
         return asdict(self)
+
+    def increment_arg_number(self):
+        """
+        Function needed for class methods that have an implicit
+        first argument
+        """
+
+        def inc_list(argvar_list: list[ArgVar]):
+            for v in argvar_list:
+                v.node.argn += 1
+
+        self.argn += 1
+        inc_list(self.locals)
+        inc_list(self.globals)
+        inc_list(self.dummy_args)
 
 
 @dataclass
@@ -148,7 +169,10 @@ class FunctionReturn:
 # for preprocessed and original files
 PreProcTuple = namedtuple("PreProcTuple", ["cpp_ln", "ln"])
 
-LineTuple = namedtuple("LineTuple", ["line", "ln"])
+
+class LineTuple(NamedTuple):
+    line: str
+    ln: int
 
 
 class ReadWrite(object):
@@ -193,6 +217,12 @@ class SubroutineCall:
 
 
 class CallTuple(NamedTuple):
+    """
+    Fields:
+        nested
+        subname
+    """
+
     nested: int
     subname: str
 
@@ -200,6 +230,10 @@ class CallTuple(NamedTuple):
 class CallTree:
     """
     Represents node for subroutine and function calls in a call Tree
+    Fields:
+        node (CallTuple)
+        children list[CallTree]
+        parent CallTree|None
     """
 
     def __init__(self, node):

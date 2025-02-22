@@ -254,6 +254,7 @@ def get_used_mods(
         match_contains = regex_contains.search(l)
         if match_contains:
             module_head = False
+            fort_mod.end_of_head_ln = ct
             # Nothing else to check in this line
             ct += 1
             continue

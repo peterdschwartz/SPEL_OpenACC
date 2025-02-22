@@ -2,9 +2,9 @@ import re
 
 import scripts.dynamic_globals as dg
 from scripts.analyze_subroutines import Subroutine
-from scripts.fortran_parser.evaluate import parse_subroutine_call
+from scripts.fortran_parser.evaluate import check_keyword, parse_subroutine_call
 from scripts.mod_config import spel_output_dir
-from scripts.types import FunctionReturn, PreProcTuple
+from scripts.types import ArgLabel, CallDesc, FunctionReturn, PreProcTuple, ReadWrite
 from scripts.utilityFunctions import (
     check_cpp_line,
     comment_line,

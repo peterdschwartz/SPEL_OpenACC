@@ -324,7 +324,6 @@ def resolve_interface2(
 ) -> Optional[str]:
 
     iprocs = get_interface_procedures(iname)
-    print("Interface procs: ", iprocs)
 
     for proc in iprocs:
         sub = sub_dict[proc]
@@ -372,8 +371,9 @@ def compare_args(
 
 
 def get_interface_procedures(iname: str, verbose: bool = False) -> list[str]:
-    """ """
-
+    """
+    Function that finds the potential procedures of an interface
+    """
     if verbose:
         print(_bc.FAIL + f"Resolving interface for {iname}\n with args: {args}")
     cmd = f'grep -rin --exclude-dir={ELM_SRC}external_models/ -E "^[[:space:]]+(interface {iname})" {ELM_SRC}*'
