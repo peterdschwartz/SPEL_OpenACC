@@ -320,7 +320,7 @@ def create_environment(
     Package relevant variables and functions for this subroutine.
     variables are categorized as local, dummy argument, or "global"
     """
-    intrinsic_types = ["real", "integer", "character", "logical"]
+    intrinsic_types = { "real", "integer", "character", "logical" }
     local_vars: dict[str,Variable] = sub.LocalVariables["scalars"] | sub.LocalVariables["arrays"]
 
     for ptr, gv_key in sub.associate_vars.items():
@@ -371,6 +371,8 @@ def create_environment(
             inst_var_dict[inst_name] = inst_var
 
     global_dict.update(inst_var_dict)
+
+    variables.update(inst_var_dict)
 
     for argname, arg in sub.Arguments.items():
         if arg.type in type_dict.keys():
@@ -484,6 +486,16 @@ def evaluate(
                 )
             )
         case "FloatLiteral":
+            arg_tree_flat[argn].append(
+                ArgNode(
+                    argn=argn,
+                    ident=expr["Val"],
+                    kind=IdentKind.literal,
+                    nested_level=nested,
+                    node=expr,
+                )
+            )
+        case "StringLiteral":
             arg_tree_flat[argn].append(
                 ArgNode(
                     argn=argn,
@@ -669,7 +681,7 @@ def adjust_dim(dim: int, branch: ArgTree) -> int:
         if child.node.kind != IdentKind.slice:
             dim -=1
 
-    assert dim > 0, f"can't have negative dimension:\n {branch.node}"
+    assert dim >= 0, f"can't have negative dimension:\n {branch.node}"
     return dim
 
 def check_keyword(node: ArgNode)->bool:

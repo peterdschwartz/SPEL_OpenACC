@@ -1,4 +1,5 @@
 import scripts.fortran_parser.tokens as tokens
+from scripts.fortran_parser.tracing import Trace
 
 
 class Lexer:
@@ -8,6 +9,17 @@ class Lexer:
         self.read_position: int = 0
         self.ch: str = ""
         self.read_char()
+
+    @Trace.trace_decorator("read_to_delim")
+    def read_to_delim(self, delim: str):
+        """
+        Func to read to delim (i.e. '  or ") for string tokens
+        """
+        pos = self.position
+        while self.peek_char() != delim:
+            self.read_char()
+        self.read_char()
+        return self.input[pos + 1 : self.position]
 
     def read_char(self):
         if self.read_position >= len(self.input):
@@ -110,6 +122,14 @@ class Lexer:
                 tok = new_token(tokens.TokenTypes.COLON, self.ch)
             case "%":
                 tok = new_token(tokens.TokenTypes.PERCENT, self.ch)
+            case "'":
+                delim = self.ch
+                lit: str = self.read_to_delim(delim)
+                tok = new_token(tokens.TokenTypes.STRING, lit)
+            case '"':
+                delim = self.ch
+                lit: str = self.read_to_delim(delim)
+                tok = new_token(tokens.TokenTypes.STRING, lit)
             case _:
                 cur_ch = self.ch
                 if cur_ch.isalpha() or cur_ch == "_":

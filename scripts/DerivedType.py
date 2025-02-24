@@ -5,10 +5,11 @@ import subprocess as sp
 import sys
 from typing import TYPE_CHECKING, Dict, Optional
 
+import scripts.dynamic_globals as dg
+
 if TYPE_CHECKING:
     from scripts.fortran_modules import FortranModule
 
-import scripts.write_routines as wr
 from scripts.fortran_modules import get_module_name_from_file
 from scripts.mod_config import ELM_SRC, _bc, _no_colors
 from scripts.utilityFunctions import (Variable, line_unwrapper,
@@ -138,34 +139,38 @@ class DerivedType(object):
         # Each element in output should have the format:
         # <filepath> : <ln> : type(<type_name>) :: <instance_name>
         instance_list = {}
-        if output:
-            output = output.split("\n")
-            for el in output:
-                inst_name = el.split("::")[-1]
-                inst_name = inst_name.split("!")[0].strip().lower()
+        if not output:
+            return
 
-                filepath = el.split(":")[0].strip()
-                ln = int(el.split(":")[1].strip())
-                _, module_name = get_module_name_from_file(filepath)
-                if module_name not in mod_dict:
-                    continue
+        output = output.split("\n")
+        for el in output:
+            inst_name = el.split("::")[-1]
+            inst_name = inst_name.split("!")[0].strip().lower()
+
+            filepath = el.split(":")[0].strip()
+            ln = int(el.split(":")[1].strip())
+            _, module_name = get_module_name_from_file(filepath)
+            if module_name not in mod_dict:
+                end_of_head_ln = find_module_head_end(module_name, filepath)
+            else:
                 fort_mod = mod_dict[module_name]
-                if ln > fort_mod.end_of_head_ln:
-                    continue
+                end_of_head_ln = fort_mod.end_of_head_ln
+            if ln > end_of_head_ln:
+                continue
 
-                dim = inst_name.count(":")
-                inst_name = regex_paren.sub("", inst_name)
+            dim = inst_name.count(":")
+            inst_name = regex_paren.sub("", inst_name)
 
-                inst_var = Variable(
-                    type=self.type_name,
-                    name=inst_name,
-                    subgrid="?",
-                    ln=ln,
-                    dim=dim,
-                    declaration=module_name,
-                )
-                if inst_var.name not in instance_list:
-                    instance_list[inst_var.name] = inst_var
+            inst_var = Variable(
+                type=self.type_name,
+                name=inst_name,
+                subgrid="?",
+                ln=ln,
+                dim=dim,
+                declaration=module_name,
+            )
+            if inst_var.name not in instance_list:
+                instance_list[inst_var.name] = inst_var
 
         self.instances = instance_list.copy()
 
@@ -335,91 +340,6 @@ class DerivedType(object):
                 ofile.write(str_ + "\n")
         return None
 
-    def create_write_read_functions(self, rw, ofile, gpu=False):
-        """
-        This function will write two .F90 functions that write read and write statements for all
-        components of the derived type
-        rw is a variable that holds either read or write mode
-        """
-
-        fates_list = ["veg_pp%is_veg", "veg_pp%is_bareground", "veg_pp%wt_ed"]
-        for var in self.instances.values():
-            if not var.active:
-                continue
-            if rw.lower() == "write" or rw.lower() == "w":
-                ofile.write(tab + "\n")
-                ofile.write(
-                    tab
-                    + "!====================== {} ======================!\n".format(
-                        var.name
-                    )
-                )
-                ofile.write(tab + "\n")
-                if gpu:
-                    ofile.write(tab + "!$acc update self(& \n")
-
-                # Any component of the derived type accessed by the Unit Test should have been toggled active at this point.
-                # Go through the instance of this derived type and write I/O for any active components.
-                vars = []
-                for component in self.components.values():
-                    active = component["active"]
-                    field_var = component["var"]
-                    if not active:
-                        continue
-
-                    # Filter out C13/C14 duplicates and fates only variables.
-                    c13c14 = bool("c13" in field_var.name or "c14" in field_var.name)
-                    if c13c14:
-                        continue
-                    fname = var.name + "%" + field_var.name
-                    if fname in fates_list:
-                        continue
-                    if gpu:
-                        vars.append(fname)
-                    else:
-                        str1 = f'write (fid, "(A)") "{fname}" \n'
-                        str2 = f"write (fid, *) {fname}\n"
-                        ofile.write(tab + str1)
-                        ofile.write(tab + str2)
-                if gpu:
-                    for n, v in enumerate(vars):
-                        if n + 1 < len(vars):
-                            ofile.write(tab + f"!$acc {v}, &\n")
-                        else:
-                            ofile.write(tab + f"!$acc {v} )\n")
-            elif rw.lower() == "read" or rw.lower() == "r":
-                ofile.write(tab + "\n")
-                ofile.write(
-                    tab
-                    + "!====================== {} ======================!\n".format(
-                        var.name
-                    )
-                )
-                ofile.write(tab + "\n")
-
-                # Any component of the derived type accessed by the Unit Test should have been toggled active at this point.
-                # Go through the instance of this derived type and write I/O for any active components.
-                for component in self.components.values():
-                    active = component["active"]
-                    field_var = component["var"]
-                    bounds = component["bounds"]
-                    if not active:
-                        continue
-                    c13c14 = bool("c13" in field_var.name or "c14" in field_var.name)
-                    if c13c14:
-                        continue
-                    fname = var.name + "%" + field_var.name
-                    if fname in fates_list:
-                        continue
-                    dim = bounds
-                    dim1 = wr.get_delta_from_dim(dim, "y")
-                    dim1 = dim1.replace("_all", "")
-                    str1 = "call fio_read(18,'{}', {}{}, errcode=errcode)\n".format(
-                        fname, fname, dim1
-                    )
-                    str2 = "if (errcode .ne. 0) stop\n"
-                    ofile.write(tab + str1)
-                    ofile.write(tab + str2)
 
     def manual_deep_copy(self, ofile=sys.stdout):
         """
@@ -536,4 +456,31 @@ def expand_dtype(dtype_vars: list[Variable], type_dict: dict[str, DerivedType])-
         result.update(temp)
     return result
 
+
+def find_module_head_end(mod: str,file_path: str)->int:
+    
+    if mod in dg.map_module_head:
+        return dg.map_module_head[mod]
+    in_type = False 
+    type_start = re.compile(r"^(type\s+)(?!\()", re.IGNORECASE) 
+    type_end   = re.compile(r'\bend\s+type\b', re.IGNORECASE)
+    contains   = re.compile(r'\bcontains\b', re.IGNORECASE)
+    end_head_ln = -1
+    with open(file_path, 'r') as f:
+        for lineno, line in enumerate(f, start=1):
+            line = line.strip().lower()
+            end_head_ln = lineno
+            # If entering a derived type declaration, set the flag.
+            # If we're inside a type and see the end of it, clear the flag.
+            if type_start.search(line):
+                in_type = True
+            if in_type and type_end.search(line):
+                in_type = False
+            if not in_type and contains.search(line):
+                break
+
+    if end_head_ln == -1:
+        print("Error -- couldn't iterate through file", file_path)
+        sys.exit(1)
+    return end_head_ln
 

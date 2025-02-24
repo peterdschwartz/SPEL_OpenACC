@@ -438,8 +438,6 @@ def getLocalVariables(sub: Subroutine, verbose=False, class_var=False):
     """
     func_name = "getLocalVariables"
 
-    filename = sub.filepath
-    subname = sub.name
     lines = sub.sub_lines
 
     args_present = bool(sub.dummy_args_list)
@@ -593,7 +591,7 @@ def getLocalVariables(sub: Subroutine, verbose=False, class_var=False):
                     )
                 else:
                     if "=" in var:
-                        var = var.split("=")[0]
+                        var = var.split("=")[0].strip()
                     sub.LocalVariables["scalars"][var] = Variable(
                         data_type, var, "", ln, dim=0, parameter=parameter
                     )

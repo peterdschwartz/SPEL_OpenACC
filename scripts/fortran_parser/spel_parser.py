@@ -8,7 +8,7 @@ from scripts.fortran_parser.spel_ast import (BoundsExpression, Expression,
                                              FloatLiteral, FuncExpression,
                                              Identifier, InfixExpression,
                                              IntegerLiteral, PrefixExpression,
-                                             Program, Statement,
+                                             Program, Statement, StringLiteral,
                                              SubCallStatement)
 from scripts.fortran_parser.tokens import Token, TokenTypes
 from scripts.fortran_parser.tracing import Trace
@@ -59,6 +59,7 @@ class Parser:
         self.register_prefix_fns(TokenTypes.IDENT, self.parse_identifier)
         self.register_prefix_fns(TokenTypes.INT, self.parseIntegerLiteral)
         self.register_prefix_fns(TokenTypes.FLOAT, self.parse_FloatLiteral)
+        self.register_prefix_fns(TokenTypes.STRING, self.parseStringLiteral)
         self.register_prefix_fns(TokenTypes.BANG, self.parse_prefix_expr)
         self.register_prefix_fns(TokenTypes.MINUS, self.parse_prefix_expr)
         self.register_prefix_fns(TokenTypes.LPAREN, self.parse_grouped_expr)
@@ -111,6 +112,11 @@ class Parser:
             raise ParseError(
                 "Could not parse IntegerLiteral: " + self.cur_token.literal
             )
+
+    @Trace.trace_decorator("parseStringLiteral")
+    def parseStringLiteral(self) -> Expression:
+        return StringLiteral(tok=self.cur_token,val=self.cur_token.literal)
+
 
     def parse_FloatLiteral(self) -> Expression:
         num = FloatLiteral(tok=self.cur_token)

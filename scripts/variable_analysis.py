@@ -1,15 +1,34 @@
 from __future__ import annotations
 
 import re
+from pprint import pprint
 from typing import TYPE_CHECKING, Dict
 
-from scripts.types import LineTuple
+from scripts.types import LineTuple, ModUsage, PointerAlias
 
 if TYPE_CHECKING:
     from scripts.analyze_subroutines import Subroutine
 
 from scripts.fortran_modules import FortranModule, get_module_name_from_file
 from scripts.utilityFunctions import Variable
+
+
+def add_global_vars(
+    dep_mod: FortranModule,
+    vars: dict[str, Variable],
+    mod_usage: ModUsage,
+):
+    """ """
+    intrinsic_types = {"real", "integer", "logical", "character"}
+    if mod_usage.all:
+        vars.update(dep_mod.global_vars)
+    else:
+        for id in mod_usage.clause_vars:
+            var = dep_mod.global_vars.get(id.obj)
+            if var is None or var.type not in intrinsic_types:
+                continue
+            vars[id.obj] = var
+    return
 
 
 def check_global_vars(regex_variables, sub: Subroutine) -> set[str]:
@@ -39,9 +58,9 @@ def check_global_vars(regex_variables, sub: Subroutine) -> set[str]:
 
 def determine_global_variable_status(
     mod_dict: dict[str, FortranModule],
-    subroutines: dict[str, Subroutine],
+    sub: Subroutine,
     verbose=False,
-) -> dict[str, Variable]:
+) -> None:
     """
     Function that goes through the list of subroutines and returns the non-derived type
     global variables that are used inside those subroutines
@@ -51,63 +70,36 @@ def determine_global_variable_status(
         * subroutines : list of Subroutine objects
     """
     func_name = "determine_global_variables_status"
-    all_subs: Dict[str, Subroutine] = {}
-    for sub in subroutines.values():
-        all_subs[sub.name] = sub
 
-    # Create dict of modules containing unit-test subroutines
+    fileinfo = sub.get_file_info(all=True)
+    # temp mod dict for only those related to this Sub
     test_modules: Dict[str, FortranModule] = {}
-    for sub in all_subs.values():
-        modname = sub.module
-        sub_mod = mod_dict[modname]
-        if modname not in test_modules:
-            sub_mod.sort_used_variables(mod_dict)
-            test_modules[modname] = sub_mod
+    modname = sub.module
+    sub_mod = mod_dict[modname]
+    variables: dict[str, Variable] = {}
+    for mod_name, musage in sub_mod.head_modules.items():
+        add_global_vars(dep_mod=mod_dict[mod_name], vars=variables, mod_usage=musage)
 
-        for m in sub_mod.modules.keys():
-            if m not in test_modules:
-                test_modules[m] = mod_dict[m]
-                test_modules[m].sort_used_variables(mod_dict)
+    sub_dep = sub_mod.sort_module_deps(startln=fileinfo.startln, endln=fileinfo.endln)
+    for mod_name, musage in sub_dep.items():
+        add_global_vars(dep_mod=mod_dict[mod_name], vars=variables, mod_usage=musage)
 
-    # Create dict of all variables to look for. For each of the Test modules,
-    # Look at the used modules and add the variables used by those modules.
-    variables = {}
-    intrinsic_types = ["real", "integer", "logical", "character"]
-    for mod in test_modules.values():
-        for used_modname, only_clause in mod.modules.items():
-            if only_clause != "all":
-                for ptrobj in only_clause:
-                    if isinstance(ptrobj.obj, Variable):
-                        # This is a variable, need to check if used in
-                        # our specific subroutines
-                        var = ptrobj.obj
-                        if var.type in intrinsic_types:
-                            if ptrobj.ptr:
-                                variables[ptrobj.ptr] = var
-                            else:
-                                variables[var.name] = var
-            else:
-                used_mod = mod_dict[used_modname]
-                for gv in used_mod.global_vars:
-                    if gv.type in intrinsic_types:
-                        variables[gv.name] = gv
-
+    if not variables:
+        return
     # Create regex from the possible variables
     var_string = "|".join(variables.keys())
     regex_variables = re.compile(r"\b({})\b".format(var_string), re.IGNORECASE)
 
-    if verbose:
-        print(f"{func_name}::all subs ", all_subs)
-        print(f"{func_name}::test modules ", test_modules)
-        print(f"{func_name}::variables found ", variables)
-
     # Loop through the subroutines and check for variables used within.
     # `check_global_vars` loops through each sub and looks for any matches
-    for sub in all_subs.values():
-        active_vars = check_global_vars(regex_variables, sub)
-        if active_vars:
-            for var in active_vars:
-                variables[var].active = True
-                sub.active_global_vars[var] = variables[var]
+    active_vars = check_global_vars(regex_variables, sub)
+    if verbose:
+        print(f"{func_name}::sub ", sub.name)
+        print(f"{func_name}::test modules ", test_modules)
+        print(f"{func_name}::active_vars :", active_vars)
+    if active_vars:
+        for var in active_vars:
+            variables[var].active = True
+            sub.active_global_vars[var] = variables[var].copy()
 
-    return variables
+    return

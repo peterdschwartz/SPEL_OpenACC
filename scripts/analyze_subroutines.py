@@ -3,24 +3,22 @@ from __future__ import annotations
 import os.path
 import re
 import sys
-from collections import namedtuple
 from pprint import pprint
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-import scripts.dynamic_globals as dg
 from scripts.DerivedType import DerivedType, get_component
 from scripts.fortran_parser.environment import Environment
 from scripts.fortran_parser.evaluate import regex_ignore
 from scripts.fortran_parser.tracing import Trace
 from scripts.helper_functions import (ReadWrite, SubroutineCall,
-                                      analyze_sub_variables, check_arguments,
-                                      combine_status, determine_argvar_status,
+                                      analyze_sub_variables, combine_status,
                                       determine_level_in_tree,
-                                      determine_variable_status,
-                                      find_child_subroutines, is_derived_type,
+                                      find_child_subroutines, intrinsic_types,
+                                      is_derived_type, normalize_soa_keys,
+                                      replace_elmtype_arg,
                                       summarize_read_write_status,
                                       trace_derived_type_arguments)
-from scripts.interfaces import determine_arg_name, resolve_interface
+from scripts.interfaces import resolve_interface
 from scripts.LoopConstructs import Loop, exportVariableDependency
 from scripts.mod_config import _bc, _no_colors, spel_dir
 from scripts.process_associate import getAssociateClauseVars
@@ -46,7 +44,7 @@ class Subroutine(object):
         * _check_acc_status -> checks if subroutine already as !$acc routine seq
         * _get_global_constants -> Find global variables that are parameters (should it be a Class method?)
         * _preprocess -> (rename file?) Gets child subroutines
-        * _analyze_variables -> loops through global vars, determines r/w status.
+        * analyze_variables -> loops through global vars, determines r/w status.
         * child_subroutines_analysis -> recursively analyzes child subs. Called after parse_subroutine
         * analyze_calltree -> unravel calltree list to generate proper/readable calltree to terminal or txt file.
         * generate_update_directives -> writes verificationMod subroutines
@@ -99,6 +97,7 @@ class Subroutine(object):
         self.startline: int = start
         self.endline: int = end
         self.module: str = mod_name
+        self.mod_deps: dict[str, str|list[Any]]
         if self.endline == 0 or self.startline == 0 or not self.filepath:
             print(
                 f"Error in finding subroutine {self.name} {self.filepath} {self.startline} {self.endline}"
@@ -122,6 +121,7 @@ class Subroutine(object):
 
         # Create another argument dict that stores the read,write status of them:
         self.arguments_read_write: dict[str, ReadWrite]= {}
+        self.arg_access_by_ln: dict[str, list[ReadWrite]] = {}
 
         # Store when the arguments/local variable declarations start and end
         self.var_declaration_startl: int = 0
@@ -135,7 +135,7 @@ class Subroutine(object):
         # Process the Associate Clause
         self.associate_vars: dict[str,str] = {}
         self.reverse_associate_map: dict[str,str] = {}
-        self.ptr_vars: dict[str, str] = {}
+        self.ptr_vars: dict[str, list[str]] = {}
 
         self.associate_start: int = -1
         self.associate_end: int = -1
@@ -201,6 +201,7 @@ class Subroutine(object):
         self.analyzed_child_subroutines: bool = False
         self.preprocessed : bool = False
         self.args_analyzed: bool = False
+        self.global_analyzed: bool = False
 
         self.environment: Optional[Environment] = None
 
@@ -396,7 +397,7 @@ class Subroutine(object):
             gv = gv.strip()
             if gv in self.associate_vars:
                 gv = self.associate_vars[gv]
-            self.ptr_vars[gv] = ptrname
+            self.ptr_vars.setdefault(ptrname, []).append(gv)
 
         return None
 
@@ -521,12 +522,13 @@ class Subroutine(object):
 
         if var_set & self.active_global_vars.keys():
             print("Error: global non-dtype names overlap.")
+            print(var_set & self.active_global_vars.keys())
             return False
 
         return True
 
 
-    @Trace.trace_decorator("_preprocess_file")
+    @Trace.trace_decorator("collect_var_and_call_info")
     def collect_var_and_call_info(
         self,
         main_sub_dict: dict[str,Subroutine],
@@ -534,8 +536,8 @@ class Subroutine(object):
         verbose=False,
     ):
         """
-        This function will find child subroutines and variables used
-        in the associate clause to be used for parsing for ro and wr derived types
+        Function that collections usage of global derived type variables,
+        pointer variables and any child subroutine calls.
             * main_sub_dict : dict of all subroutines for FUT
             * dtype_dict : dict of user type defintions
             * interface_list : contains names of known interfaces
@@ -543,14 +545,14 @@ class Subroutine(object):
         func_name = "collect_var_and_call_info"
 
         global_vars: Dict[str,DerivedType] = {}
-        for argname, arg in self.Arguments.items():
-            if arg.type in dtype_dict.keys():
-                global_vars[argname] = dtype_dict[arg.type]
-
         for dtype in dtype_dict.values():
             for inst in dtype.instances.keys():
                 if inst not in global_vars:
                     global_vars[inst] = dtype
+        for argname, arg in self.Arguments.items():
+            if arg.type in dtype_dict.keys():
+                global_vars[argname] = dtype_dict[arg.type]
+
 
         self.dtype_vars = self.get_dtype_vars(global_vars)
 
@@ -566,12 +568,13 @@ class Subroutine(object):
         for call_desc in self.sub_call_desc.values():
             actual_sub_name = call_desc.fn
             if actual_sub_name not in main_sub_dict:
-                print(
-                    _bc.WARNING
-                    + f"Warning: {actual_sub_name} not in main_sub_dict."
-                    + "\nCould be library function?"
-                    + _bc.ENDC
-                )
+                if verbose:
+                    print(
+                        _bc.WARNING
+                        + f"Warning: {actual_sub_name} not in main_sub_dict."
+                        + "\nCould be library function?"
+                        + _bc.ENDC
+                    )
                 childsub: Subroutine = Subroutine(
                     name=actual_sub_name,
                     mod_name="lib",
@@ -590,17 +593,6 @@ class Subroutine(object):
                 childsub.calltree = self.calltree.copy()
                 childsub.calltree.append(actual_sub_name)
                 self.child_subroutines[actual_sub_name] = childsub
-
-            # Transform args to list of PointerAlias with dummy_arg => passed_var
-            # if not childsub.library:
-            #     args_matched = determine_arg_name(
-            #         matched_vars=args, child_sub=childsub, args=args,
-            #     )
-            #
-            #     # Store the subroutine call information (name of parent and the arguments passed)
-            #     subcall = SubroutineCall(self.name, args_matched, call_ln)
-            #     if subcall not in childsub.subroutine_call:
-            #         childsub.subroutine_call.append(subcall)
 
         self.preprocessed = True
 
@@ -621,8 +613,8 @@ class Subroutine(object):
                 self.acc_status = True
                 return None
 
-    @Trace.trace_decorator("_analyze_variables")
-    def _analyze_variables(self, sub_dict, verbose=False):
+    @Trace.trace_decorator("analyze_variables")
+    def analyze_variables(self, sub_dict: dict[str,Subroutine], type_dict: dict[str,DerivedType],verbose: bool=False,):
         """
         Function used to determine read and write variables
         If var is written to first, then rest of use is ignored.
@@ -632,238 +624,113 @@ class Subroutine(object):
         Vars that are written to must be checked to verify
         results of unit-testing.
 
-        !!
-        REWRITE NOTES:
-            - Part 1, check rw status of any derived types
-            - Part 2, check rw status of associated derived types
-                    self.associate_vars is a dictionary { ptrname : variable}
-            - Part 3, check rw status of global vars
         """
-        func_name = "_analyze_variables"
+        func_name = "analyze_variables"
+        print(f"{func_name}::{self.name}")
 
-        fileinfo = self.get_file_info()
-        fn = fileinfo.fpath
-        startline = fileinfo.startln
-        endline = fileinfo.endln
+        global_vars: Dict[str,Variable] = {}
+        for dtype in type_dict.values():
+            for dtype_var in dtype.instances.values():
+                if dtype_var.name not in global_vars:
+                    global_vars[dtype_var.name] = dtype_var
 
-        # Create regex to match any variable in the associate clause:
-        if not self.associate_vars:
-            no_associate = True
-            ptrname_list = []
-        else:
-            # associate_vars is a dictionary { ptrname : variable}
-            no_associate = False
-            ptrname_list = [key for key in self.associate_vars.keys()]
-            ptrname_str = "|".join(ptrname_list)
-            regex_associated_ptr = re.compile(
-                r"\b({})\b".format(ptrname_str), re.IGNORECASE
-            )
+        # remove struct of arrays/field/access from dtype_vars and replace with the instance var
+        regex_inst_name = re.compile(r'(?:\(\w+\))?%\w+')
+        var_dict: dict[str,Variable] = {key:val for key,val in self.dtype_vars.items() if not regex_inst_name.search(key)}
+        inst_set = {regex_inst_name.sub("",x) for x in self.dtype_vars.keys() if regex_inst_name.search(x)}
 
-        regex_dtype_var =  re.compile(r"\w+(?:\(\w+\))?%\w+")
-        regex_paren = re.compile(r"\((.+)\)")
+        for inst in inst_set:
+            inst_var = global_vars[inst]
+            var_dict[inst] = inst_var.copy()
 
-        # Checks for local variables used as targets
-        regex_ptr_simple = re.compile(r"\w+\s*(=>)\s*\w+")
-
-
-        sub_lines = [ lpair for lpair in self.sub_lines if lpair.ln >= startline ]
-
-        # dtype_accessed is a dictonary to keep track of derived type vars accessed in the subroutine.
-        #        {'inst%component' : [ list of ReadWrite ] }
-        dtype_accessed: dict[str,list[ReadWrite]] = {}
-        user_type_args = {}
-        for line in sub_lines:
-            match_call: bool = line.ln in self.sub_call_desc
-
-            # Get list of all global variables used in this line and for arrays, remove index
-            match_var = regex_dtype_var.findall(line.line)
-            arr_of_structs = [regex_paren.sub('',mvar) for mvar in match_var]
-
-            # Solution to avoid replacing regex in other functions for now?
-            for i,mvar in enumerate(match_var):
-                line.line = line.line.replace(mvar, arr_of_structs[i])
-            match_var = arr_of_structs.copy()
-
-            if not match_call:
-                if match_var:
-                    match_var = list(set(match_var))
-                    this_var = [v for v in match_var if "this" in v]
-                    if this_var:
-                        split_map = map(lambda v: v.split("%")[0], match_var)
-                        temp = {
-                            v: self.Arguments[v]
-                            for v in split_map
-                            if v in self.Arguments and v not in user_type_args
-                        }
-                        user_type_args.update(temp)
-
-                    m_ptr_local = regex_ptr_simple.search(line.line)
-                    if(m_ptr_local):
-                        print(_bc.OKGREEN+"Line is assoicating ptr - Do not parse"+_bc.ENDC)
-                    else:
-                        dtype_accessed = determine_variable_status(
-                            match_var, line.line, line.ln, dtype_accessed, verbose=verbose
-                        )
-
-                # Do the same for any variables in the associate clause
-                if not no_associate:
-                    match_ptrs = regex_associated_ptr.findall(line.line)
-                    m_ptr_local = regex_ptr_simple.search(line.line)
-                    if match_ptrs and not m_ptr_local:
-                        dtype_accessed = determine_variable_status(
-                            match_ptrs, line.line, line.ln, dtype_accessed
-                        )
-            else:
-                # Found child subroutine!
-                # Dictionary that holds the global variables passed in as arguments
-                #       { 'dummy_arg' : 'global variable'}
-                vars_passed_as_args: dict[str,str] = {}
-
-                call_desc = self.sub_call_desc[line.ln]
-                subname = call_desc.fn
-
-                if call_desc.globals:
-                    # Remove duplicates and make regex string for all matched variables
-                    match_var = list(set(match_var))
-
-                    # arg_to_dtype is a list of PointerAlias(ptr=argname,obj=varname)
-                    arg_to_dtype = determine_arg_name(match_var, child_sub, args)
-                    vars_passed_as_args = {arg.ptr: arg.obj for arg in arg_to_dtype}
-
-                # Do the same for any variables in the associate clause
-                if not no_associate:
-                    match_ptrs = regex_associated_ptr.findall(line.line)
-                    if match_ptrs:
-                        match_ptrs = list(set(match_ptrs))
-                        args = getArguments(line.line)
-                        child_sub = sub_dict[subname]
-                        arg_to_dtype = determine_arg_name(match_ptrs, child_sub, args)
-                        vars_passed_as_args.update(
-                            {arg.ptr: arg.obj for arg in arg_to_dtype}
-                        )
-
-                # This function will parse the dummy arguments of child subroutines
-                # so that the status of the dtypes matched above can be updated.
-                if vars_passed_as_args:
-                    updated_var_status = determine_argvar_status(
-                        vars_as_arguments=vars_passed_as_args,
-                        subname=subname,
-                        sub_dict=sub_dict,
-                        linenum=line.ln,
-                    )
-                    vars_to_update = {
-                        key: dtype_accessed[key] + updated_var_status[key]
-                        for key in updated_var_status
-                        if key in dtype_accessed
-                    }
-
-                    dtype_accessed.update(vars_to_update)
-                    dtype_accessed.update(
-                        {
-                            key: val
-                            for key, val in updated_var_status.items()
-                            if key not in dtype_accessed
-                        }
-                    )
-
-        if user_type_args:
-            keys_to_replace = [
-                key for key in dtype_accessed if key.split("%")[0] in user_type_args
-            ]
-            passed_args = {key: [] for key in user_type_args}
-            for type_arg in user_type_args:
-                for subcall in self.subroutine_call:
-                    temp = list(
-                        {
-                            ptrobj.obj: True
-                            for ptrobj in subcall.args
-                            if ptrobj.ptr == type_arg
-                            and ptrobj.obj not in passed_args[type_arg]
-                        }
-                    )
-                    passed_args[type_arg].extend(temp)
-
-            for key in keys_to_replace:
-                save_val = dtype_accessed.pop(key)
-                var_to_replace = key.split("%")[0]
-                for sub_val in passed_args[var_to_replace]:
-                    new_key = key.replace(var_to_replace, sub_val)
-                    dtype_accessed[new_key] = save_val
-
-        if dtype_accessed:
-            for key, values in dtype_accessed.items():
-                status_list = [v.status for v in values]
-                num_uses = len(status_list)
-                num_reads = status_list.count("r")
-                num_writes = status_list.count("w")
-                var_name_list = []
-                if key in ptrname_list:
-                    if isinstance(self.associate_vars[key], list):
-                        var_name_list = self.associate_vars[key].copy()
-                    else:
-                        var_name_list.append(self.associate_vars[key])
-                else:
-                    var_name_list.append(key)
-
-                for varname in var_name_list:
-                    if varname in self.elmtype_access_by_ln:
-                        self.elmtype_access_by_ln[varname].extend(values)
-                    else:
-                        self.elmtype_access_by_ln[varname] = values
-                    if "%" not in varname:
-                        print(_bc.FAIL+f"ERROR: adding {varname} to elmtype!"+_bc.ENDC)
-                        print(self.name,values)
-                        sys.exit(1)
-                    if num_uses == num_reads:
-                        # read-only
-                        self.elmtype_r[varname] = "r"
-                    elif num_uses == num_writes:
-                        # write-only
-                        self.elmtype_w[varname] = "w"
-                    else:
-                        # read-write
-                        self.elmtype_rw[varname] = "rw"
-
-        return None
-
-    @Trace.trace_decorator("parse_subroutine")
-    def parse_subroutine(
-        self,
-        dtype_dict: dict[str,DerivedType],
-        main_sub_dict: dict[str,Subroutine],
-        verbose: bool=False,
-    ):
-        """
-        This function parses subroutine to find which variables are ro,wo,rw
-        elmvars is a list of DerivedType.
-        This function is called in main() after process_for_unit_test
-        currently varlist holds all derived types known to be used in ELM.
-            self : subroutine object
-            dtype_dict : dictionary of derived types
-            main_sub_dict : dictionary of all subroutines in files needed for unit testing
-            child : boolean flag to indicate if subroutine is a child subroutine
-        """
-        func_name = "parse_subroutine::"
-
-
-        self.collect_var_and_call_info(
-            main_sub_dict=main_sub_dict,
-            dtype_dict=dtype_dict,
+        globals_accessed = analyze_sub_variables(
+            self,
+            sub_dict,
+            var_dict,
+            mode=ArgLabel.globals,
             verbose=verbose,
         )
+        norm = normalize_soa_keys(globals_accessed)
+
+        for var_name,stat_list in norm.items():
+            if var_name in self.active_global_vars:
+                continue
+            actual_name = self.associate_vars[var_name] if var_name in self.associate_vars else var_name
+            self.elmtype_access_by_ln[actual_name] = stat_list.copy()
+
+        # Analyze local variables and add any pointers to elmtypes to elmtype_access_by_ln
+        local_var_dict = self.LocalVariables["arrays"] | self.LocalVariables["scalars"]
+        local_accessed = analyze_sub_variables(
+            self,
+            sub_dict,
+            local_var_dict,
+            mode=ArgLabel.locals,
+            verbose=verbose,
+        )
+
+        for ptr, gv_list in self.ptr_vars.items():
+            stat_list = local_accessed[ptr]
+            for gv in gv_list:
+                if gv in self.elmtype_access_by_ln:
+                    self.elmtype_access_by_ln[gv].extend(stat_list)
+                    self.elmtype_access_by_ln[gv].sort(key=lambda rw: rw.ln)
+                else:
+                    self.elmtype_access_by_ln[gv] = stat_list.copy()
+
+        # for var_name, stat_list in self.arg_access_by_ln.items():
+        #     actual_name = self.associate_vars[var_name] if var_name in self.associate_vars else var_name
+        #     if("%" in actual_name):
+        #         self.elmtype_access_by_ln[actual_name] = stat_list.copy()
+
+        self.global_analyzed = True
+
+
+        for var in self.Arguments.values():
+            if var.type not in intrinsic_types:
+                inst_set.add(var.name)
+        if inst_set and self.sub_call_desc:
+            trace_derived_type_arguments(parent_sub=self,sub_dict=sub_dict,inst_set=inst_set,
+            )
 
         return
 
-        # Determine read/write status of variables
-        self._analyze_variables(
-            sub_dict=main_sub_dict,
-            verbose=verbose,
-        )
+    def match_arg_to_inst(self, type_dict: dict[str,DerivedType]):
+        """
+        Called for parent subroutine: populate elmtype_access_by_ln
+        with instances with status from arg_access_by_ln
+        """
+        name_map: dict[str,str] = {}
+        for arg in self.Arguments.values():
+            dtype = type_dict.get(arg.type, None)
+            if dtype:
+                for inst in dtype.instances:
+                    name_map[arg.name] = inst
 
-        # Update main_sub_dict with new parsing information
-        main_sub_dict[self.name] = self
 
-        return None
+        replace_elmtype_arg(name_map, self)
+
+        return
+
+    def summarize_readwrite(self):
+        """
+        
+        """
+        summary_elmtype = summarize_read_write_status(self.elmtype_access_by_ln)
+        for var, status in summary_elmtype.items():
+            match status:
+                case 'r':
+                    self.elmtype_r[var] = status
+                case 'w':
+                    self.elmtype_w[var] = status
+                case 'rw':
+                    self.elmtype_rw[var] = status
+        pprint(self.elmtype_r)
+        pprint(self.elmtype_w)
+        pprint(self.elmtype_rw)
+
+
+        return 
+
 
     @Trace.trace_decorator("child_subroutine_analysis")
     def child_subroutines_analysis(self, dtype_dict, main_sub_dict, verbose=False):
@@ -875,73 +742,7 @@ class Subroutine(object):
             dtype_dict : dictionary of derived types
             main_sub_dict : dictionary of all subroutines in files needed for unit testing
         """
-        interface_list = get_interface_list()
         func_name = "child_subroutines_analysis"
-
-        # child_subroutine_list is a list of Subroutine instances
-        for child_sub in self.child_subroutines.values():
-            if child_sub.library:
-                print(
-                    f"{func_name}::{child_sub.name} is a library function -- Skipping."
-                )
-                continue
-            if child_sub.name in interface_list:
-                print(
-                    f"{func_name}::Error: need to resolve interface for {child_sub.name}"
-                )
-                sys.exit(1)
-
-            child_sub.parse_subroutine(
-                dtype_dict=dtype_dict,
-                main_sub_dict=main_sub_dict,
-                child=True,
-                verbose=verbose,
-            )
-
-            if child_sub.child_subroutines:
-                if "_oacc" not in child_sub.name:
-                    child_sub.child_subroutines_analysis(
-                        dtype_dict=dtype_dict,
-                        main_sub_dict=main_sub_dict,
-                        verbose=verbose,
-                    )
-
-            # Figure out if child subroutine is called with derived type arguments
-            trace_derived_type_arguments(self, child_sub, verbose=verbose)
-
-            for varname, status in child_sub.elmtype_r.items():
-                if varname in self.elmtype_w.keys():
-                    # Check if previously write-only and change to read-write
-                    self.elmtype_rw[varname] = "rw"
-                    self.elmtype_w.pop(varname)
-                elif varname in self.elmtype_rw.keys():
-                    # No action needed, just continue
-                    continue
-                elif varname not in self.elmtype_r.keys():
-                    # Check if variable is present in parent at all and add if needed
-                    self.elmtype_r[varname] = "r"
-
-            for varname, status in child_sub.elmtype_w.items():
-                if varname in self.elmtype_r.keys():
-                    self.elmtype_rw[varname] = "rw"
-                    self.elmtype_w.pop(varname)  # remove from read-only
-                elif varname in self.elmtype_rw.keys():
-                    continue
-                elif varname not in self.elmtype_w.keys():
-                    self.elmtype_w[varname] = "w"
-
-            for varname in child_sub.elmtype_rw.keys():
-                if varname not in self.elmtype_rw.keys():
-                    self.elmtype_rw[varname] = "rw"
-                if varname in self.elmtype_r.keys():
-                    self.elmtype_r.pop(varname)
-                if varname in self.elmtype_w.keys():
-                    self.elmtype_w.pop(varname)
-
-        for s in self.child_subroutines.values():
-            self.calltree.append(s.calltree)
-            if child_sub in interface_list:
-                continue
         self.analyzed_child_subroutines = True
 
         return None
@@ -1669,7 +1470,6 @@ class Subroutine(object):
             print(_bc.BOLD + _bc.WARNING + "NO CHANGE" + _bc.ENDC)
         return None
 
-
     def parse_arguments(self, sub_dict: dict[str,Subroutine], type_dict: dict[str,DerivedType],verbose=False,):
         """
         Function that will analyze the variable status for only the arguments
@@ -1702,9 +1502,11 @@ class Subroutine(object):
         # Substitute any associated pointer names
         for key in associate_set:
             full_name = self.associate_vars[key]
-            ptr_status = args_accessed.pop(key)
-            args_accessed.setdefault(full_name,[]).extend(ptr_status)
+            ptr_status = args_accessed.pop(key, None)
+            if ptr_status:
+                args_accessed.setdefault(full_name,[]).extend(ptr_status)
 
+        self.arg_access_by_ln = args_accessed.copy()
         # All args should have been processed. Store information into Subroutine
         arg_status_summary = summarize_read_write_status(args_accessed)
         for arg, status in arg_status_summary.items():
@@ -1726,7 +1528,6 @@ class Subroutine(object):
             if arg not in self.arguments_read_write:
                 self.arguments_read_write[arg] = ReadWrite('-',-999)
         return None
-
 
     def print_elmtype_access(self):
         """

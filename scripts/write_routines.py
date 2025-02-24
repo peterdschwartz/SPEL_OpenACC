@@ -6,6 +6,8 @@ import sys
 from collections import namedtuple
 from typing import TYPE_CHECKING, Dict
 
+from scripts.analyze_subroutines import Subroutine
+from scripts.fortran_modules import get_module_name_from_file
 from scripts.mod_config import (ELM_SRC, PHYSICAL_PROP_TYPE_LIST, _bc,
                                 elm_dir_regex, preproc_list, shr_dir_regex,
                                 spel_mods_dir, spel_output_dir,
@@ -15,7 +17,6 @@ from scripts.utilityFunctions import (Variable, comment_line,
                                       line_unwrapper)
 
 if TYPE_CHECKING:
-    from scripts.analyze_subroutines import Subroutine
     from scripts.DerivedType import DerivedType
 TAB_WIDTH = 2
 indent = 1
@@ -271,6 +272,8 @@ def find_parent_subroutine_call(
         lines = ifile.readlines()
         ifile.close()
 
+        _, mod_name = get_module_name_from_file(filename)
+
         ct = call_ln
         call_string, ct = line_unwrapper(lines, ct)
         delta_ln = ct - call_ln + 1
@@ -293,7 +296,13 @@ def find_parent_subroutine_call(
             print(f"Error::Couldn't find calling subroutine for {sub.name}")
             sys.exit(1)
         fn, startl, endl = find_file_for_subroutine(name=subname, fn=filename)
-        parent_sub = Subroutine(subname, fn, [""], start=startl, end=endl)
+        parent_sub = Subroutine(
+            name=subname,
+            mod_name=mod_name,
+            file=fn,
+            start=startl,
+            end=endl,
+        )
 
         args_as_vars = {}
         args_as_instances = {}
@@ -316,7 +325,8 @@ def find_parent_subroutine_call(
             if arg in parent_sub.Arguments:
                 argvar = parent_sub.Arguments[arg]
                 if argvar.type in type_dict:
-                    inst_var = type_dict[argvar.type].instances[0]
+                    dtype = type_dict[argvar.type]
+                    inst_var: Variable = list(dtype.instances.values())[0]
                     args_as_instances[inst_var.name] = inst_var
                 else:
                     args_as_vars[arg] = parent_sub.Arguments[arg]
@@ -342,7 +352,7 @@ def find_parent_subroutine_call(
         if args_as_vars:
             for argvar in args_as_vars.values():
                 type_string = argvar.type
-                if type_string not in ["real", "integer", "character", "logical"]:
+                if type_string not in { "real", "integer", "character", "logical" }:
                     type_string = f"type({type_string})"
                 elif type_string == "real":
                     type_string = f"{type_string}(r8)"
@@ -724,16 +734,11 @@ def create_write_vars(typedict, subname, use_isotopes=False):
 
     for dtype in typedict.values():
         if dtype.active:
-            dtype.create_write_read_functions("w", ofile, gpu=True)
-
-    # TODO: can't decide if icemask_grc is needed by default.
-    # glc2lnd_vars%icemask:
-    # ofile.write(spaces+"write(fid,'(A)') 'glc2lnd_vars%icemask_grc'\n")
-    # ofile.write(spaces+'write(fid,*) glc2lnd_vars%icemask_grc')
+            create_write_read_functions(dtype,"w", ofile, gpu=True)
 
     for dtype in typedict.values():
         if dtype.active:
-            dtype.create_write_read_functions("w", ofile, gpu=True)
+            create_write_read_functions(dtype,"w", ofile, gpu=True)
 
     ofile.write(spaces + "call fio_open(fid,ofile, 2)\n\n")
     ofile.write(spaces + 'write(fid,"(A)") "wt_lunit"\n')
@@ -745,11 +750,11 @@ def create_write_vars(typedict, subname, use_isotopes=False):
     #  the physical property types will be done first.
     for dtype in typedict.values():
         if dtype.active and dtype.type_name in PHYSICAL_PROP_TYPE_LIST:
-            dtype.create_write_read_functions("w", ofile)
+            create_write_read_functions(dtype,"w", ofile)
 
     for dtype in typedict.values():
         if dtype.active and dtype.type_name not in PHYSICAL_PROP_TYPE_LIST:
-            dtype.create_write_read_functions("w", ofile)
+            create_write_read_functions(dtype,"w", ofile)
 
     ofile.write(spaces + "call fio_close(fid)\n")
     ofile.write("end subroutine write_vars\n")
@@ -848,12 +853,12 @@ def create_read_vars(typedict):
     # Start with physical property types
     for dtype in typedict.values():
         if dtype.active and dtype.type_name in PHYSICAL_PROP_TYPE_LIST:
-            dtype.create_write_read_functions("r", ofile)
+            create_write_read_functions(dtype,"r", ofile)
     ofile.write(spaces + "else\n")
 
     for dtype in typedict.values():
         if dtype.active and dtype.type_name not in PHYSICAL_PROP_TYPE_LIST:
-            dtype.create_write_read_functions("r", ofile)
+            create_write_read_functions(dtype,"r", ofile)
 
     ofile.write(spaces + "end if\n")
     ofile.write(spaces + "call fio_close(18)\n")
@@ -1170,3 +1175,90 @@ def create_deepcopy_module(type_dict, casedir, modname, all_active=False):
     with open(f"{casedir}/{modname}.F90", "w") as ofile:
         ofile.writelines(lines)
     return None
+
+
+def create_write_read_functions(dtype: DerivedType, rw, ofile, gpu=False):
+    """
+    This function will write two .F90 functions that write read and write statements for all
+    components of the derived type
+    rw is a variable that holds either read or write mode
+    """
+    tab = " " * 2
+
+    fates_list = ["veg_pp%is_veg", "veg_pp%is_bareground", "veg_pp%wt_ed"]
+    for var in dtype.instances.values():
+        if not var.active:
+            continue
+        if rw.lower() == "write" or rw.lower() == "w":
+            ofile.write(tab + "\n")
+            ofile.write(
+                tab
+                + f"!====================== {var.name} ======================!\n"
+            )
+            ofile.write(tab + "\n")
+            if gpu:
+                ofile.write(tab + "!$acc update self(& \n")
+
+            # Any component of the derived type accessed by the Unit Test should have been toggled active at this point.
+            # Go through the instance of this derived type and write I/O for any active components.
+            vars = []
+            for component in dtype.components.values():
+                active = component["active"]
+                field_var = component["var"]
+                if not active:
+                    continue
+
+                # Filter out C13/C14 duplicates and fates only variables.
+                c13c14 = bool("c13" in field_var.name or "c14" in field_var.name)
+                if c13c14:
+                    continue
+                fname = var.name + "%" + field_var.name
+                if fname in fates_list:
+                    continue
+                if gpu:
+                    vars.append(fname)
+                else:
+                    str1 = f'write (fid, "(A)") "{fname}" \n'
+                    str2 = f"write (fid, *) {fname}\n"
+                    ofile.write(tab + str1)
+                    ofile.write(tab + str2)
+            if gpu:
+                for n, v in enumerate(vars):
+                    if n + 1 < len(vars):
+                        ofile.write(tab + f"!$acc {v}, &\n")
+                    else:
+                        ofile.write(tab + f"!$acc {v} )\n")
+        elif rw.lower() == "read" or rw.lower() == "r":
+            ofile.write(tab + "\n")
+            ofile.write(
+                tab
+                + "!====================== {} ======================!\n".format(
+                    var.name
+                )
+            )
+            ofile.write(tab + "\n")
+
+            # Any component of the derived type accessed by the Unit Test should have been toggled active at this point.
+            # Go through the instance of this derived type and write I/O for any active components.
+            for component in dtype.components.values():
+                active = component["active"]
+                field_var = component["var"]
+                bounds = component["bounds"]
+                if not active:
+                    continue
+                c13c14 = bool("c13" in field_var.name or "c14" in field_var.name)
+                if c13c14:
+                    continue
+                fname = var.name + "%" + field_var.name
+                if fname in fates_list:
+                    continue
+                dim = bounds
+                dim1 = get_delta_from_dim(dim, "y")
+                dim1 = dim1.replace("_all", "")
+                str1 = "call fio_read(18,'{}', {}{}, errcode=errcode)\n".format(
+                    fname, fname, dim1
+                )
+                str2 = "if (errcode .ne. 0) stop\n"
+                ofile.write(tab + str1)
+                ofile.write(tab + str2)
+    return

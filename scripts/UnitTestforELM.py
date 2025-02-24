@@ -5,7 +5,9 @@ from pprint import pprint
 import scripts.dynamic_globals as dg
 from scripts.DerivedType import DerivedType
 from scripts.helper_functions import (construct_call_tree,
-                                      replace_ptr_with_targets)
+                                      replace_ptr_with_targets,
+                                      summarize_read_write_status)
+from scripts.utilityFunctions import Variable
 
 
 def main() -> None:
@@ -121,13 +123,13 @@ def main() -> None:
                 mods=needed_mods,
                 required_mods=default_mods,
                 main_sub_dict=main_sub_dict,
-                overwrite=False,
+                overwrite=True,
                 verbose=False,
             )
             subroutines[s] = main_sub_dict[s]
             subroutines[s].unit_test_function = True
 
-    if not mod_dict:
+    if not mod_dict or not file_list:
         print(f"{func_name}::Error didn't find any modules related to subroutines")
         sys.exit(1)
 
@@ -155,11 +157,12 @@ def main() -> None:
         for instance in dtype.instances.values():
             instance_to_user_type[instance.name] = type_name
 
-    determine_global_variable_status(mod_dict, main_sub_dict)
+    for sub in main_sub_dict.values():
+        determine_global_variable_status(mod_dict, sub)
 
     for s in sub_name_list:
         sub = subroutines[s]
-        sub.parse_subroutine(
+        sub.collect_var_and_call_info(
             dtype_dict=type_dict,
             main_sub_dict=main_sub_dict,
             verbose=False,
@@ -178,36 +181,20 @@ def main() -> None:
                 if not childsub.args_analyzed:
                     childsub.parse_arguments(main_sub_dict, type_dict)
                     test_dict = {
-                        k: rw.status
-                        for k, rw in childsub.arguments_read_write.items()
+                        k: rw.status for k, rw in childsub.arguments_read_write.items()
                     }
-                    print(f"======= {subname} arg status ===============")
-                    pprint(test_dict,sort_dicts=False)
+                if not childsub.global_analyzed:
+                    childsub.analyze_variables(main_sub_dict, type_dict)
 
+    for sub in subroutines.values():
+        sub.match_arg_to_inst(type_dict)
 
-        # subroutines[s].child_subroutines_analysis(
-        #     dtype_dict=type_dict, main_sub_dict=main_sub_dict, verbose=False
-        # )
-
-    return
+    for sub in main_sub_dict.values():
+        if sub.elmtype_access_by_ln:
+            sub.summarize_readwrite()
 
     for sub in subroutines.values():
 
-        sub.elmtype_r = replace_ptr_with_targets(
-            sub.elmtype_r,
-            type_dict,
-            instance_to_user_type,
-        )
-        sub.elmtype_w = replace_ptr_with_targets(
-            sub.elmtype_w,
-            type_dict,
-            instance_to_user_type,
-        )
-        sub.elmtype_rw = replace_ptr_with_targets(
-            sub.elmtype_rw,
-            type_dict,
-            instance_to_user_type,
-        )
         for key in list(sub.elmtype_r.keys()):
             c13c14 = bool("c13" in key or "c14" in key)
             if c13c14:
@@ -229,23 +216,11 @@ def main() -> None:
                 continue
             write_types.append(key)
 
-    argument_vars = {}
-    for sub in subroutines.values():
-        for key in list(sub.elmtype_r.keys()):
-            if "%" not in key:
-                argument_vars[key] = sub.elmtype_r.pop(key)
-        for key in list(sub.elmtype_w.keys()):
-            if "%" not in key:
-                argument_vars[key] = sub.elmtype_w.pop(key)
-        for key in list(sub.elmtype_rw.keys()):
-            if "%" not in key:
-                argument_vars[key] = sub.elmtype_rw.pop(key)
-
     # Create a makefile for the unit test
     wr.generate_makefile(files=file_list, case_dir=case_dir)
 
     # Make sure physical properties types are read/written:
-    list_pp = ["veg_pp", "lun_pp", "col_pp", "grc_pp", "top_pp"]
+    list_pp = {"veg_pp", "lun_pp", "col_pp", "grc_pp", "top_pp"}
 
     aggregated_elmtypes_list = []
     for x in read_types:
@@ -274,7 +249,7 @@ def main() -> None:
     # so set all components to True
     for type_name, dtype in type_dict.items():
         for var in dtype.instances.values():
-            if var.name in ["veg_pp", "lun_pp", "col_pp", "grc_pp", "top_pp"]:
+            if var.name in list_pp:
                 dtype.active = True
                 var.active = True
                 for c in dtype.components.values():
@@ -297,8 +272,8 @@ def main() -> None:
 
     print(f"Call Tree for {case_dir}")
     for sub in subroutines.values():
-        tree = sub.calltree[2:]
-        sub.analyze_calltree(tree, case_dir)
+        if sub.abstract_call_tree:
+            sub.abstract_call_tree.print_tree()
 
     # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
     #                        VERIFICATION MODULE                                #
@@ -321,7 +296,7 @@ def main() -> None:
         total_vars.extend(sub.elmtype_w.keys())
         total_vars.extend(sub.elmtype_rw.keys())
         for var in total_vars:
-            if "bounds" in var:
+            if "bounds" in var or var in instance_to_user_type:
                 continue
             dtype, component = var.split("%")
             verify_vars.setdefault(dtype, []).append(component)
@@ -364,20 +339,17 @@ def main() -> None:
         if var in read_types:
             read_types.remove(var)
 
-    active_global_vars = determine_global_variable_status(mod_dict, subroutines)
-
-    # Subroutine analysis should be complete. Store info in main_sub_dict
-    for sub in subroutines.values():
-        main_sub_dict[sub.name] = sub
+    unittest_global_vars: dict[str, Variable] = {}
+    for sub in main_sub_dict.values():
+        unittest_global_vars.update(sub.active_global_vars)
 
     # Generate/modify FORTRAN files needed to initialize and run Unit Test
-    # main.F90
     wr.prepare_unit_test_files(
         inst_list=aggregated_elmtypes_list,
         type_dict=type_dict,
         files=needed_mods,
         case_dir=case_dir,
-        global_vars=active_global_vars,
+        global_vars=unittest_global_vars,
         subroutines=subroutines,
         instance_to_type=instance_to_user_type,
     )

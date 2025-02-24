@@ -23,13 +23,33 @@ regex_paren = re.compile(r"\((.+)\)")  # for removing array of struct index
 regex_bounds = re.compile(r"(?<=(\w|\s))\(.+?\)")
 regex_in_paren = re.compile(r"(?<=\()(.+)(?=\))") # doesn't capture parentheses
 regex_alloc = re.compile(r"allocate\s*")
+regex_assignment = re.compile(r"(?<![><=/])=(?![><=])")
+regex_doif = re.compile(r"[\s]*(do |if[\s]*\(|else[\s]*if[\s]*\()")
+regex_indices = re.compile(r"(?<=\()(.+)(?=\))")
+regex_ptr = re.compile(r"(=>)")
+regex_io = re.compile(r"^\s*(write|print)\b")
+regex_case = re.compile(r"^select\s+case\b")
+regex_usemod = re.compile(r"^use\b\s+\w+")
+intrinsic_types = { "real", "integer", "character", "logical" }
 
+def normalize_soa_keys(d: dict[str, list[ReadWrite]]) -> dict[str, list[ReadWrite]]:
+    # This pattern matches any characters inside parentheses that are immediately followed by a '%'
+    pattern = re.compile(r'\([^)]+\)(?=%)')
+    new_dict: dict[str,list[ReadWrite]] = {}
+    for key, values in d.items():
+        new_key = pattern.sub('(index)', key)
+        # If the normalized key already exists, merge the value lists
+        if new_key in new_dict:
+            new_dict[new_key].extend(values)
+            new_dict[new_key].sort(key=lambda rw: rw.ln)
+        else:
+            new_dict[new_key] = values.copy()
+    return new_dict
 
 def is_derived_type(var: Variable) -> bool:
     """
     Returns if var is a derived type or not
     """
-    intrinsic_types = ["real", "integer", "character", "logical"]
     return var.type not in intrinsic_types
 
 
@@ -50,7 +70,7 @@ def check_field_access(
     regex_field = re.compile(rf"{var.name}(?:\(\w+\))?%\w+")
     matches = set(regex_field.findall(line))
 
-    return [sub_soa(m) for m in matches]
+    return [m for m in matches]
 
 def check_allocate_stmt(line: str,varname: str,ln:int)-> ReadWrite:
     """
@@ -86,6 +106,9 @@ def analyze_sub_variables(
     func_name = "analyze_sub_variables"
 
     vars_to_match: list[str] = [arg for arg in var_dict]
+    vars_accessed: dict[str, list[ReadWrite]] = {}
+    if not vars_to_match:
+        return vars_accessed
 
     var_match_string = "|".join(vars_to_match)
     regex_vars = re.compile(r"\b({})\b".format(var_match_string), re.IGNORECASE)
@@ -102,7 +125,6 @@ def analyze_sub_variables(
         line for line in filter(lambda x: regex_vars.search(x.line), lines)
     ]
 
-    args_accessed: dict[str, list[ReadWrite]] = {}
     for line in matched_lines:
         match_call: bool = line.ln in sub.sub_call_desc
         match_var_use: list[str] = regex_vars.findall(line.line)
@@ -114,9 +136,8 @@ def analyze_sub_variables(
                 var_dict,
                 verbose=verbose,
             )
-
             for arg, status in line_accessed.items():
-                args_accessed.setdefault(arg, []).extend(status)
+                vars_accessed.setdefault(arg, []).extend(status)
         else:
             # Check arguments of child subroutines for dummy args of parent (sub.
             call_desc = sub.sub_call_desc[line.ln]
@@ -124,9 +145,9 @@ def analyze_sub_variables(
             child_sub: Subroutine = sub_dict[subname]
             arg_status = check_arguments(call_desc, child_sub, mode=mode)
             for arg, status in arg_status.items():
-                args_accessed.setdefault(arg, []).append(status)
+                vars_accessed.setdefault(arg, []).append(status)
 
-    return args_accessed
+    return vars_accessed
 
 
 def determine_variable_status(
@@ -142,10 +163,15 @@ def determine_variable_status(
     func_name = "determine_variable_status::"
     line = lpair.line
     ln = lpair.ln
-    match_assignment = re.search(r"(?<![><=/])=(?![><=])", line)
-    match_doif = re.search(r"[\s]*(do |if[\s]*\(|else[\s]*if[\s]*\()", line)
-    regex_indices = re.compile(r"(?<=\()(.+)(?=\))")
+    match_assignment = regex_assignment.search(line)
+    match_doif = regex_doif.search(line)
+    m_ptr = regex_ptr.search(line)
     match_alloc = regex_alloc.search(line)
+    match_io = regex_io.search(line)
+    match_case = regex_case.search(line)
+    match_use = regex_usemod.search(line)
+
+    ignore = bool(m_ptr or match_io or match_use)
 
     find_variables = re.search(
         r"^(class\s*\(|type\s*\(|integer|real|logical|character)", line
@@ -157,6 +183,7 @@ def determine_variable_status(
         print("vars: ", matched_variables)
         print("assignment:", match_assignment)
         print("doif:", match_doif)
+        print("m_ptr",m_ptr)
 
     for m_var in matched_variables[:]:
         var = var_dict[m_var]
@@ -196,8 +223,7 @@ def determine_variable_status(
             lhs = line[:m_start]
             rhs = line[m_end:]
             # Check if variable is on lhs or rhs of assignment
-            # Note: don't use f-strings as they will not work with regex
-            regex_var = re.compile(r"\b({})\b".format(var_name), re.IGNORECASE)
+            regex_var = re.compile(rf"\b({re.escape(var_name)})\b", re.IGNORECASE)
             match_rhs = regex_var.search(rhs)
             # For LHS, remove any indices and check if variable is still present
             # if present in indices, store as read-only
@@ -220,10 +246,23 @@ def determine_variable_status(
             elif match_lhs and match_rhs:
                 rw_status = ReadWrite("rw", ln)
                 vars_access.setdefault(var_name, []).append(rw_status)
+        elif match_case:
+            rw_status = ReadWrite('r',ln)
+            vars_access.setdefault(var_name, []).append(rw_status)
 
-        if not rw_status and not is_decl:
+        if not rw_status and not is_decl and not ignore:
             print(f"{func_name}::ERROR Couldn't identify rw_status for {var_name}")
             print("line:", line)
+            print("assignment:", match_assignment)
+            print("doif:", match_doif)
+            print("m_ptr",m_ptr)
+            print("regex_var:", regex_var.pattern)
+            print("lhs:",lhs, regex_var.search(lhs))
+            print("rhs:",rhs, regex_var.search(rhs))
+            if indices:
+                print(indices)
+                print(match_index)
+                print(match_lhs)
             sys.exit(1)
 
     return vars_access
@@ -373,12 +412,14 @@ def determine_argvar_status(
     return updated_var_status
 
 def combine_status(s1: str, s2: str) -> str:
+    """
     # Convert each status string to a set of permissions
-    perms = set(s1) | set(s2)
     # Return 'rw' if both permissions are present; otherwise 'r' or 'w'
+    """
+    perms = set(s1) | set(s2)
     return ''.join(sorted(perms))
 
-def summarize_read_write_status(var_access:dict[str,list[ReadWrite]]):
+def summarize_read_write_status(var_access:dict[str,list[ReadWrite]])->dict[str,str]:
     """
     Function that takes the raw ReadWrite status for given variables
     and returns a dict of variables with only one overall ReadWrite Status
@@ -401,40 +442,42 @@ def summarize_read_write_status(var_access:dict[str,list[ReadWrite]]):
 
 
 def trace_derived_type_arguments(
-    parent_sub: Subroutine, child_sub: Subroutine, verbose: bool = False
+    parent_sub: Subroutine, sub_dict: dict[str,Subroutine], inst_set: set[str],verbose: bool = False,
 ):
     """
-    Function will check if the parent passed it's own argument to the child.
-        parent_sub : Subroutine, child_sub: Subroutine
+    Function will check child_subroutines for (non-nested) derived-type arguments.
+    Then, add the field access status from the child to the parent.
     """
     func_name = "trace_derived_type_arguments"
-    subcalls_by_parent: list[SubroutineCall] = [
-        subcall
-        for subcall in child_sub.subroutine_call
-        if subcall.subname == parent_sub.name
-    ]
+    if verbose:
+        print(f"{func_name}::{parent_sub.name}")
+        print("instances:",inst_set)
 
-    passed_args = {}
-    intrinsic_types = ["real", "integer", "character", "logical", "complex"]
-    for subcall in subcalls_by_parent:
-        for ptrobj in subcall.args:
-            dummy_arg = ptrobj.ptr
-            arg = ptrobj.obj
-            temp = {
-                dummy_arg: var.name
-                for var in parent_sub.Arguments.values()
-                if var.name == arg and var.type not in intrinsic_types
-            }
-            passed_args.update(temp)
+    for call_desc in parent_sub.sub_call_desc.values():
+        child_sub = sub_dict[call_desc.fn]
+        call_ln = call_desc.ln
+        unnested_vars = [ argvar for argvar in call_desc.globals
+            if argvar.var.name in inst_set and argvar.node.nested_level == 0]
 
-    child_sub.elmtype_r = replace_elmtype_arg(passed_args, child_sub.elmtype_r)
-    child_sub.elmtype_w = replace_elmtype_arg(passed_args, child_sub.elmtype_w)
-    child_sub.elmtype_rw = replace_elmtype_arg(passed_args, child_sub.elmtype_rw)
+        unnested_vars.extend( [ argvar for argvar in call_desc.dummy_args
+            if argvar.var.name in inst_set and argvar.node.nested_level == 0])
+
+        names_to_replace: dict[str, str] = { }
+        for argvar in unnested_vars:
+            keyword = check_keyword(argvar.node)
+            if keyword:
+                dummy_arg = argvar.node.node["Left"]
+            else:
+                argn = argvar.node.argn
+                dummy_arg = child_sub.dummy_args_list[argn]
+            names_to_replace[dummy_arg] = argvar.var.name
+
+        replace_elmtype_arg(names_to_replace,child_sub)
 
     return None
 
 
-def replace_elmtype_arg(passed_args, elmtype):
+def replace_elmtype_arg(passed_args: dict[str,str], childsub: Subroutine):
     """
     Function replaces entries in elmtype that are dummy_args of the child
     with the variable passed by the parent.
@@ -443,14 +486,19 @@ def replace_elmtype_arg(passed_args, elmtype):
     elmtype = { "inst%member" : <status> }
     """
     func_name = "replace_elmtype_arg::"
+    dummy_str = '|'.join(passed_args.keys())
+    regex_keys = re.compile(rf"\b({dummy_str})%\w+")
 
-    for global_var in list(elmtype.keys()):
-        inst_var, member = global_var.split("%")
-        if inst_var in passed_args.keys():
-            new_var = passed_args[inst_var] + "%" + member
-            elmtype[new_var] = elmtype.pop(global_var)
+    keys_to_adjust = [key for key in childsub.arg_access_by_ln.keys() if regex_keys.search(key)]
 
-    return elmtype
+    for key in keys_to_adjust:
+        dummy_name, field = key.split("%")
+        repl_name = passed_args[dummy_name]
+        new_key = f"{repl_name}%{field}"
+        stat = childsub.arg_access_by_ln[key]
+        childsub.elmtype_access_by_ln[new_key] = stat.copy()
+
+    return
 
 
 def replace_ptr_with_targets(elmtype, type_dict, insts_to_type_dict, use_c13c14=False):

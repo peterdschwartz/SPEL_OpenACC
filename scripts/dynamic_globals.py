@@ -10,6 +10,8 @@ map_fpath_to_module_name: dict[str, Tuple[int, str]] = {}
 
 map_module_lines: dict[str, list[str]] = {}
 
+map_module_head: dict[str, int] = {}
+
 
 def populate_interface_list():
     """

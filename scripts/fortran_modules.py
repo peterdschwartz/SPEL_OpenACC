@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import subprocess as sp
 import sys
-from typing import TYPE_CHECKING
+from copy import copy, deepcopy
+from typing import TYPE_CHECKING, Any
+
+from scripts.utilityFunctions import Variable
 
 if TYPE_CHECKING:
     from scripts.analyze_subroutines import Subroutine
 
 import scripts.dynamic_globals as dg
 from scripts.mod_config import ELM_SRC, SHR_SRC, _bc
-from scripts.types import PointerAlias
+from scripts.types import ModUsage, PointerAlias
 
 
 def get_module_name_from_file(fpath: str) -> tuple[int, str]:
@@ -111,7 +114,7 @@ def print_spel_module_dependencies(
     return modtree
 
 
-def parse_only_clause(line: str):
+def parse_only_clause(line: str) -> set[PointerAlias]:
     """
     Input a line of the form: `use modname, only: name1,name2,...`
     """
@@ -119,17 +122,17 @@ def parse_only_clause(line: str):
     only_l = line.split(":")[1]
     only_l = only_l.split(",")
 
-    only_objs_list = []
+    only_objs_list = set()
     # Go through list of objects, determine '=>' usage.
     for ptrobj in only_l:
         if "=>" in ptrobj:
             ptr, obj = ptrobj.split("=>")
             ptr = ptr.strip()
             obj = obj.strip()
-            only_objs_list.append(PointerAlias(ptr=ptr, obj=obj))
+            only_objs_list.add(PointerAlias(ptr=ptr, obj=obj))
         else:
             obj = ptrobj.strip()
-            only_objs_list.append(PointerAlias(ptr=None, obj=obj))
+            only_objs_list.add(PointerAlias(ptr=None, obj=obj))
 
     return only_objs_list
 
@@ -144,18 +147,68 @@ class FortranModule:
 
     def __init__(self, name, fname, ln):
         self.name = name  # name of the module
-        self.global_vars = []  # any variables declared in the module
-        self.subroutines = []  # any subroutines declared in the module
-        self.modules = {}  # any modules used in the module
+        self.global_vars: dict[str, Variable] = {}  # variables decl in the module
+        self.subroutines: set[str] = set()  # any subroutines declared in the module
+        self.modules: dict[str, ModUsage] = {}  # any modules used in the module
+        self.modules_by_ln: dict[str, ModUsage] = {}
+
+        # modules available to all subroutines
+        self.head_modules: dict[str, ModUsage] = {}
         self.filepath = fname  # the file path of the module
         self.ln = ln  # line number of start module block
         self.defined_types = {}  # user types defined in the module
         self.modified = False  # if module has been through modify_file or not.
         self.variables_sorted = False
         self.end_of_head_ln: int = 99999999
+        self.num_lines: int
 
     def __repr__(self):
         return f"FortranModule({self.name})"
+
+    def add_dependency(self, mod: str, line: str, ln: int):
+        """
+        Adds module dependency and either only the items accessed
+        or "all" for blanket usage of module
+
+        Dependencies here are stored with their linenumber that way module head
+        and subroutine specific usages can be easily sorted.
+        """
+        mod_key = f"{mod}@{ln}"
+
+        curr_usage = self.modules_by_ln.get(mod_key)
+        if curr_usage is None:
+            self.modules_by_ln[mod_key] = ModUsage(all=False, clause_vars=set())
+
+        # Check if there is an only statement AND that the entire module isn't used.
+        if "only" in line and not (self.modules_by_ln[mod_key].all):
+            obj_set = parse_only_clause(line)
+            self.modules_by_ln[mod_key].clause_vars |= obj_set
+        else:
+            # Even if only clause was previously used, overwrite
+            # and assume it's all used.
+            self.modules_by_ln[mod_key].all = True
+
+    def sort_module_deps(self, startln: int, endln: int) -> dict[str, ModUsage]:
+        """
+        Sort the modules_by_ln into either a dict for all dependencies
+        or a dict for only modules in the module head
+        """
+        sorted_dict: dict[str, ModUsage] = {}
+        for modln, muse in self.modules_by_ln.items():
+            mod_name, ln = modln.split("@")
+            if startln < int(ln) < endln:
+                if mod_name in sorted_dict:
+                    cur_usage = sorted_dict[mod_name]
+                    if cur_usage.all:
+                        continue
+                    if muse.all:
+                        sorted_dict[mod_name].all = True
+                    else:
+                        sorted_dict[mod_name].clause_vars |= muse.clause_vars
+                else:
+                    sorted_dict[mod_name] = deepcopy(muse)
+
+        return sorted_dict
 
     def print_module_info(self, ofile=sys.stdout):
         """
@@ -186,39 +239,11 @@ class FortranModule:
                     ofile.write("\n")
 
         ofile.write(_bc.BOLD + _bc.WARNING + "Variables:\n" + _bc.ENDC)
-        for variable in self.global_vars:
+        for variable in self.global_vars.values():
             print(_bc.OKGREEN + f"{variable}" + _bc.ENDC)
 
         ofile.write(_bc.WARNING + "User Types:\n" + _bc.ENDC)
         for utype in self.defined_types:
             ofile.write(_bc.OKGREEN + f"{self.defined_types[utype]}\n" + _bc.ENDC)
 
-        return None
-
-    def sort_used_variables(self, mod_dict, verbose=False):
-        """
-        Go through the used modules, if any variables are used,
-        replace their string name with their variable instance.
-        """
-        func_name = "sort_used_vars"
-        # return early if already called
-        if self.variables_sorted:
-            return None
-
-        for used_mod_name, only_clause in self.modules.items():
-            used_mod = mod_dict[used_mod_name]
-            # go through `only` clause and check if any are global vars
-            if only_clause != "all":
-                for ptrobj in only_clause:
-                    objname = ptrobj.obj
-                    for var in used_mod.global_vars:
-                        if objname == var.name:
-                            ptrobj.obj = var
-                            break
-                    if verbose:
-                        if isinstance(ptrobj.obj, str):
-                            print(
-                                f"{func_name}::{objname} from {used_mod_name} -- not Variable"
-                            )
-        self.variables_sorted = True
         return None

@@ -154,6 +154,7 @@ contains
 
    subroutine call_sub(numf, bounds, mytype)
       use shr_const_mod, only : test_type
+      use constants_mod, only : i_const
 
       integer, intent(in) :: numf
       type(bounds_type), intent(in) :: bounds
@@ -170,13 +171,14 @@ contains
       real(r8) :: r_tri(bounds%begc:bounds%endc,0:nlevdecomp+1)
       real(r8) :: u_tri(bounds%begc:bounds%endc,0:nlevdecomp+1)
       real(r8), pointer :: test_ptr(:,:)
+      integer, parameter :: four = 4
 
       associate( &
         hrv_deadstemn_to_prod10n  => col_nf%hrv_deadstemn_to_prod10n, &
         field1 => mytype%field1 &
       )
 
-      i_type = 1
+      i_type = i_const - 3
 
       select case (i_type)
       case (1)  ! C
@@ -195,16 +197,36 @@ contains
       call test_parsing_sub(bounds, max(input1*shr_const_pi, local_var+input2(g)), &
          col_nf%m_n_to_litr_met_fire(c,1:N), landunit_is_special(g),var3=input3+1)
 
-      call Tridiagonal(bounds, -lbj+1, ubj, jtop, numf, soilc, a_tri, b_tri, c_tri, r_tri, u_tri)
+      call Tridiagonal(bounds, -lbj+1, four, jtop, numf, soilc, a_tri, b_tri, c_tri, r_tri, u_tri)
       call col_nf%Init(bounds%begc, bounds%endc)
 
       call ptr_test_sub(filter(i_type)%num_soilc, filter(i_type)%soilc, test_ptr)
+
+      call trace_dtype_example(mytype, col_nf)
 
       test_ptr(:,:) = SHR_CONST_SPVAL
 
       end associate
 
    end subroutine call_sub
+
+   subroutine trace_dtype_example(mytype2, col_nf_inst)
+      type(test_type) , INTENT(INOUT) :: mytype2
+      type(column_nitrogen_flux), INTENT(INOUT) :: col_nf_inst
+      integer :: i
+      associate(&
+          field1 => mytype2%field1, &
+          field2 => mytype2%field2,&
+          field3 => mytype2%field3&
+      )
+      if ( mytype2%active  )then
+         do i=1, 10
+            field2(i) = field2(i)/field1(i) + field3(i)
+            col_nf_inst%hrv_deadstemn_to_prod10n(i) = field2(i)
+         end do 
+      end if 
+      end associate
+   end subroutine trace_dtype_example
 
    subroutine ptr_test_sub(numf, soilc, arr)
       integer , intent(in) :: numf

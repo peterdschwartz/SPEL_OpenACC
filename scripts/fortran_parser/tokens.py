@@ -8,6 +8,7 @@ class TokenTypes(Enum):
     EOF = "EOF"
     INT = "INT"
     FLOAT = "FLOAT"
+    STRING = "STRING"
     ILLEGAL = "ILLEGAL"
     # Operators
     ASSIGN = "="

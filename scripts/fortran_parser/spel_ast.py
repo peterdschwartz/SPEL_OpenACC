@@ -147,6 +147,27 @@ class IntegerLiteral(Expression):
         return {"Node": "IntegerLiteral", "Val": self.value}
 
 
+class StringLiteral(Expression):
+    def __init__(self, tok: Token, val: str):
+        self.token: Token = tok  # SQUOTE or DQUOTE
+        self.value: str = val
+
+    def token_literal(self) -> str:
+        return str(self.value)
+
+    def expression_node(self) -> None:
+        pass
+
+    def __str__(self):
+        return self.token_literal()
+
+    def __eq__(self, other):
+        return isinstance(other, StringLiteral) and self.value == other.value
+
+    def to_dict(self):
+        return {"Node": "StringLiteral", "Val": self.value}
+
+
 class FloatLiteral(Expression):
     def __init__(self, tok: Token):
         self.token: Token = tok

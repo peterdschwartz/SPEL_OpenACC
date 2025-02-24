@@ -122,6 +122,15 @@ def test_getArguments(subtests):
                 "this%m_n_to_litr_lig_fire": "w",
                 "this%m_n_to_litr_met_fire": "w",
             },
+            "trace_dtype_example": {
+                "mytype2": "rw",
+                "mytype2%field1": "r",
+                "mytype2%field2": "rw",
+                "mytype2%field3": "r",
+                "mytype2%active": "r",
+                "col_nf_inst": "w",
+                "col_nf_inst%hrv_deadstemn_to_prod10n": "w",
+            },
         }
 
         dg.populate_interface_list()
@@ -146,7 +155,8 @@ def test_getArguments(subtests):
             s: main_sub_dict[s] for s in sub_name_list
         }
 
-        determine_global_variable_status(mod_dict, main_sub_dict)
+        for sub in main_sub_dict.values():
+            determine_global_variable_status(mod_dict, sub)
 
         type_dict: dict[str, DerivedType] = {}
         for mod in mod_dict.values():
@@ -155,6 +165,7 @@ def test_getArguments(subtests):
 
         for dtype in type_dict.values():
             dtype.find_instances(mod_dict)
+            print("instances: ", dtype.instances)
 
         instance_to_user_type = {}
         instance_dict: dict[str, DerivedType] = {}
@@ -166,12 +177,12 @@ def test_getArguments(subtests):
         active_vars = subroutines[test_sub_name].active_global_vars
 
         assert (
-            len(active_vars) == 2
+            len(active_vars) == 3
         ), f"Didn't correctly find the active global variables:\n{active_vars}"
 
         for s in sub_name_list:
             sub = subroutines[s]
-            sub.parse_subroutine(
+            sub.collect_var_and_call_info(
                 dtype_dict=type_dict,
                 main_sub_dict=main_sub_dict,
                 verbose=True,
@@ -184,6 +195,7 @@ def test_getArguments(subtests):
             )
 
             if sub.abstract_call_tree:
+                # Note that the last "childsub" in the generator is the parent sub
                 for tree in sub.abstract_call_tree.traverse_postorder():
                     subname = tree.node.subname
                     childsub = main_sub_dict[subname]
@@ -195,6 +207,12 @@ def test_getArguments(subtests):
                         }
                         with subtests.test(msg=subname):
                             assert expected_arg_status[subname] == test_dict
+                    if not childsub.global_analyzed:
+                        childsub.analyze_variables(main_sub_dict, type_dict)
+
+        for sub in main_sub_dict.values():
+            print(f"========== {sub.name} ===========")
+            pprint(sub.elmtype_access_by_ln)
 
 
 def test_arg_intent():

@@ -55,6 +55,7 @@ bad_modules = [
     "mct_mod",
     "elm_instmod",
     "spmdgathscatmod",
+    "perfmod_gpu",
 ]
 
 fates_mod = ["elmfatesinterfacemod"]
@@ -74,6 +75,8 @@ bad_subroutines = [
     "alm_fates",
     "elm_fates",
     "ncd_inqdlen",
+    "t_start_lnd",
+    "t_stop_lnd",
 ]
 
 remove_subs = [
@@ -172,10 +175,10 @@ def process_fates_or_betr(lines, mode):
 
     ct = 0
     if mode == "fates":
-        type = "hlm_fates_interface_type"
+        type_name = "hlm_fates_interface_type"
         var = "alm_fates"
     elif mode == "betr":
-        type = "betr_simulation_alm_type"
+        type_name = "betr_simulation_alm_type"
         var = "ep_betr"
     else:
         sys.exit("Error wrong mode!")
@@ -192,13 +195,13 @@ def process_fates_or_betr(lines, mode):
             ct += 1
             continue
 
-        match_type = re.search(f"\({type}\)", l.lower())
+        match_type = re.search(rf"\({type_name}\)", l.lower())
         if match_type:
             lines, ct = comment_line(lines=lines, ct=ct, mode=mode)
             ct += 1
             continue
 
-        match_call = re.search(f"[\s]+(call)[\s]+({var})", l.lower())
+        match_call = re.search(rf"[\s]+(call)[\s]+({var})", l.lower())
         if match_call:
             lines, ct = comment_line(lines=lines, ct=ct, mode=mode)
             ct += 1
@@ -242,6 +245,8 @@ def get_used_mods(
     file = open(fn, "r")
     lines = file.readlines()
     file.close()
+
+    fort_mod.num_lines = len(lines)
 
     # Define regular expressions for catching variables declared in the module
     regex_contains = re.compile(r"^(contains)", re.IGNORECASE)
@@ -293,7 +298,7 @@ def get_used_mods(
             if variable_list:
                 for v in variable_list:
                     v.declaration = module_name
-                fort_mod.global_vars.extend(variable_list)
+                    fort_mod.global_vars[v.name] = v
 
         match_use = re.search(r"^(use)[\s]+", l)
         if match_use:
@@ -303,20 +308,7 @@ def get_used_mods(
             mod = mod.strip()
             mod = mod.lower()
             if mod not in bad_modules:
-                if mod not in fort_mod.modules.keys():
-                    fort_mod.modules.setdefault(mod, [])
-
-                # Check if there is an only statement AND that the entire module isn't used.
-                if "only" in l and (fort_mod.modules[mod] != "all"):
-                    obj_list = parse_only_clause(l)
-                    for ptrobj in obj_list:
-                        if ptrobj not in fort_mod.modules[mod]:
-                            fort_mod.modules[mod].append(ptrobj)
-                else:
-                    # Even if only clause was previously used, overwrite
-                    # and assume it's all used.
-                    fort_mod.modules[mod] = "all"
-
+                fort_mod.add_dependency(mod=mod,line=l,ln=ct)
                 lower_mods = [get_module_name_from_file(m)[1] for m in mods] 
                 if (
                     mod not in needed_mods
@@ -330,7 +322,7 @@ def get_used_mods(
     # Check against already used Mods
     files_to_parse = []
     for m in needed_mods:
-        if m.lower() in bad_modules:
+        if m in bad_modules:
             continue
         needed_modfile = get_filename_from_module(m, verbose=verbose)
         if needed_modfile is None:
@@ -338,9 +330,11 @@ def get_used_mods(
                 print(
                     f"Couldn't find {m} in ELM or shared source -- adding to removal list"
                 )
-            bad_modules.append(m.lower())
-            if m.lower() in fort_mod.modules:
-                fort_mod.modules.pop(m.lower())
+            bad_modules.append(m)
+            regex_modkey = re.compile(rf"{m}@\d+")
+            keys_to_remove = [key for key in fort_mod.modules_by_ln if regex_modkey.search(key)]
+            for key in keys_to_remove:
+                fort_mod.modules_by_ln.pop(key)
         elif needed_modfile not in mods:
             files_to_parse.append(needed_modfile)
             mods.append(needed_modfile)
@@ -349,7 +343,7 @@ def get_used_mods(
     # and find any global variables that have the user-defined type
 
     list_type_names = [key for key in user_defined_types.keys()]
-    for gvar in fort_mod.global_vars:
+    for gvar in fort_mod.global_vars.values():
         if gvar.type in list_type_names:
             if gvar.name not in user_defined_types[gvar.type].instances:
                 user_defined_types[gvar.type].instances[gvar.name] = gvar
@@ -794,6 +788,23 @@ def process_for_unit_test(
                 singlefile=singlefile,
                 mod_dict=mod_dict,
             )
+
+    required_mod_paths = [get_filename_from_module(m) for m in required_mods]
+    for rmod in required_mod_paths:
+        if rmod not in mods:
+            mods.append(rmod)
+            mods, mod_dict = get_used_mods(
+                ifile=rmod,
+                mods=mods,
+                verbose=verbose,
+                singlefile=singlefile,
+                mod_dict=mod_dict,
+            )
+
+
+    for fort_mod in mod_dict.values():
+        fort_mod.modules = fort_mod.sort_module_deps(startln=0,endln=fort_mod.num_lines)
+        fort_mod.head_modules = fort_mod.sort_module_deps(startln=0,endln=fort_mod.end_of_head_ln)
 
     # Sort the file dependencies
     with profile_ctx(enabled=False, section="sort_file_dependency") as pc:

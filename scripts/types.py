@@ -129,18 +129,15 @@ class CallDesc:
         return
 
 
+@dataclass(frozen=True)
 class PointerAlias:
     """
     Create Class for used objects that are aliased
      i.e.,    `ptr` => 'long_object_name'
     """
 
-    def __init__(self, ptr, obj):
-        self.ptr: str = ptr
-        self.obj: str = obj
-
-    def __eq__(self, other):
-        return (self.ptr == other.ptr) and (self.obj == other.obj)
+    ptr: Optional[str]
+    obj: str
 
     def __str__(self):
         if self.ptr:
@@ -165,9 +162,14 @@ class FunctionReturn:
     cpp_start: int
 
 
-# Named tuple used to store line numbers
-# for preprocessed and original files
+# Named tuple used to store line numbers for preprocessed and original files
 PreProcTuple = namedtuple("PreProcTuple", ["cpp_ln", "ln"])
+
+
+@dataclass
+class ModUsage:
+    all: bool
+    clause_vars: set[PointerAlias]
 
 
 class LineTuple(NamedTuple):

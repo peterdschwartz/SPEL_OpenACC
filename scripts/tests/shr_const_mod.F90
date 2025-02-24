@@ -87,6 +87,7 @@ MODULE shr_const_mod
     real(r8) :: field1(:)
     real(r8) :: field2(:)
     integer  :: active
+    real(r8) :: field3(:)
     contains 
     procedure, public :: Init => test_init
   end type test_type
@@ -99,6 +100,7 @@ contains
 
     allocate(this%field1(begc:endc))
     allocate(this%field2(begc:endc))
+    allocate(this%field3(begc:endc))
     this%active = 1
 
   end subroutine test_init

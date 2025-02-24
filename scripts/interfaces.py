@@ -10,8 +10,8 @@ from scripts.types import ArgDesc, ArgType
 if TYPE_CHECKING:
     from scripts.analyze_subroutines import Subroutine
 
-from scripts.fortran_modules import PointerAlias
 from scripts.mod_config import ELM_SRC, _bc
+from scripts.types import PointerAlias
 from scripts.utilityFunctions import Variable
 
 
