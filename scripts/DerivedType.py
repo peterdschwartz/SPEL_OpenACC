@@ -115,7 +115,7 @@ class DerivedType(object):
             )
 
         self.declaration = vmod
-        self.components = {}
+        self.components: dict[str, Variable] = {}
         self.instances: dict[str, Variable] = {}
         # Flag to see if Derived Type has been analyzed
         self.analyzed = False
@@ -228,10 +228,10 @@ class DerivedType(object):
                     member_name = match_ptrinit.groups()[0].replace("%", "")
                     target = match_ptrinit.groups()[2].strip()
                     if added_member_to_type[member_name]:
-                        var_inst = self.components[member_name]["var"]
+                        var_inst = self.components[member_name]
                         if target not in var_inst.pointer:
                             var_inst.pointer.append(target)
-                            self.components[member_name]["var"] = var_inst
+                            self.components[member_name] = var_inst
                         ln += 1
                         continue
                     else:
@@ -245,7 +245,7 @@ class DerivedType(object):
                             print(member_arr_or_ptr[member_name])
                             sys.exit(0)
                         var_inst.pointer.append(target)
-                        member = {"active": False, "var": var_inst, "bounds": None}
+                        member = var_inst
                         self.components[var_inst.name] = member
                         added_member_to_type[member_name] = True
 
@@ -275,8 +275,7 @@ class DerivedType(object):
                             else:
                                 var_inst.subgrid = beg_x.group()
 
-                        member = {"active": False, "var": var_inst, "bounds": bounds}
-                        self.components[var_inst.name] = member
+                        self.components[var_inst.name] = var_inst
                         added_member_to_type[varname] = True
                 ln += 1
             if not init_sub:
@@ -290,11 +289,7 @@ class DerivedType(object):
                 self.init_sub = init_sub
 
         for scalar in member_scalars.values():
-            self.components[scalar.name] = {
-                "active": False,
-                "var": scalar,
-                "bounds": None,
-            }
+            self.components[scalar.name] = scalar
         if debug:
             sys.exit()
 
@@ -325,11 +320,11 @@ class DerivedType(object):
             ofile.write(hl.ENDC)
         if long:
             ofile.write("w/ components:\n")
-            for c in self.components.values():
-                status = c["active"]
-                var = c["var"]
+            for field_var in self.components.values():
+                status = field_var.active
+                var = field_var
                 if var.dim > 0:
-                    bounds = c["bounds"]
+                    bounds = field_var.bounds
                 else:
                     bounds = ""
                 if not var.pointer:
@@ -360,8 +355,7 @@ class DerivedType(object):
                 print("Error: multi-dimensional Array of Structs found: ", inst)
                 sys.exit(1)
             ofile.write(tabs * depth + "!$acc enter data copyin(&\n")
-            for num, comp in enumerate(self.components.values()):
-                member = comp["var"]
+            for num, member in enumerate(self.components.values()):
                 dim_string = ""
                 if member.dim > 0:
                     dim_li = [":" for i in range(0, member.dim)]
@@ -431,7 +425,7 @@ def get_component(instance_dict: Dict[str, DerivedType], dtype_field: str)->Opti
     inst_name = regex_paren.sub("",inst_name)
     dtype = instance_dict[inst_name]
     if field in dtype.components:
-        var: Variable = dtype.components[field]['var']
+        var: Variable = dtype.components[field]
         return var
     else:
         if field not in dtype.procedures:
@@ -451,7 +445,7 @@ def expand_dtype(dtype_vars: list[Variable], type_dict: dict[str, DerivedType])-
         dtype = type_dict[dtype_var.type]
         fields = dtype.components.values()
         temp: dict[str,Variable] = {
-          f"{dtype_var.name}%{field['var'].name}": adj_var_name(field['var'],dtype_var) for field in fields
+          f"{dtype_var.name}%{field.name}": adj_var_name(field,dtype_var) for field in fields
         }
         result.update(temp)
     return result

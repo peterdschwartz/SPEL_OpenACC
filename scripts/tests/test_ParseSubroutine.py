@@ -5,6 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
+from scripts.utilityFunctions import Variable
+
 test_dir = os.path.dirname(__file__)
 
 
@@ -165,7 +167,11 @@ def test_getArguments(subtests):
 
         for dtype in type_dict.values():
             dtype.find_instances(mod_dict)
-            print("instances: ", dtype.instances)
+
+        bounds_inst = Variable(
+            type="bounds_type", name="bounds", dim=0, subgrid="?", ln=-1
+        )
+        type_dict["bounds_type"].instances["bounds"] = bounds_inst.copy()
 
         instance_to_user_type = {}
         instance_dict: dict[str, DerivedType] = {}
@@ -209,6 +215,13 @@ def test_getArguments(subtests):
                             assert expected_arg_status[subname] == test_dict
                     if not childsub.global_analyzed:
                         childsub.analyze_variables(main_sub_dict, type_dict)
+
+        for sub in main_sub_dict.values():
+            sub.match_arg_to_inst(type_dict)
+
+        for sub in main_sub_dict.values():
+            if sub.elmtype_access_by_ln:
+                sub.summarize_readwrite()
 
         for sub in main_sub_dict.values():
             print(f"========== {sub.name} ===========")

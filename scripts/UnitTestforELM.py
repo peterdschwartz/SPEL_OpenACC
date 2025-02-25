@@ -145,6 +145,9 @@ def main() -> None:
     for dtype in type_dict.values():
         dtype.find_instances(mod_dict)
 
+    bounds_inst = Variable(type="bounds_type",name="bounds",dim=0,subgrid="?",ln=-1)
+    type_dict["bounds_type"].instances["bounds"] = bounds_inst.copy()
+
     instance_to_user_type = {}
     for type_name, dtype in type_dict.items():
         if "bounds" in type_name:
@@ -186,7 +189,7 @@ def main() -> None:
                 if not childsub.global_analyzed:
                     childsub.analyze_variables(main_sub_dict, type_dict)
 
-    for sub in subroutines.values():
+    for sub in main_sub_dict.values():
         sub.match_arg_to_inst(type_dict)
 
     for sub in main_sub_dict.values():
@@ -252,9 +255,8 @@ def main() -> None:
             if var.name in list_pp:
                 dtype.active = True
                 var.active = True
-                for c in dtype.components.values():
-                    c["active"] = True
-                    c["var"].active = True
+                for field_var in dtype.components.values():
+                    field_var.active = True
 
     for el in write_types:
         if el not in read_types:
@@ -398,10 +400,10 @@ def set_active_variables(type_dict, type_lookup, variable_list, dtype_info_list)
         type_name = type_lookup[dtype]
         type_dict[type_name].active = True
         # Set which components of derived type are active
-        for c in type_dict[type_name].components.values():
-            field_var = c["var"]
-            if field_var.name == component and not c["active"]:
-                c["active"] = True
+        for field_var in type_dict[type_name].components.values():
+            active = field_var.active
+            if field_var.name == component and not active:
+                field_var.active = True
                 datatype = field_var.type
                 dim = field_var.dim
                 dtype_info_list.append([dtype, field_var.name, datatype, f"{dim}D"])

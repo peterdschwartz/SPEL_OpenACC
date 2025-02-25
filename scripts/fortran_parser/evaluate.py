@@ -609,7 +609,7 @@ def evaluate_field_access(branch: ArgTree, env: Environment) -> ArgType:
     # FieldAccessExpression only gets used if the instance is AoS
     inst_name = get_ident(inst_node)
     inst = env.inst_dict[inst_name]
-    field_var: Variable = inst.components[field_name]["var"]
+    field_var: Variable = inst.components[field_name]
 
 
     branch.node.ident = inst_name+"(index)%"+field_name

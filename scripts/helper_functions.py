@@ -497,6 +497,7 @@ def replace_elmtype_arg(passed_args: dict[str,str], childsub: Subroutine):
         new_key = f"{repl_name}%{field}"
         stat = childsub.arg_access_by_ln[key]
         childsub.elmtype_access_by_ln[new_key] = stat.copy()
+        childsub.elmtype_access_by_ln.pop(key,None)
 
     return
 
@@ -525,13 +526,13 @@ def replace_ptr_with_targets(elmtype, type_dict, insts_to_type_dict, use_c13c14=
         type_name = insts_to_type_dict[inst_name]
         dtype = type_dict[type_name]
         member = dtype.components[member_name]
-        if member["var"].pointer:
-            member["active"] = True
+        if member.pointer:
+            member.active = True
             status = elmtype.pop(gv)
             if not use_c13c14:
                 targets_to_add = {
                     target: status
-                    for target in member["var"].pointer
+                    for target in member.pointer
                     if not c13c14.search(target)
                 }
                 elmtype.update(targets_to_add)
@@ -624,3 +625,11 @@ def make_call_tree(flat_calls: list[CallTuple]) -> CallTree:
         stack.append((call.nested, node_tree))
 
     return root
+
+def merge_status_list(gv:str, elmtype:dict[str,list[ReadWrite]], stat_list: list[ReadWrite]):
+    if gv in elmtype:
+        elmtype[gv].extend(stat_list)
+        elmtype[gv].sort(key=lambda rw: rw.ln)
+    else:
+        elmtype[gv] = stat_list.copy()
+    return

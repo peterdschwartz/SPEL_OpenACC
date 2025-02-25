@@ -6,6 +6,7 @@
 #   * Remove `managed = False` lines if you wish to allow Django to create, modify, and delete the table
 # Feel free to rename the models, but don't rename db_table values or field names.
 from django.db import models
+from django.db.models import UniqueConstraint
 
 
 class AuthGroup(models.Model):
@@ -125,21 +126,27 @@ class DjangoSession(models.Model):
 
 
 class ModuleDependency(models.Model):
-    dependency_id = models.AutoField(primary_key=True, default=1)
-    module = models.ForeignKey("Modules", on_delete=models.CASCADE, default=1)
+    objects = models.Manager()
+    dependency_id = models.AutoField(primary_key=True)
+    module = models.ForeignKey("Modules", on_delete=models.CASCADE)
     dep_module = models.ForeignKey(
         "Modules",
         on_delete=models.CASCADE,
         related_name="moduledependency_dep_module_set",
-        default=1,
     )
     object_used = models.CharField(max_length=100, blank=True, null=True)
 
     class Meta:
         db_table = "module_dependency"
+        constraints = [
+            UniqueConstraint(
+                fields=("module", "dep_module", "object_used"), name="unique_mod_dep"
+            ),
+        ]
 
 
 class Modules(models.Model):
+    objects = models.Manager()
     module_id = models.AutoField(primary_key=True)
     module_name = models.CharField(unique=True, max_length=100)
 
@@ -148,12 +155,12 @@ class Modules(models.Model):
 
 
 class SubroutineArgs(models.Model):
+    objects = models.Manager()
     arg_id = models.AutoField(primary_key=True)
     subroutine = models.ForeignKey(
         "Subroutines",
         models.CASCADE,
         related_name="subroutine_args",
-        default=1,
     )
     arg_type = models.CharField(max_length=100)
     arg_name = models.CharField(max_length=100)
@@ -161,6 +168,11 @@ class SubroutineArgs(models.Model):
 
     class Meta:
         db_table = "subroutine_args"
+        constraints = [
+            UniqueConstraint(
+                fields=("subroutine", "arg_type", "arg_name"), name="unique_sub_args"
+            ),
+        ]
 
 
 class SubroutineCalltree(models.Model):
@@ -170,17 +182,20 @@ class SubroutineCalltree(models.Model):
         "Subroutines",
         on_delete=models.CASCADE,
         related_name="parent_subroutine",
-        default=1,
     )
     child_subroutine = models.ForeignKey(
         "Subroutines",
         on_delete=models.CASCADE,
         related_name="child_subroutine",
-        default=1,
     )
 
     class Meta:
         db_table = "subroutine_calltree"
+        constraints = [
+            UniqueConstraint(
+                fields=("parent_subroutine", "child_subroutine"), name="unique_calltree"
+            ),
+        ]
 
 
 class SubroutineLocalArrays(models.Model):
@@ -189,7 +204,6 @@ class SubroutineLocalArrays(models.Model):
     subroutine = models.ForeignKey(
         "Subroutines",
         on_delete=models.CASCADE,
-        default=1,
         related_name="subroutine_locals",
     )
     array_name = models.CharField(max_length=100)
@@ -197,21 +211,28 @@ class SubroutineLocalArrays(models.Model):
 
     class Meta:
         db_table = "subroutine_local_arrays"
+        constraints = [
+            UniqueConstraint(
+                fields=("subroutine", "array_name"), name="unique_sub_locals"
+            ),
+        ]
 
 
 class Subroutines(models.Model):
     objects = models.Manager()
     subroutine_id = models.AutoField(primary_key=True)
-    subroutine_name = models.CharField(unique=True, max_length=100)
+    subroutine_name = models.CharField(max_length=100)
     module = models.ForeignKey(
         Modules,
         on_delete=models.CASCADE,
         related_name="subroutine_module",
-        default=1,
     )
 
     class Meta:
         db_table = "subroutines"
+        constraints = [
+            UniqueConstraint(fields=("subroutine_name", "module"), name="unique_subs")
+        ]
 
     def __str__(self):
         return f"{self.subroutine_name}"
@@ -219,12 +240,11 @@ class Subroutines(models.Model):
 
 class SubroutineActiveGlobalVars(models.Model):
     objects = models.Manager()
-    variable_id = models.AutoField(primary_key=True, default=1)
+    variable_id = models.AutoField(primary_key=True)
     subroutine = models.ForeignKey(
         "Subroutines",
         on_delete=models.CASCADE,
         related_name="subroutine_dtype_vars",
-        default=1,
     )
     instance = models.ForeignKey(
         "UserTypeInstances",
@@ -236,10 +256,9 @@ class SubroutineActiveGlobalVars(models.Model):
     member = models.ForeignKey(
         "TypeDefinitions",
         models.DO_NOTHING,
-        default=1,
         related_name="active_member",
     )
-    status = models.CharField(max_length=2, default="xx")
+    status = models.CharField(max_length=2)
 
     class Meta:
         db_table = "subroutine_active_global_vars"
@@ -247,6 +266,7 @@ class SubroutineActiveGlobalVars(models.Model):
 
 
 class TypeDefinitions(models.Model):
+    objects = models.Manager()
     define_id = models.AutoField(primary_key=True)
     module = models.ForeignKey(
         Modules,
@@ -271,6 +291,7 @@ class TypeDefinitions(models.Model):
 
 
 class UserTypeInstances(models.Model):
+    objects = models.Manager()
     instance_id = models.AutoField(primary_key=True)
     instance_type = models.ForeignKey(
         "UserTypes",
@@ -282,9 +303,15 @@ class UserTypeInstances(models.Model):
     class Meta:
         managed = False
         db_table = "user_type_instances"
+        constraints = [
+            UniqueConstraint(
+                fields=("instance_type", "instance_name"), name="unique_instances"
+            )
+        ]
 
 
 class UserTypes(models.Model):
+    objects = models.Manager()
     user_type_id = models.AutoField(primary_key=True)
     module = models.ForeignKey(
         Modules,
@@ -296,3 +323,6 @@ class UserTypes(models.Model):
     class Meta:
         managed = False
         db_table = "user_types"
+        constraints = [
+            UniqueConstraint(fields=("module", "user_type_name"), name="unique_types")
+        ]

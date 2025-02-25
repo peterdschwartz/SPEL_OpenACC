@@ -14,11 +14,10 @@ from scripts.helper_functions import (ReadWrite, SubroutineCall,
                                       analyze_sub_variables, combine_status,
                                       determine_level_in_tree,
                                       find_child_subroutines, intrinsic_types,
-                                      is_derived_type, normalize_soa_keys,
-                                      replace_elmtype_arg,
+                                      is_derived_type, merge_status_list,
+                                      normalize_soa_keys, replace_elmtype_arg,
                                       summarize_read_write_status,
                                       trace_derived_type_arguments)
-from scripts.interfaces import resolve_interface
 from scripts.LoopConstructs import Loop, exportVariableDependency
 from scripts.mod_config import _bc, _no_colors, spel_dir
 from scripts.process_associate import getAssociateClauseVars
@@ -626,7 +625,6 @@ class Subroutine(object):
 
         """
         func_name = "analyze_variables"
-        print(f"{func_name}::{self.name}")
 
         global_vars: Dict[str,Variable] = {}
         for dtype in type_dict.values():
@@ -655,8 +653,15 @@ class Subroutine(object):
         for var_name,stat_list in norm.items():
             if var_name in self.active_global_vars:
                 continue
-            actual_name = self.associate_vars[var_name] if var_name in self.associate_vars else var_name
-            self.elmtype_access_by_ln[actual_name] = stat_list.copy()
+            if var_name in self.associate_vars:
+                actual_name = self.associate_vars[var_name]
+                inst, _ = actual_name.split("%")
+                if inst in self.Arguments:
+                    merge_status_list(actual_name,self.arg_access_by_ln,stat_list)
+                else:
+                    merge_status_list(actual_name,self.elmtype_access_by_ln,stat_list)
+            else:
+                self.elmtype_access_by_ln[var_name] = stat_list.copy()
 
         # Analyze local variables and add any pointers to elmtypes to elmtype_access_by_ln
         local_var_dict = self.LocalVariables["arrays"] | self.LocalVariables["scalars"]
@@ -671,16 +676,11 @@ class Subroutine(object):
         for ptr, gv_list in self.ptr_vars.items():
             stat_list = local_accessed[ptr]
             for gv in gv_list:
-                if gv in self.elmtype_access_by_ln:
-                    self.elmtype_access_by_ln[gv].extend(stat_list)
-                    self.elmtype_access_by_ln[gv].sort(key=lambda rw: rw.ln)
+                inst, _ = gv.split("%")
+                if inst in self.Arguments:
+                    merge_status_list(gv, self.arg_access_by_ln, stat_list)
                 else:
-                    self.elmtype_access_by_ln[gv] = stat_list.copy()
-
-        # for var_name, stat_list in self.arg_access_by_ln.items():
-        #     actual_name = self.associate_vars[var_name] if var_name in self.associate_vars else var_name
-        #     if("%" in actual_name):
-        #         self.elmtype_access_by_ln[actual_name] = stat_list.copy()
+                    merge_status_list(gv, self.elmtype_access_by_ln, stat_list)
 
         self.global_analyzed = True
 
@@ -724,11 +724,6 @@ class Subroutine(object):
                     self.elmtype_w[var] = status
                 case 'rw':
                     self.elmtype_rw[var] = status
-        pprint(self.elmtype_r)
-        pprint(self.elmtype_w)
-        pprint(self.elmtype_rw)
-
-
         return 
 
 

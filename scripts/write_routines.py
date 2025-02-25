@@ -403,10 +403,9 @@ def adjust_call_sig(args, calls, num_filter_members):
     return adj_args, adj_calls
 
 
-def get_filter_members(filter_type):
+def get_filter_members(filter_type: DerivedType):
     member_list = []
-    for comp in filter_type.components.values():
-        member_var = comp["var"]
+    for member_var in filter_type.components.values():
         if "num_" in member_var.name:
             member_list.append(member_var.name)
 
@@ -495,7 +494,7 @@ def prepare_unit_test_files(
     return
 
 
-def duplicate_clumps(typedict):
+def duplicate_clumps(typedict: dict[str,DerivedType]):
     """
     Function that writes a Fortran module containing
     subroutines needed to duplicate the input data
@@ -576,10 +575,9 @@ def duplicate_clumps(typedict):
         if dtype.active and type_name in PHYSICAL_PROP_TYPE_LIST:
             for var in dtype.instances.values():
                 if var.active:
-                    for c in dtype.components.values():
-                        active = c["active"]
-                        field_var = c["var"]
-                        bounds = c["bounds"]
+                    for field_var in dtype.components.values():
+                        active = field_var.active
+                        bounds = field_var.bounds
                         if not active:
                             continue
                         if field_var.name in ignore_list:
@@ -620,10 +618,9 @@ def duplicate_clumps(typedict):
             for var in dtype.instances.values():
                 if not var.active:
                     continue
-                for c in dtype.components.values():
-                    active = c["active"]
-                    field_var = c["var"]
-                    bounds = c["bounds"]
+                for field_var in dtype.components.values():
+                    active = field_var.active
+                    bounds = field_var.bounds
                     if not active:
                         continue
                     fname = var.name + "%" + field_var.name
@@ -885,9 +882,8 @@ def create_pointer_type_sub(lines, dtype, all_active=False):
 
     # Allocate the instance based on the number of unique targets for the pointer fields:
     num_targets = 0
-    for member in dtype.components.values():
-        member_var = member["var"]
-        active = member["active"]
+    for member_var in dtype.components.values():
+        active = member_var.active
         num_targets_new = len(member_var.pointer)
         if num_targets == 0:
             num_targets = num_targets_new
@@ -896,7 +892,7 @@ def create_pointer_type_sub(lines, dtype, all_active=False):
             sys.exit(1)
 
 
-def create_type_sub(lines, dtype, all_active=False):
+def create_type_sub(lines, dtype: DerivedType, all_active=False):
     """
     Functiion that creates a subroutine to allocate
     the active members of dtype
@@ -937,16 +933,15 @@ def create_type_sub(lines, dtype, all_active=False):
         lines.append(tabs + "do i = 1, N\n")
         tabs = set_indent("shift")
     inst_name = "this_type" if inst_dim == 0 else "this_type(i)"
-    for member in dtype.components.values():
-        member_var = member["var"]
-        active = member["active"]
+    for member_var in dtype.components.values():
+        active = member_var.active
         if active:
             dim_string = ""
             if member_var.dim > 0:
                 dim_li = [":" for i in range(0, member_var.dim)]
                 dim_string = ",".join(dim_li)
                 dim_string = f"({dim_string})"
-                bounds = member["bounds"].strip()
+                bounds = member_var.bounds
                 statement = f"{tabs}allocate({inst_name}%{member_var.name}{bounds});"
                 lines.append(statement)
             elif member_var.ptrscalar:
@@ -1052,7 +1047,7 @@ def create_type_allocators(type_dict, casedir):
     return allocations
 
 
-def create_deepcopy_subroutine(lines, dtype, all_active=False):
+def create_deepcopy_subroutine(lines, dtype: DerivedType, all_active=False):
     """
     Function to generate a subroutine for dtype that manually
     copies over the active members of dtype.
@@ -1070,9 +1065,9 @@ def create_deepcopy_subroutine(lines, dtype, all_active=False):
             print(_bc.WARNING + f"WARNING:Instance dim > 1D: {inst}" + _bc.ENDC)
 
     members_to_copy = [
-        comp["var"]
-        for comp in dtype.components.values()
-        if comp["active"] or all_active
+        field
+        for field in dtype.components.values()
+        if field.active or all_active
     ]
     if scalar:
         subname = f"deepcopy_{dtype.type_name}"
@@ -1202,9 +1197,8 @@ def create_write_read_functions(dtype: DerivedType, rw, ofile, gpu=False):
             # Any component of the derived type accessed by the Unit Test should have been toggled active at this point.
             # Go through the instance of this derived type and write I/O for any active components.
             vars = []
-            for component in dtype.components.values():
-                active = component["active"]
-                field_var = component["var"]
+            for field_var in dtype.components.values():
+                active = field_var.active
                 if not active:
                     continue
 
@@ -1240,10 +1234,9 @@ def create_write_read_functions(dtype: DerivedType, rw, ofile, gpu=False):
 
             # Any component of the derived type accessed by the Unit Test should have been toggled active at this point.
             # Go through the instance of this derived type and write I/O for any active components.
-            for component in dtype.components.values():
-                active = component["active"]
-                field_var = component["var"]
-                bounds = component["bounds"]
+            for field_var in dtype.components.values():
+                active = field_var.active
+                bounds = field_var.bounds
                 if not active:
                     continue
                 c13c14 = bool("c13" in field_var.name or "c14" in field_var.name)

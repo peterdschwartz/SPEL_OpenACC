@@ -217,12 +217,13 @@ contains
       associate(&
           field1 => mytype2%field1, &
           field2 => mytype2%field2,&
-          field3 => mytype2%field3&
+          field3 => mytype2%field3,&
+          hrv => col_nf_inst%hrv_deadstemn_to_prod10n &
       )
       if ( mytype2%active  )then
          do i=1, 10
             field2(i) = field2(i)/field1(i) + field3(i)
-            col_nf_inst%hrv_deadstemn_to_prod10n(i) = field2(i)
+            hrv(i) = field2(i)
          end do 
       end if 
       end associate
