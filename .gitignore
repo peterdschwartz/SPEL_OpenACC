@@ -51,3 +51,5 @@ Thumbs.db
 **/__pycache__/*
 **/spel/spel/app/management/commands/csv/
 **/scripts/database/csv/
+*.egg-info/
+.sfdx/
