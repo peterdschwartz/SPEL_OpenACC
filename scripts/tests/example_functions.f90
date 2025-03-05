@@ -202,7 +202,7 @@ contains
 
       call ptr_test_sub(filter(i_type)%num_soilc, filter(i_type)%soilc, test_ptr)
 
-      call trace_dtype_example(mytype, col_nf)
+      call trace_dtype_example(mytype, col_nf, .true.)
 
       test_ptr(:,:) = SHR_CONST_SPVAL
 
@@ -210,9 +210,10 @@ contains
 
    end subroutine call_sub
 
-   subroutine trace_dtype_example(mytype2, col_nf_inst)
+   subroutine trace_dtype_example(mytype2, col_nf_inst, flag)
       type(test_type) , INTENT(INOUT) :: mytype2
       type(column_nitrogen_flux), INTENT(INOUT) :: col_nf_inst
+      logical, intent(in) :: flag
       integer :: i
       associate(&
           field1 => mytype2%field1, &
@@ -220,7 +221,7 @@ contains
           field3 => mytype2%field3,&
           hrv => col_nf_inst%hrv_deadstemn_to_prod10n &
       )
-      if ( mytype2%active  )then
+      if ( mytype2%active .or. flag )then
          do i=1, 10
             field2(i) = field2(i)/field1(i) + field3(i)
             hrv(i) = field2(i)

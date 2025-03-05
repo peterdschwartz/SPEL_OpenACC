@@ -81,11 +81,10 @@ class Variable(object):
         self.parameter: bool = parameter
         # These are used for Argument variables
         self.optional: bool = optional
-        self.keyword = keyword
+        self.keyword: str = keyword
         self.intent: str = intent
         # filter_used corresponds to adjusting memory allocations
         self.filter_used = ""
-        self.subs = []
 
         # Mostly used for global derived-type variables
         if declaration:
@@ -126,8 +125,6 @@ class Variable(object):
 
     def printVariable(self, ofile=sys.stdout):
         ofile.write(f"{self}\n")
-        if self.subs:
-            ofile.write(f"Passed to {self.subs} {self.keyword}\n")
 
 
 def comment_line(lines, ct, mode="normal", verbose=False):

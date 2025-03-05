@@ -24,13 +24,13 @@ def test_info_SoilTemp():
 
     fn, startl, endl = find_file_for_subroutine(sub_name)
 
-    mod_dict, file_list, main_sub_dict = process_for_unit_test(
+    file_list = process_for_unit_test(
         fname=fn,
         case_dir="./",
         mod_dict=mod_dict,
         mods=[],
         required_mods=[],
-        main_sub_dict=main_sub_dict,
+        sub_dict=main_sub_dict,
         overwrite=True,
         verbose=False,
     )

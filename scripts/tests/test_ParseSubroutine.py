@@ -19,6 +19,7 @@ def test_Functions():
     ):
         from scripts.analyze_subroutines import Subroutine
         from scripts.edit_files import modify_file
+        from scripts.fortran_modules import get_module_name_from_file
         from scripts.mod_config import scripts_dir
         from scripts.utilityFunctions import Variable
 
@@ -45,7 +46,15 @@ def test_Functions():
         with open(fn, "r") as ifile:
             lines = ifile.readlines()
 
-        sub_dict = modify_file(lines, fn, sub_dict={}, verbose=False, overwrite=False)
+        _, mod_name = get_module_name_from_file(fn)
+        sub_dict = modify_file(
+            lines,
+            fn,
+            sub_dict={},
+            mod_name=mod_name,
+            verbose=False,
+            overwrite=False,
+        )
 
         for key, ans in SUB_NAME_DICT.items():
             func: Subroutine = sub_dict[key]
@@ -63,13 +72,13 @@ def test_getArguments(subtests):
         "scripts.mod_config.SHR_SRC", test_dir
     ):
         import scripts.dynamic_globals as dg
+        from scripts.aggregate import aggregate_dtype_vars
         from scripts.analyze_subroutines import Subroutine
         from scripts.DerivedType import DerivedType
         from scripts.edit_files import process_for_unit_test
         from scripts.fortran_modules import FortranModule
-        from scripts.helper_functions import construct_call_tree
         from scripts.mod_config import scripts_dir
-        from scripts.variable_analysis import determine_global_variable_status
+        from scripts.UnitTestforELM import process_subroutines_for_unit_test
 
         expected_arg_status = {
             "test_parsing_sub": {
@@ -132,33 +141,30 @@ def test_getArguments(subtests):
                 "mytype2%active": "r",
                 "col_nf_inst": "w",
                 "col_nf_inst%hrv_deadstemn_to_prod10n": "w",
+                "flag":'r',
             },
         }
 
         dg.populate_interface_list()
         fn = f"{scripts_dir}/tests/example_functions.f90"
+        test_sub_name = "call_sub"
+        sub_name_list = [test_sub_name]
+
         mod_dict: dict[str, FortranModule] = {}
         main_sub_dict: dict[str, Subroutine] = {}
 
-        mod_dict, file_list, main_sub_dict = process_for_unit_test(
+        file_list = process_for_unit_test(
             fname=fn,
             case_dir="./",
             mod_dict=mod_dict,
             mods=[],
             required_mods=[],
-            main_sub_dict=main_sub_dict,
+            sub_dict=main_sub_dict,
             overwrite=False,
             verbose=False,
         )
-        test_sub_name = "call_sub"
 
-        sub_name_list = [test_sub_name]
-        subroutines: dict[str, Subroutine] = {
-            s: main_sub_dict[s] for s in sub_name_list
-        }
-
-        for sub in main_sub_dict.values():
-            determine_global_variable_status(mod_dict, sub)
+        main_sub_dict[test_sub_name].unit_test_function = True
 
         type_dict: dict[str, DerivedType] = {}
         for mod in mod_dict.values():
@@ -180,52 +186,30 @@ def test_getArguments(subtests):
                 instance_to_user_type[instance.name] = type_name
                 instance_dict[instance.name] = dtype
 
-        active_vars = subroutines[test_sub_name].active_global_vars
+        process_subroutines_for_unit_test(
+            mod_dict=mod_dict,
+            sub_dict=main_sub_dict,
+            type_dict=type_dict,
+        )
+        active_vars = main_sub_dict[test_sub_name].active_global_vars
 
         assert (
             len(active_vars) == 3
         ), f"Didn't correctly find the active global variables:\n{active_vars}"
 
-        for s in sub_name_list:
-            sub = subroutines[s]
-            sub.collect_var_and_call_info(
-                dtype_dict=type_dict,
-                main_sub_dict=main_sub_dict,
-                verbose=True,
-            )
-            flat_list = construct_call_tree(
-                sub=sub,
-                sub_dict=main_sub_dict,
-                dtype_dict=type_dict,
-                nested=0,
-            )
+        for subname in expected_arg_status:
+            childsub = main_sub_dict[subname]
+            test_dict = {
+                k: rw.status for k, rw in childsub.arguments_read_write.items()
+            }
+            with subtests.test(msg=subname):
+                assert expected_arg_status[subname] == test_dict
 
-            if sub.abstract_call_tree:
-                # Note that the last "childsub" in the generator is the parent sub
-                for tree in sub.abstract_call_tree.traverse_postorder():
-                    subname = tree.node.subname
-                    childsub = main_sub_dict[subname]
-                    if not childsub.args_analyzed:
-                        childsub.parse_arguments(main_sub_dict, type_dict)
-                        test_dict = {
-                            k: rw.status
-                            for k, rw in childsub.arguments_read_write.items()
-                        }
-                        with subtests.test(msg=subname):
-                            assert expected_arg_status[subname] == test_dict
-                    if not childsub.global_analyzed:
-                        childsub.analyze_variables(main_sub_dict, type_dict)
-
-        for sub in main_sub_dict.values():
-            sub.match_arg_to_inst(type_dict)
-
-        for sub in main_sub_dict.values():
-            if sub.elmtype_access_by_ln:
-                sub.summarize_readwrite()
-
-        for sub in main_sub_dict.values():
-            print(f"========== {sub.name} ===========")
-            pprint(sub.elmtype_access_by_ln)
+        # aggregate_dtype_vars(
+        #     sub_dict=main_sub_dict,
+        #     type_dict=type_dict,
+        #     inst_to_dtype_map=instance_to_user_type,
+        # )
 
 
 def test_arg_intent():
@@ -235,7 +219,8 @@ def test_arg_intent():
         import scripts.dynamic_globals as dg
         from scripts.analyze_subroutines import Subroutine
         from scripts.edit_files import process_for_unit_test
-        from scripts.fortran_modules import FortranModule, get_module_name_from_file
+        from scripts.fortran_modules import (FortranModule,
+                                             get_module_name_from_file)
         from scripts.mod_config import scripts_dir
 
         dg.populate_interface_list()
@@ -249,7 +234,7 @@ def test_arg_intent():
             mod_dict=mod_dict,
             mods=[],
             required_mods=[],
-            main_sub_dict=main_sub_dict,
+            sub_dict=main_sub_dict,
             overwrite=False,
             verbose=False,
         )

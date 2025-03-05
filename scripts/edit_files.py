@@ -537,9 +537,10 @@ def modify_file(
                             el = re.sub(r"\s*(=>)\s*", "|", el)
                     el = el.strip().lower()
                     if el not in bad_subroutines:
-                        if verbose:
+                        if el == "spval":
                             print(f"Adding {el} to bad_subroutines")
-                            print(f"from {fn} \nline: {l}")
+                            print(f"from {fn} \nline: {l_cont}")
+                            sys.exit(1)
                         bad_subroutines.append(el)
             lines, newct = comment_line(lines=lines, ct=linenum, verbose=verbose)
             ct = AdjustLine(ct, newct, linenum)
@@ -741,9 +742,9 @@ def process_for_unit_test(
     fname: str,
     case_dir: str,
     mod_dict: dict[str, FortranModule],
+    sub_dict: dict[str,Subroutine],
     mods: list[str]=[],
     required_mods=[],
-    main_sub_dict={},
     overwrite=False,
     verbose=False,
     singlefile=False,
@@ -765,8 +766,6 @@ def process_for_unit_test(
         singlefile -> flag that disables recursive processing.
     """
     func_name = "process_for_unit_test"
-
-    sub_dict = main_sub_dict.copy()
 
     initial_mods = mods.copy()
     # First, get complete list of module to be processed and removed.
@@ -792,7 +791,6 @@ def process_for_unit_test(
     required_mod_paths = [get_filename_from_module(m) for m in required_mods]
     for rmod in required_mod_paths:
         if rmod not in mods:
-            mods.append(rmod)
             mods, mod_dict = get_used_mods(
                 ifile=rmod,
                 mods=mods,
@@ -809,7 +807,9 @@ def process_for_unit_test(
     # Sort the file dependencies
     with profile_ctx(enabled=False, section="sort_file_dependency") as pc:
         linenumber, unit_test_module = get_module_name_from_file(fpath=fname)
-        file_list = sort_file_dependency(mod_dict, unit_test_module)
+        file_list: list[str] = []
+        sort_file_dependency(mod_dict, unit_test_module, file_list)
+
         if verbose:
             print("Newly added mods after processing required mods:")
             new_mods = [m.split("/")[-1] for m in mods if m not in initial_mods]
@@ -847,15 +847,15 @@ def process_for_unit_test(
 
     # Transfer subroutines to main dictionary
     for subname, sub in sub_dict.items():
-        if subname not in main_sub_dict:
-            main_sub_dict[subname] = sub
+        if subname not in sub_dict:
+            sub_dict[subname] = sub
 
-    if verbose:
+    if verbose :
         print(f"File list for Unit Test: {case_dir}")
         for f in file_list:
             print(f)
 
-    return mod_dict, file_list, main_sub_dict
+    return file_list
 
 
 def remove_reference_to_subroutine(lines, subnames):

@@ -9,7 +9,7 @@ import pandas as pd
 from scripts.analyze_subroutines import Subroutine
 from scripts.DerivedType import DerivedType
 from scripts.fortran_modules import FortranModule
-from scripts.mod_config import E3SM_SRCROOT, scripts_dir
+from scripts.mod_config import E3SM_SRCROOT, django_database, scripts_dir
 from scripts.utilityFunctions import Variable
 
 
@@ -86,6 +86,7 @@ def unpickle_unit_test(commit):
 
 
 def export_table_csv():
+    """ """
 
     desc = (
         " Given input of commit name,"
@@ -108,11 +109,12 @@ def export_table_csv():
 
     inst_to_dtype["bounds"] = type_dict["bounds_type"]
 
-    prefix = f"{scripts_dir}/database/csv/"
+    prefix = django_database
     export_module_usage(mod_dict, prefix)
+    export_subroutines(sub_dict, prefix)
     export_subroutine_args(sub_dict, prefix)
     export_sub_call_tree(sub_dict, prefix)
-    export_user_types(type_dict, prefix)
+    export_type_insts(type_dict, prefix)
     export_type_defs(type_dict, prefix)
     export_sub_active_dtypes(sub_dict, inst_to_dtype, prefix)
     return
@@ -126,7 +128,6 @@ def export_type_defs(type_dict: dict[str, DerivedType], prefix: str):
         "member_name",
         "dim",
         "bounds",
-        "active",
     ]
     data = {f: [] for f in field_names}
     csv_file = f"{prefix}type_defs.csv"
@@ -138,14 +139,31 @@ def export_type_defs(type_dict: dict[str, DerivedType], prefix: str):
         data["member_name"].append(field_var.name)
         data["dim"].append(field_var.dim)
         data["bounds"].append(field_var.bounds)
-        data["active"].append(field_var.active)
         return
 
     for dtype in type_dict.values():
         type_name = dtype.type_name
         mod = dtype.declaration
         for field_var in dtype.components.values():
+            if "%" in field_var.name:
+                field_var.name = field_var.name.split("%")[1]
             add_row(mod, type_name, field_var)
+
+    write_dict_to_csv(data, field_names, csv_file)
+    return
+
+
+def export_subroutines(sub_dict: dict[str, Subroutine], prefix: str):
+    """ """
+    field_names = ["module", "subroutine"]
+    data = {f: [] for f in field_names}
+
+    csv_file = f"{prefix}subroutines.csv"
+    for sub in sub_dict.values():
+        module = sub.module
+        sub_name = sub.name
+        data["module"].append(module)
+        data["subroutine"].append(sub_name)
 
     write_dict_to_csv(data, field_names, csv_file)
     return
@@ -157,8 +175,9 @@ def export_sub_active_dtypes(
     prefix: str,
 ):
     field_names = [
-        "module",
+        "sub_module",
         "subroutine",
+        "type_module",
         "inst_type",
         "inst_name",
         "member_type",
@@ -168,19 +187,24 @@ def export_sub_active_dtypes(
     data = {f: [] for f in field_names}
     csv_file = f"{prefix}active_dtype_vars.csv"
 
-    def add_row(mod_name, sub_name, inst_type, inst_name, field_var, status):
-        data["module"].append(mod_name)
+    def add_row(
+        mod_name,
+        sub_name,
+        type_module,
+        inst_type,
+        inst_name,
+        field_var,
+        status,
+    ):
+        data["sub_module"].append(mod_name)
         data["subroutine"].append(sub_name)
+        data["type_module"].append(type_module)
         data["inst_type"].append(inst_type)
         data["inst_name"].append(inst_name)
         data["member_type"].append(field_var.type)
         data["member_name"].append(field_var.name)
         data["status"].append(status)
         return
-
-    # sub_name = "hybrid_phs"
-    # sub = sub_dict[sub_name]
-    # elmtypes = sub.elmtype_rw | sub.elmtype_w | sub.elmtype_r
 
     for sub in sub_dict.values():
         module = sub.module
@@ -192,16 +216,24 @@ def export_sub_active_dtypes(
             inst, field = dtype_var.split("%")
             dtype = inst_to_type_dict[inst]
             field_var = dtype.components[field]
-            add_row(module, sub_name, dtype.type_name, inst, field_var, stat)
+            if "%" in field_var.name:
+                field_var.name = field_var.name.split("%")[1]
+            add_row(
+                module,
+                sub_name,
+                dtype.declaration,
+                dtype.type_name,
+                inst,
+                field_var,
+                stat,
+            )
 
-    for field in data:
-        print(field, len(data[field]))
     write_dict_to_csv(data, field_names, csv_file)
 
     return
 
 
-def export_user_types(type_dict: dict[str, DerivedType], prefix: str):
+def export_type_insts(type_dict: dict[str, DerivedType], prefix: str):
     field_names = ["module", "user_type_name", "instance_name"]
     data = {f: [] for f in field_names}
     csv_file = f"{prefix}user_type_instances.csv"
@@ -223,20 +255,24 @@ def export_user_types(type_dict: dict[str, DerivedType], prefix: str):
 
 
 def export_sub_call_tree(sub_dict: dict[str, Subroutine], prefix: str):
-    field_names = ["parent_subroutine", "child_subroutine"]
+    field_names = ["mod_parent", "parent_subroutine", "mod_child", "child_subroutine"]
     data = {f: [] for f in field_names}
 
     csv_file = f"{prefix}subroutine_calltree.csv"
 
-    def add_row(parent, child):
+    def add_row(mod_parent, parent, mod_child, child):
+        data["mod_parent"].append(mod_parent)
         data["parent_subroutine"].append(parent)
+        data["mod_child"].append(mod_child)
         data["child_subroutine"].append(child)
         return
 
     for sub in sub_dict.values():
         parent = sub.name
+        mod_p = sub.module
         for child in sub.child_subroutines:
-            add_row(parent, child)
+            mod_c = sub_dict[child].module
+            add_row(mod_p, parent, mod_c, child)
 
     write_dict_to_csv(data, field_names, csv_file)
     return
@@ -244,12 +280,13 @@ def export_sub_call_tree(sub_dict: dict[str, Subroutine], prefix: str):
 
 def export_subroutine_args(sub_dict: dict[str, Subroutine], prefix):
 
-    field_names = ["subroutine", "arg_type", "arg_name", "dim"]
+    field_names = ["module", "subroutine", "arg_type", "arg_name", "dim"]
     csv_file = f"{prefix}subroutine_args.csv"
 
     export_dict = {f: [] for f in field_names}
 
-    def add_row(sub_name, arg: Variable):
+    def add_row(mod_name, sub_name, arg: Variable):
+        export_dict["module"].append(mod_name)
         export_dict["subroutine"].append(sub_name)
         export_dict["arg_type"].append(arg.type)
         export_dict["arg_name"].append(arg.name)
@@ -258,8 +295,9 @@ def export_subroutine_args(sub_dict: dict[str, Subroutine], prefix):
 
     for sub in sub_dict.values():
         sub_name = sub.name
+        module = sub.module
         for arg in sub.Arguments.values():
-            add_row(sub_name, arg)
+            add_row(module, sub_name, arg)
 
     write_dict_to_csv(export_dict, field_names, csv_file)
     return

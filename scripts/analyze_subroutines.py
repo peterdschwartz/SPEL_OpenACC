@@ -177,9 +177,7 @@ class Subroutine(object):
             self.Arguments = sort_args.copy()
 
         # These 3 dictionaries will be summaries of ReadWrite Status for the FUT subroutines as a whole
-        self.elmtype_r : dict[str,str] = {}
-        self.elmtype_w : dict[str,str] = {}
-        self.elmtype_rw: dict[str,str] = {}
+        self.elmtype_access_sum : dict[str,str] = {}
 
         self.elmtype_access_by_ln: Dict[str,List[ReadWrite]] = {}
 
@@ -519,10 +517,10 @@ class Subroutine(object):
             return False
         var_set.update(self.dtype_vars.keys())
 
-        if var_set & self.active_global_vars.keys():
-            print("Error: global non-dtype names overlap.")
-            print(var_set & self.active_global_vars.keys())
-            return False
+        # if var_set & self.active_global_vars.keys():
+        #     print("Error: global non-dtype names overlap.")
+        #     print(var_set & self.active_global_vars.keys())
+        #     return False
 
         return True
 
@@ -530,7 +528,7 @@ class Subroutine(object):
     @Trace.trace_decorator("collect_var_and_call_info")
     def collect_var_and_call_info(
         self,
-        main_sub_dict: dict[str,Subroutine],
+        sub_dict: dict[str,Subroutine],
         dtype_dict: dict[str,DerivedType],
         verbose=False,
     ):
@@ -562,18 +560,17 @@ class Subroutine(object):
 
         self.get_ptr_vars()
 
-        find_child_subroutines(self, main_sub_dict, global_vars)
+        find_child_subroutines(self, sub_dict, global_vars)
 
         for call_desc in self.sub_call_desc.values():
             actual_sub_name = call_desc.fn
-            if actual_sub_name not in main_sub_dict:
-                if verbose:
-                    print(
-                        _bc.WARNING
-                        + f"Warning: {actual_sub_name} not in main_sub_dict."
-                        + "\nCould be library function?"
-                        + _bc.ENDC
-                    )
+            if actual_sub_name not in sub_dict:
+                print(
+                    _bc.WARNING
+                    + f"Warning: {actual_sub_name} not in main_sub_dict."
+                    + "\nCould be library function?"
+                    + _bc.ENDC
+                )
                 childsub: Subroutine = Subroutine(
                     name=actual_sub_name,
                     mod_name="lib",
@@ -584,13 +581,12 @@ class Subroutine(object):
                     end=-999,
                     lib_func=True,
                 )
+                sub_dict[actual_sub_name] = childsub
             else:
-                childsub: Subroutine = main_sub_dict[actual_sub_name]
+                childsub: Subroutine = sub_dict[actual_sub_name]
 
             child_sub_names = [s for s in self.child_subroutines.keys()]
             if actual_sub_name not in child_sub_names:
-                childsub.calltree = self.calltree.copy()
-                childsub.calltree.append(actual_sub_name)
                 self.child_subroutines[actual_sub_name] = childsub
 
         self.preprocessed = True
@@ -699,48 +695,24 @@ class Subroutine(object):
         Called for parent subroutine: populate elmtype_access_by_ln
         with instances with status from arg_access_by_ln
         """
+        verbose = False
         name_map: dict[str,str] = {}
         for arg in self.Arguments.values():
             dtype = type_dict.get(arg.type, None)
             if dtype:
                 for inst in dtype.instances:
                     name_map[arg.name] = inst
-
-
-        replace_elmtype_arg(name_map, self)
-
+        if not name_map:
+            return
+        replace_elmtype_arg(name_map, self, verbose)
         return
 
     def summarize_readwrite(self):
-        """
-        
-        """
         summary_elmtype = summarize_read_write_status(self.elmtype_access_by_ln)
         for var, status in summary_elmtype.items():
-            match status:
-                case 'r':
-                    self.elmtype_r[var] = status
-                case 'w':
-                    self.elmtype_w[var] = status
-                case 'rw':
-                    self.elmtype_rw[var] = status
+            self.elmtype_access_sum[var] = status
         return 
 
-
-    @Trace.trace_decorator("child_subroutine_analysis")
-    def child_subroutines_analysis(self, dtype_dict, main_sub_dict, verbose=False):
-
-        """
-        This function handles parsing child_subroutines and merging
-        variable dictionaries
-            self : parent subroutine
-            dtype_dict : dictionary of derived types
-            main_sub_dict : dictionary of all subroutines in files needed for unit testing
-        """
-        func_name = "child_subroutines_analysis"
-        self.analyzed_child_subroutines = True
-
-        return None
 
     def analyze_calltree(self, tree, casename=None):
         """
@@ -1177,23 +1149,13 @@ class Subroutine(object):
         maxlen = 0
         # read variables
         print("============= exportReadWriteVariables ===================")
-        print(self.elmtype_r)
-        for varname, components in self.elmtype_r.items():
+        for varname, components in self.elmtype_access_sum.items():
             for c in components:
                 var = f"{varname}%{c}"
                 read_flat.append(var)
                 all_flat.append(var)
                 if len(var) > maxlen:
                     maxlen = len(var)
-
-        for varname, components in self.elmtype_w.items():
-            for c in components:
-                var = f"{varname}%{c}"
-                write_flat.append(var)
-                if len(var) > maxlen:
-                    maxlen = len(var)
-                if var not in all_flat:
-                    all_flat.append(var)
 
         output_list = []
         # header
@@ -1524,20 +1486,3 @@ class Subroutine(object):
                 self.arguments_read_write[arg] = ReadWrite('-',-999)
         return None
 
-    def print_elmtype_access(self):
-        """
-        Function to print the read/write status of all derived type members
-        """
-        func_name = "print_elmtype_access"
-        print(_bc.OKGREEN + f"Derived Type Analysis for {self.name}")
-        print(f"{func_name}::Read-Only")
-        for key in self.elmtype_r.keys():
-            print(key, self.elmtype_r[key])
-        print(f"{func_name}::Write-Only")
-        for key in self.elmtype_w.keys():
-            print(key, self.elmtype_w[key])
-        print(f"{func_name}::Read-Write")
-        for key in self.elmtype_rw.keys():
-            print(key, self.elmtype_rw[key])
-        print(_bc.ENDC)
-        return None 

@@ -2,14 +2,23 @@ from enum import Enum
 from typing import Callable, Dict, List, Optional
 
 import scripts.fortran_parser.lexer as lexer
-from scripts.fortran_parser.spel_ast import (BoundsExpression, Expression,
-                                             ExpressionStatement,
-                                             FieldAccessExpression,
-                                             FloatLiteral, FuncExpression,
-                                             Identifier, InfixExpression,
-                                             IntegerLiteral, PrefixExpression,
-                                             Program, Statement, StringLiteral,
-                                             SubCallStatement)
+from scripts.fortran_parser.spel_ast import (
+    BoundsExpression,
+    Expression,
+    ExpressionStatement,
+    FieldAccessExpression,
+    FloatLiteral,
+    FuncExpression,
+    Identifier,
+    InfixExpression,
+    IntegerLiteral,
+    LogicalLiteral,
+    PrefixExpression,
+    Program,
+    Statement,
+    StringLiteral,
+    SubCallStatement,
+)
 from scripts.fortran_parser.tokens import Token, TokenTypes
 from scripts.fortran_parser.tracing import Trace
 
@@ -60,6 +69,7 @@ class Parser:
         self.register_prefix_fns(TokenTypes.INT, self.parseIntegerLiteral)
         self.register_prefix_fns(TokenTypes.FLOAT, self.parse_FloatLiteral)
         self.register_prefix_fns(TokenTypes.STRING, self.parseStringLiteral)
+        self.register_prefix_fns(TokenTypes.LOGICAL, self.parseLogicalLiteral)
         self.register_prefix_fns(TokenTypes.BANG, self.parse_prefix_expr)
         self.register_prefix_fns(TokenTypes.MINUS, self.parse_prefix_expr)
         self.register_prefix_fns(TokenTypes.LPAREN, self.parse_grouped_expr)
@@ -115,8 +125,16 @@ class Parser:
 
     @Trace.trace_decorator("parseStringLiteral")
     def parseStringLiteral(self) -> Expression:
-        return StringLiteral(tok=self.cur_token,val=self.cur_token.literal)
+        return StringLiteral(tok=self.cur_token, val=self.cur_token.literal)
 
+    @Trace.trace_decorator("parseStringLiteral")
+    def parseLogicalLiteral(self) -> Expression:
+        val_str = self.cur_token.literal
+        if val_str == ".true.":
+            val = True
+        else:
+            val = False
+        return LogicalLiteral(tok=self.cur_token, val=val)
 
     def parse_FloatLiteral(self) -> Expression:
         num = FloatLiteral(tok=self.cur_token)

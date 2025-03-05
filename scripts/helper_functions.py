@@ -283,6 +283,8 @@ def check_arguments(
     """
     var_status: dict[str, ReadWrite] = {}
     call_ln = call_desc.ln
+    if child_sub.library:
+        return var_status
 
     match mode:
         case ArgLabel.dummy:
@@ -449,9 +451,6 @@ def trace_derived_type_arguments(
     Then, add the field access status from the child to the parent.
     """
     func_name = "trace_derived_type_arguments"
-    if verbose:
-        print(f"{func_name}::{parent_sub.name}")
-        print("instances:",inst_set)
 
     for call_desc in parent_sub.sub_call_desc.values():
         child_sub = sub_dict[call_desc.fn]
@@ -472,12 +471,12 @@ def trace_derived_type_arguments(
                 dummy_arg = child_sub.dummy_args_list[argn]
             names_to_replace[dummy_arg] = argvar.var.name
 
-        replace_elmtype_arg(names_to_replace,child_sub)
+        replace_elmtype_arg(names_to_replace,child_sub,verbose)
 
     return None
 
 
-def replace_elmtype_arg(passed_args: dict[str,str], childsub: Subroutine):
+def replace_elmtype_arg(passed_args: dict[str,str], childsub: Subroutine, verbose=False):
     """
     Function replaces entries in elmtype that are dummy_args of the child
     with the variable passed by the parent.
@@ -496,8 +495,10 @@ def replace_elmtype_arg(passed_args: dict[str,str], childsub: Subroutine):
         repl_name = passed_args[dummy_name]
         new_key = f"{repl_name}%{field}"
         stat = childsub.arg_access_by_ln[key]
+        # childsub.elmtype_access_by_ln.pop(key,None)
         childsub.elmtype_access_by_ln[new_key] = stat.copy()
-        childsub.elmtype_access_by_ln.pop(key,None)
+        if verbose:
+            print(f"Replacing {key} -> {new_key} in {childsub.name}")
 
     return
 

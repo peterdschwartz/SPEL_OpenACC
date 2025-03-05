@@ -5,16 +5,9 @@ from django.shortcuts import HttpResponse, render
 from django.views.decorators.http import require_http_methods
 
 from .calltree import Node, get_module_calltree, get_subroutine_calltree
-from .models import (
-    ModuleDependency,
-    Modules,
-    SubroutineActiveGlobalVars,
-    SubroutineArgs,
-    SubroutineCalltree,
-    Subroutines,
-    TypeDefinitions,
-    UserTypeInstances,
-)
+from .models import (ModuleDependency, Modules, SubroutineActiveGlobalVars,
+                     SubroutineArgs, SubroutineCalltree, Subroutines,
+                     TypeDefinitions, UserTypeInstances)
 
 register = template.Library()
 # import module_calltree
@@ -93,7 +86,7 @@ VIEWS_TABLE_DICT = {
         "html": "types.html",
         "fields": {
             "Id": "define_id",
-            "Module": "module.module_name",
+            "Module": "type_module.module_name",
             "Type Name": "user_type.user_type_name",
             "Member Type": "member_type",
             "Member Name": "member_name",
@@ -205,7 +198,6 @@ def subcall(request):
         "all": all,
     }
     if request.method == "POST":
-        # return render(request, "partials/table_subcall.html", context)
         return render(request, "partials/subcall_partial.html", context)
     return render(request, "partials/subcall_partial.html", context)
 

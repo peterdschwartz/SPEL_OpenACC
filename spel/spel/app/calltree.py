@@ -20,6 +20,16 @@ class Node:
     def __repr__(self):
         return f"Node(name:{self.name},dep:{self.children})"
 
+    # def print_tree(self, level: int = 0):
+    #     """Recursively prints the tree in a hierarchical format."""
+    #     if level == 0:
+    #         print("CallTree for ", self.node.subname)
+    #     indent = "|--" * level
+    #     print(f"{indent}>{self.node.subname}")
+    #
+    #     for child in self.children:
+    #         child.print_tree(level + 1)
+
 
 def modules_dfs(mod_id, node):
     if mod_id == 0 or mod_id == 2:
@@ -78,7 +88,6 @@ def get_module_calltree(mod_name):
     return json.dumps(r)
 
 
-
 def get_subroutine_details(instance, member, mode):
     from django.db.models import F
 
@@ -132,113 +141,63 @@ def get_subroutine_details(instance, member, mode):
     return results
 
 
-def subroutine_active_table(instance, member):
-    s = None
-    with connection.cursor() as cur:
-        cur.execute(
-            f"""
-            SELECT 
-                m1.subroutine_name, 
-                m2.instance_name, 
-                m4.member_name, 
-                m3.status 
-            FROM 
-                subroutines m1 
-            JOIN 
-                user_type_instances m2 
-            JOIN 
-                subroutine_active_global_vars m3 
-            JOIN 
-                type_definitions m4 
-            WHERE 
-                m3.subroutine_id = m1.subroutine_id 
-            AND 
-                m3.instance_id = m2.instance_id 
-            AND 
-                m3.member_id = m4.define_id 
-            AND 
-                m1.subroutine_id NOT IN (SELECT child_subroutine_id FROM {DB_NAME}.subroutine_calltree)
-            AND 
-                m2.instance_name = '{instance}'
-            AND
-                m4.member_name = '{member}' 
-            """
-        )
-        s = cur.fetchall()
-    return [i[0] for i in s]
-
-
-def subroutine_active_table_ALL(instance, member):
-    s = None
-    with connection.cursor() as cur:
-        cur.execute(
-            f"""
-            SELECT 
-                m1.subroutine_name, 
-                m2.instance_name, 
-                m4.member_name, 
-                m3.status 
-            FROM 
-                subroutines m1 
-            JOIN 
-                user_type_instances m2 
-            JOIN 
-                subroutine_active_global_vars m3 
-            JOIN 
-                type_definitions m4 
-            WHERE 
-                m3.subroutine_id = m1.subroutine_id 
-            AND 
-                m3.instance_id = m2.instance_id 
-            AND 
-                m3.member_id = m4.define_id 
-            AND 
-                m2.instance_name = '{instance}'
-            AND
-                m4.member_name = '{member}' 
-            
-            """
-        )
-        s = cur.fetchall()
-    return s
-
-
-def subroutine_dfs(sub_id, node, id_to_sub, active_subs):
+def build_calltree(root_subroutine_name, active_subs=None):
     """
-    Function that performs a depth-first-search of subroutine call tree,
-    to get the child subroutines.
-
-    If active_sub is non-empty, only subroutines listed their are included
+    Build a call tree starting from the subroutine with name root_subroutine_name.
+    If active_subs is provided (a set or list of subroutine names),
+    only include children whose names are in active_subs.
     """
+    from app.models import SubroutineCalltree, Subroutines
 
-    if active_subs:
-        all_active = False
-    else:
-        all_active = True
+    try:
+        root_sub = Subroutines.objects.get(subroutine_name=root_subroutine_name)
+    except Subroutines.DoesNotExist:
+        return None
 
-    if sub_id == 0:
-        return
-    visited = []
-    s = None
-    with connection.cursor() as cur:
-        cur.execute(
-            f"SELECT * FROM subroutine_calltree WHERE parent_subroutine_id={sub_id} order by parent_id"
-        )
-        s = cur.fetchall()
+    # Create a mapping: parent_subroutine_id -> list of child Subroutines
+    # Instead of doing many queries, we fetch all edges in one go.
+    edges = SubroutineCalltree.objects.select_related(
+        "parent_subroutine", "child_subroutine"
+    ).all()
+    calltree_map = {}
+    for edge in edges:
+        parent_id = edge.parent_subroutine.subroutine_name
+        calltree_map.setdefault(parent_id, []).append(edge.child_subroutine)
 
-    # Note that each row of s is of the form:
-    #   dep_id  parent_id child_id
-    for i in s:
-        dep = i[2]
-        dep_name = id_to_sub[dep]
-        if dep_name == "Null":
+    # Build the tree using a queue (BFS) to avoid recursion.
+    root_node = Node(root_sub.subroutine_name)
+    queue = [(root_sub, root_node)]
+    visited = set()
+
+    while queue:
+        current_sub, current_node = queue.pop(0)
+        # Avoid cycles:
+        if current_sub.subroutine_name in visited:
             continue
-        if dep not in visited and (all_active or dep_name in active_subs):
-            n = Node(id_to_sub[dep])
-            node.children.append(n)
-            subroutine_dfs(dep, n, id_to_sub, active_subs)
+        visited.add(current_sub.subroutine_name)
+        children = calltree_map.get(current_sub.subroutine_name, [])
+        for child in children:
+            child_node = Node(child.subroutine_name)
+            current_node.children.append(child_node)
+            queue.append((child, child_node))
 
-        visited.append(dep)
+    def prune_tree(node):
+        # If active_subs is None, we don't filter.
+        if active_subs is None:
+            return True
+        # Check if the current node is active.
+        contains_active = node.name in active_subs
+        pruned_children = []
+        for child in node.children:
+            # Recursively prune children.
+            if prune_tree(child):
+                pruned_children.append(child)
+                contains_active = True
+        node.children = pruned_children
+        return contains_active
+
+    prune_tree(root_node)
+    return root_node
 
 
 def subroutine_calltree_helper():
@@ -284,13 +243,7 @@ def get_subroutine_calltree(instance, member):
         active_vars_table.append(row)
 
     for sub_name in parent_sub_names:
-        root = Node("")
-        id_to_sub, sub_to_id = subroutine_calltree_helper()
-        root.name = sub_name
-
-        key = sub_to_id[sub_name]
-
-        subroutine_dfs(key, root, id_to_sub, active_subs)
+        root = build_calltree(sub_name, active_subs)
         tree.append(root)
 
     return tree, active_vars_table

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import subprocess as sp
 import sys
+from pprint import pprint
 from typing import TYPE_CHECKING, Dict, Optional
 
 import scripts.dynamic_globals as dg
@@ -447,6 +448,9 @@ def expand_dtype(dtype_vars: list[Variable], type_dict: dict[str, DerivedType])-
         temp: dict[str,Variable] = {
           f"{dtype_var.name}%{field.name}": adj_var_name(field,dtype_var) for field in fields
         }
+        if dtype.type_name == "landunit_physical_properties":
+            print("expand_dtype")
+            pprint(temp)
         result.update(temp)
     return result
 

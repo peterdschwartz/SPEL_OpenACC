@@ -8,7 +8,7 @@ from app.models import (
     UserTypeInstances,
     UserTypes,
 )
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, sys
 
 
 class Command(BaseCommand):
@@ -22,63 +22,70 @@ class Command(BaseCommand):
         with open(csv_file, newline="") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                subroutine_name = row["subroutine_name"].strip()
-                instance_name = row["instance_name"].strip()
-                module_name = row["module_name"].strip()
-                user_type_name = row["user_type_name"].strip()
+                subroutine_name = row["subroutine"].strip()
+                instance_name = row["inst_name"].strip()
+                sub_module_name = row["sub_module"].strip()
+                type_module_name = row["type_module"].strip()
+                user_type_name = row["inst_type"].strip()
                 member_type = row["member_type"].strip()
                 member_name = row["member_name"].strip()
                 status = row["status"].strip()
 
+                try:
+                    sub_mod_obj = Modules.objects.get(module_name=sub_module_name)
+                except Modules.DoesNotExist:
+                    self.stdout.write(
+                        self.style.ERROR(f"Module {sub_module_name} not found.")
+                    )
+                    sys.exit(1)
+
+                try:
+                    type_mod_obj = Modules.objects.get(module_name=type_module_name)
+                except Modules.DoesNotExist:
+                    self.stdout.write(
+                        self.style.ERROR(f"Module {type_module_name} not found.")
+                    )
+                    sys.exit(1)
+
                 # Lookup the Subroutine record.
                 try:
                     subroutine_obj = Subroutines.objects.get(
-                        subroutine_name=subroutine_name
+                        module=sub_mod_obj, subroutine_name=subroutine_name
                     )
                 except Subroutines.DoesNotExist:
                     self.stdout.write(
                         self.style.ERROR(f"Subroutine {subroutine_name} not found.")
                     )
-                    continue
+                    sys.exit(1)
+
+                try:
+                    inst_type_obj = UserTypes.objects.get(
+                        module=type_mod_obj, user_type_name=user_type_name
+                    )
+                except UserTypes.DoesNotExist:
+                    self.stdout.write(
+                        self.style.ERROR(f"Type {user_type_name} not found.")
+                    )
+                    sys.exit(1)
 
                 # Lookup the UserTypeInstances record.
                 try:
                     instance_obj = UserTypeInstances.objects.get(
-                        instance_name=instance_name
+                        inst_module=type_mod_obj,
+                        instance_type=inst_type_obj,
+                        instance_name=instance_name,
                     )
                 except UserTypeInstances.DoesNotExist:
                     self.stdout.write(
                         self.style.ERROR(f"Instance {instance_name} not found.")
                     )
-                    instance_obj = None  # or skip, based on your logic
-
-                # Lookup the Module record.
-                try:
-                    module_obj = Modules.objects.get(module_name=module_name)
-                except Modules.DoesNotExist:
-                    self.stdout.write(
-                        self.style.ERROR(f"Module {module_name} not found.")
-                    )
-                    continue
-
-                # Lookup the UserTypes record.
-                try:
-                    user_type_obj = UserTypes.objects.get(
-                        user_type_name=user_type_name, module=module_obj
-                    )
-                except UserTypes.DoesNotExist:
-                    self.stdout.write(
-                        self.style.ERROR(
-                            f"UserType {user_type_name} not found in module {module_name}."
-                        )
-                    )
-                    continue
+                    sys.exit(1)
 
                 # Lookup the TypeDefinitions record.
                 try:
                     type_def_obj = TypeDefinitions.objects.get(
-                        module=module_obj,
-                        user_type=user_type_obj,
+                        type_module=type_mod_obj,
+                        user_type=inst_type_obj,
                         member_type=member_type,
                         member_name=member_name,
                     )
@@ -88,12 +95,12 @@ class Command(BaseCommand):
                             f"TypeDefinition not found for module {module_name}, user_type {user_type_name}, member_type {member_type}, member_name {member_name}."
                         )
                     )
-                    continue
+                    sys.exit(1)
 
                 # Update or create the SubroutineActiveGlobalVars record.
                 obj, created = SubroutineActiveGlobalVars.objects.update_or_create(
                     subroutine=subroutine_obj,
-                    instance=instance_obj,  # this can be None if blank is allowed
+                    instance=instance_obj,
                     member=type_def_obj,
                     defaults={"status": status},
                 )

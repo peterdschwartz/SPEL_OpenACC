@@ -130,6 +130,11 @@ class Lexer:
                 delim = self.ch
                 lit: str = self.read_to_delim(delim)
                 tok = new_token(tokens.TokenTypes.STRING, lit)
+            case ".":
+                delim = self.ch
+                lit: str = self.read_to_delim(delim)
+                tok_type = tokens.lookup_indentifer(f".{ lit }.")
+                tok = new_token(tok_type, f".{ lit }.")
             case _:
                 cur_ch = self.ch
                 if cur_ch.isalpha() or cur_ch == "_":

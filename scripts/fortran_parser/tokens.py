@@ -30,6 +30,7 @@ class TokenTypes(Enum):
     # keywords
     SUBROUTINE = "SUBROUTINE"
     FUNCTION = "FUNCTION"
+    LOGICAL = "LOGICAL"
     TRUE = ".true."
     FALSE = ".false."
     RETURN = "RETURN"
@@ -37,8 +38,8 @@ class TokenTypes(Enum):
 
 
 keywords: Dict[str, TokenTypes] = {
-    ".true.": TokenTypes.TRUE,
-    ".false.": TokenTypes.FALSE,
+    ".true.": TokenTypes.LOGICAL,
+    ".false.": TokenTypes.LOGICAL,
     "call": TokenTypes.CALL,
     "subroutine": TokenTypes.SUBROUTINE,
     "function": TokenTypes.FUNCTION,

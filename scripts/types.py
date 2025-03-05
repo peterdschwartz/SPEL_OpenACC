@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import namedtuple
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, NamedTuple, Optional, Tuple
+from typing import Any, NamedTuple, Optional
 
 from scripts.utilityFunctions import Variable
 
@@ -254,7 +254,9 @@ class CallTree:
             yield from child.traverse_preorder()
 
     def traverse_postorder(self):
-        """Post-order traversal (children -> node)."""
+        """
+        Post-order traversal (children -> node).
+        """
         for child in self.children:
             yield from child.traverse_postorder()
         yield self

@@ -3,11 +3,20 @@ import pstats
 from pprint import pprint
 
 import scripts.dynamic_globals as dg
+from scripts.aggregate import aggregate_dtype_vars
+from scripts.analyze_subroutines import Subroutine
 from scripts.DerivedType import DerivedType
-from scripts.helper_functions import (construct_call_tree,
-                                      replace_ptr_with_targets,
-                                      summarize_read_write_status)
+from scripts.edit_files import sort_file_dependency
+from scripts.fortran_modules import FortranModule
+from scripts.helper_functions import construct_call_tree
+from scripts.mod_config import (_bc, default_mods, scripts_dir, spel_mods_dir,
+                                spel_output_dir, unittests_dir)
 from scripts.utilityFunctions import Variable
+from scripts.variable_analysis import determine_global_variable_status
+
+ModDict = dict[str, FortranModule]
+SubDict = dict[str, Subroutine]
+TypeDict = dict[str, DerivedType]
 
 
 def main() -> None:
@@ -21,13 +30,8 @@ def main() -> None:
     import sys
 
     import scripts.write_routines as wr
-    from scripts.analyze_subroutines import Subroutine
     from scripts.edit_files import process_for_unit_test
     from scripts.export_objects import pickle_unit_test
-    from scripts.fortran_modules import FortranModule
-    from scripts.mod_config import (_bc, default_mods, scripts_dir,
-                                    spel_mods_dir, spel_output_dir,
-                                    unittests_dir)
     from scripts.utilityFunctions import (find_file_for_subroutine,
                                           insert_header_for_unittest)
     from scripts.variable_analysis import determine_global_variable_status
@@ -55,14 +59,10 @@ def main() -> None:
 
     case_dir = unittests_dir + casename
 
-    # List of subroutines to be analyzed
-    sub_name_list = [
-        "Allocation1_PlantNPDemand",
-        "Allocation2_ResolveNPLimit",
-        "Allocation3_PlantCNPAlloc",
-    ]
     if args.sub_names:
         sub_name_list = [s.lower() for s in args.sub_names]
+    else:
+        sys.exit("Error- No subroutines provided for analysis")
 
     print(f"Creating UnitTest {casename} || {' '.join(sub_name_list)}")
 
@@ -96,7 +96,7 @@ def main() -> None:
     # Retrieve possible interfaces
     dg.populate_interface_list()
     # Initialize dictionary that will hold instance of all subroutines encountered.
-    main_sub_dict: dict[str, Subroutine] = {}
+    main_sub_dict: SubDict = {}
 
     # Initialize lists that will hold global variables based on read/write status
     read_types = []
@@ -104,11 +104,11 @@ def main() -> None:
 
     # dictionary holds instances for Unit Test specific subroutines
     sub_name_list = [s.lower() for s in sub_name_list]
-    subroutines: dict[str, Subroutine] = {}
+    subroutines: SubDict = {}
 
     # List to hold all the modules needed for the unit test
     needed_mods = []
-    mod_dict: dict[str, FortranModule] = {}
+    mod_dict: ModDict = {}
     for s in sub_name_list:
         # Get general info of the subroutine
         # Process files by removing certain modules
@@ -116,13 +116,13 @@ def main() -> None:
         # All file information will be stored in `mod_dict` and `main_sub_dict`
         if preprocess and not opt:
             fn, startl, endl = find_file_for_subroutine(name=s)
-            mod_dict, file_list, main_sub_dict = process_for_unit_test(
+            file_list = process_for_unit_test(
                 fname=fn,
                 case_dir=case_dir,
                 mod_dict=mod_dict,
                 mods=needed_mods,
                 required_mods=default_mods,
-                main_sub_dict=main_sub_dict,
+                sub_dict=main_sub_dict,
                 overwrite=True,
                 verbose=False,
             )
@@ -133,11 +133,17 @@ def main() -> None:
         print(f"{func_name}::Error didn't find any modules related to subroutines")
         sys.exit(1)
 
-    with open(f"{case_dir}/source_files_needed.txt", "w") as ofile:
-        for f in file_list:
-            ofile.write(f + "\n")
+    # NOTE: Need a method to merge the file order when using multiple subroutines
+    #       for unit-test
+    if len(sub_name_list) == 1:
+        for rmod in default_mods:
+            test_list: list[str] = []
+            sort_file_dependency(mod_dict, rmod, test_list)
+            indices = [file_list.index(f) for f in test_list[:-1]]
+            index = max(indices)
+            file_list.insert(index + 1, test_list[-1])
 
-    type_dict: dict[str, DerivedType] = {}
+    type_dict: TypeDict = {}
     for mod in mod_dict.values():
         for utype, dtype in mod.defined_types.items():
             type_dict[utype] = dtype
@@ -145,10 +151,10 @@ def main() -> None:
     for dtype in type_dict.values():
         dtype.find_instances(mod_dict)
 
-    bounds_inst = Variable(type="bounds_type",name="bounds",dim=0,subgrid="?",ln=-1)
+    bounds_inst = Variable(type="bounds_type", name="bounds", dim=0, subgrid="?", ln=-1)
     type_dict["bounds_type"].instances["bounds"] = bounds_inst.copy()
 
-    instance_to_user_type = {}
+    instance_to_user_type: dict[str, str] = {}
     for type_name, dtype in type_dict.items():
         if "bounds" in type_name:
             continue
@@ -160,70 +166,30 @@ def main() -> None:
         for instance in dtype.instances.values():
             instance_to_user_type[instance.name] = type_name
 
-    for sub in main_sub_dict.values():
-        determine_global_variable_status(mod_dict, sub)
+    process_subroutines_for_unit_test(
+        mod_dict=mod_dict,
+        sub_dict=main_sub_dict,
+        type_dict=type_dict,
+    )
 
-    for s in sub_name_list:
-        sub = subroutines[s]
-        sub.collect_var_and_call_info(
-            dtype_dict=type_dict,
-            main_sub_dict=main_sub_dict,
-            verbose=False,
-        )
-        flat_list = construct_call_tree(
-            sub=sub,
-            sub_dict=main_sub_dict,
-            dtype_dict=type_dict,
-            nested=0,
-        )
-
-        if sub.abstract_call_tree:
-            for tree in sub.abstract_call_tree.traverse_postorder():
-                subname = tree.node.subname
-                childsub = main_sub_dict[subname]
-                if not childsub.args_analyzed:
-                    childsub.parse_arguments(main_sub_dict, type_dict)
-                    test_dict = {
-                        k: rw.status for k, rw in childsub.arguments_read_write.items()
-                    }
-                if not childsub.global_analyzed:
-                    childsub.analyze_variables(main_sub_dict, type_dict)
-
-    for sub in main_sub_dict.values():
-        sub.match_arg_to_inst(type_dict)
-
-    for sub in main_sub_dict.values():
-        if sub.elmtype_access_by_ln:
-            sub.summarize_readwrite()
+    aggregate_dtype_vars(
+        sub_dict=main_sub_dict,
+        type_dict=type_dict,
+        inst_to_dtype_map=instance_to_user_type,
+    )
 
     for sub in subroutines.values():
-
-        for key in list(sub.elmtype_r.keys()):
+        for key in list(sub.elmtype_access_sum.keys()):
             c13c14 = bool("c13" in key or "c14" in key)
             if c13c14:
-                del sub.elmtype_r[key]
+                del sub.elmtype_access_sum[key]
                 continue
-            read_types.append(key)
-
-        for key in list(sub.elmtype_w.keys()):
-            c13c14 = bool("c13" in key or "c14" in key)
-            if c13c14:
-                del sub.elmtype_w[key]
-                continue
-            write_types.append(key)
-
-        for key in list(sub.elmtype_rw.keys()):
-            c13c14 = bool("c13" in key or "c14" in key)
-            if c13c14:
-                del sub.elmtype_rw[key]
-                continue
-            write_types.append(key)
 
     # Create a makefile for the unit test
     wr.generate_makefile(files=file_list, case_dir=case_dir)
 
     # Make sure physical properties types are read/written:
-    list_pp = {"veg_pp", "lun_pp", "col_pp", "grc_pp", "top_pp"}
+    set_pp = {"veg_pp", "lun_pp", "col_pp", "grc_pp", "top_pp"}
 
     aggregated_elmtypes_list = []
     for x in read_types:
@@ -235,24 +201,11 @@ def main() -> None:
         if dtype_inst not in aggregated_elmtypes_list:
             aggregated_elmtypes_list.append(dtype_inst)
 
-    dtype_info_list = []
-
-    for s in sub_name_list:
-        set_active_variables(
-            type_dict, instance_to_user_type, subroutines[s].elmtype_r, dtype_info_list
-        )
-        set_active_variables(
-            type_dict, instance_to_user_type, subroutines[s].elmtype_w, dtype_info_list
-        )
-        set_active_variables(
-            type_dict, instance_to_user_type, subroutines[s].elmtype_rw, dtype_info_list
-        )
-
     # Will need to read in physical properties type
     # so set all components to True
     for type_name, dtype in type_dict.items():
         for var in dtype.instances.values():
-            if var.name in list_pp:
+            if var.name in set_pp:
                 dtype.active = True
                 var.active = True
                 for field_var in dtype.components.values():
@@ -261,16 +214,6 @@ def main() -> None:
     for el in write_types:
         if el not in read_types:
             read_types.append(el)
-    #
-    # Write derived type info to csv file
-    #
-    ofile = open(f"{case_dir}/derive_type_info.csv", "w")
-    csv_file = csv.writer(ofile)
-    row = ["Derived Type", "Component", "Type", "Dimension"]
-    csv_file.writerow(row)
-    for row in dtype_info_list:
-        csv_file.writerow(row)
-    ofile.close()
 
     print(f"Call Tree for {case_dir}")
     for sub in subroutines.values():
@@ -294,9 +237,7 @@ def main() -> None:
     for sub in subroutines.values():
         verify_vars = {}
         total_vars = []
-        total_vars.extend(sub.elmtype_r.keys())
-        total_vars.extend(sub.elmtype_w.keys())
-        total_vars.extend(sub.elmtype_rw.keys())
+        total_vars.extend(sub.elmtype_access_sum.keys())
         for var in total_vars:
             if "bounds" in var or var in instance_to_user_type:
                 continue
@@ -337,7 +278,7 @@ def main() -> None:
     print(acc + "  )" + endc)
 
     # Remove xxx_pp from read_types
-    for var in list_pp:
+    for var in set_pp:
         if var in read_types:
             read_types.remove(var)
 
@@ -382,45 +323,53 @@ def main() -> None:
     return None
 
 
-def set_active_variables(type_dict, type_lookup, variable_list, dtype_info_list):
-    """
-    This function sets the active status of the user defined types
-    based on variable list
-        * type_dict   : dictionary of all user-defined types found in the code
-        * type_lookup : dictionary that maps an variable to it's user-defined type
-        * variable_list   : list of variables that are used (eg. elmtype_r, elmtype_w)
-        * dtype_info_list : list for saving to file (redundant?)
-    """
-    argument_variables = [var for var in variable_list if "%" not in var]
-    instance_member_vars = [var for var in variable_list if "%" in var]
-    for var in instance_member_vars:
-        dtype, component = var.split("%")
-        if "bounds" in dtype:
-            continue
-        type_name = type_lookup[dtype]
-        type_dict[type_name].active = True
-        # Set which components of derived type are active
-        for field_var in type_dict[type_name].components.values():
-            active = field_var.active
-            if field_var.name == component and not active:
-                field_var.active = True
-                datatype = field_var.type
-                dim = field_var.dim
-                dtype_info_list.append([dtype, field_var.name, datatype, f"{dim}D"])
+def process_subroutines_for_unit_test(
+    mod_dict: ModDict,
+    sub_dict: SubDict,
+    type_dict: TypeDict,
+):
 
-    # Set which instances of derived types are actually used.
-    global_vars = [v.split("%")[0] for v in instance_member_vars]
-    global_vars = list(set(global_vars))
-    for var in global_vars:
-        if "bounds" == var:
-            continue
-        type_name = type_lookup[var]
-        # Set which instances of the derived type are active
-        for inst in type_dict[type_name].instances.values():
-            if inst.name == var and not inst.active:
-                inst.active = True
+    fut_subs: set[str] = {sub.name for sub in sub_dict.values() if sub.unit_test_function}
+    print("Fut subs:", fut_subs)
 
-    return None
+    for sub in sub_dict.values():
+        determine_global_variable_status(mod_dict, sub)
+
+    for sub_name in fut_subs:
+        sub = sub_dict[sub_name]
+        sub.collect_var_and_call_info(
+            dtype_dict=type_dict,
+            sub_dict=sub_dict,
+            verbose=False,
+        )
+        flat_list = construct_call_tree(
+            sub=sub,
+            sub_dict=sub_dict,
+            dtype_dict=type_dict,
+            nested=0,
+        )
+
+        sub.print_subroutine_info()
+        if sub.abstract_call_tree:
+            sub.abstract_call_tree.print_tree()
+            for tree in sub.abstract_call_tree.traverse_postorder():
+                subname = tree.node.subname
+                childsub = sub_dict[subname]
+                if childsub.library:
+                    continue
+                if not childsub.args_analyzed:
+                    childsub.parse_arguments(sub_dict, type_dict)
+                if not childsub.global_analyzed:
+                    childsub.analyze_variables(sub_dict, type_dict)
+
+    for sub in sub_dict.values():
+        sub.match_arg_to_inst(type_dict)
+
+    for sub in sub_dict.values():
+        if sub.elmtype_access_by_ln:
+            sub.summarize_readwrite()
+
+    return
 
 
 if __name__ == "__main__":

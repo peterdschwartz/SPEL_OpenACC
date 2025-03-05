@@ -23,9 +23,10 @@ from scripts.types import (ArgDesc, ArgNode, ArgType, ArgVar, CallDesc,
 REAL = "real"
 INT = "integer"
 CHAR = "character"
+BOOL = "logical"
 INHERITED = "inherited"
 
-map_py_to_f_types = {int: INT, float: REAL,  str : CHAR, }
+map_py_to_f_types = {int: INT, float: REAL,  str : CHAR, bool: BOOL ,}
 
 @dataclass
 class SymbolTable:
@@ -496,6 +497,16 @@ def evaluate(
                 )
             )
         case "StringLiteral":
+            arg_tree_flat[argn].append(
+                ArgNode(
+                    argn=argn,
+                    ident=expr["Val"],
+                    kind=IdentKind.literal,
+                    nested_level=nested,
+                    node=expr,
+                )
+            )
+        case "LogicalLiteral":
             arg_tree_flat[argn].append(
                 ArgNode(
                     argn=argn,

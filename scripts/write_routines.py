@@ -580,9 +580,15 @@ def duplicate_clumps(typedict: dict[str,DerivedType]):
                         bounds = field_var.bounds
                         if not active:
                             continue
-                        if field_var.name in ignore_list:
+                        if "%" not in field_var.name:
+                            fname = var.name + "%" + field_var.name
+                            comp_name = field_var.name
+                        else:
+                            fname = field_var.name
+                            comp_name = field_var.name.split("%")[1]
+                        if comp_name in ignore_list:
                             continue
-                        fname = var.name + "%" + field_var.name
+
                         dim = bounds
                         newdim = get_delta_from_dim(dim, "y")
                         dim1 = get_delta_from_dim(dim, "n")
@@ -623,7 +629,12 @@ def duplicate_clumps(typedict: dict[str,DerivedType]):
                     bounds = field_var.bounds
                     if not active:
                         continue
-                    fname = var.name + "%" + field_var.name
+                    if "%" not in field_var.name:
+                        fname = var.name + "%" + field_var.name
+                        comp_name = field_var.name
+                    else:
+                        fname = field_var.name
+                        comp_name = field_var.name.split("%")[1]
                     dim = bounds
                     newdim = get_delta_from_dim(dim, "y")
                     dim1 = get_delta_from_dim(dim, "n")
@@ -937,15 +948,16 @@ def create_type_sub(lines, dtype: DerivedType, all_active=False):
         active = member_var.active
         if active:
             dim_string = ""
+            field_name = member_var.name.split("%")[1] if "%" in member_var.name else member_var.name
             if member_var.dim > 0:
                 dim_li = [":" for i in range(0, member_var.dim)]
                 dim_string = ",".join(dim_li)
                 dim_string = f"({dim_string})"
                 bounds = member_var.bounds
-                statement = f"{tabs}allocate({inst_name}%{member_var.name}{bounds});"
+                statement = f"{tabs}allocate({inst_name}%{field_name}{bounds});"
                 lines.append(statement)
             elif member_var.ptrscalar:
-                statement = f"{tabs}allocate({inst_name}%{member_var.name});"
+                statement = f"{tabs}allocate({inst_name}%{field_name});"
                 lines.append(statement)
 
             init_val = None
@@ -962,7 +974,7 @@ def create_type_sub(lines, dtype: DerivedType, all_active=False):
             if not init_val:
                 print(f"Error: No init_val for {member_var}")
                 sys.exit(1)
-            init_statement = f"{inst_name}%{member_var.name}{dim_string} = {init_val}\n"
+            init_statement = f"{inst_name}%{field_name}{dim_string} = {init_val}\n"
             lines.append(init_statement)
 
     # End subroutine:
@@ -1206,7 +1218,10 @@ def create_write_read_functions(dtype: DerivedType, rw, ofile, gpu=False):
                 c13c14 = bool("c13" in field_var.name or "c14" in field_var.name)
                 if c13c14:
                     continue
-                fname = var.name + "%" + field_var.name
+                if "%" not in field_var.name:
+                    fname = var.name + "%" + field_var.name
+                else:
+                    fname = field_var.name
                 if fname in fates_list:
                     continue
                 if gpu:
@@ -1242,7 +1257,10 @@ def create_write_read_functions(dtype: DerivedType, rw, ofile, gpu=False):
                 c13c14 = bool("c13" in field_var.name or "c14" in field_var.name)
                 if c13c14:
                     continue
-                fname = var.name + "%" + field_var.name
+                if "%" not in field_var.name:
+                    fname = var.name + "%" + field_var.name
+                else:
+                    fname = field_var.name
                 if fname in fates_list:
                     continue
                 dim = bounds

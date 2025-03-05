@@ -168,6 +168,27 @@ class StringLiteral(Expression):
         return {"Node": "StringLiteral", "Val": self.value}
 
 
+class LogicalLiteral(Expression):
+    def __init__(self, tok: Token, val: bool):
+        self.token: Token = tok
+        self.value: bool = val
+
+    def token_literal(self) -> str:
+        return str(self.value)
+
+    def expression_node(self) -> None:
+        pass
+
+    def __str__(self):
+        return self.token_literal()
+
+    def __eq__(self, other):
+        return isinstance(other, LogicalLiteral) and self.value == other.value
+
+    def to_dict(self):
+        return {"Node": "LogicalLiteral", "Val": self.value}
+
+
 class FloatLiteral(Expression):
     def __init__(self, tok: Token):
         self.token: Token = tok
