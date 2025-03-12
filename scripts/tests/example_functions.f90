@@ -70,6 +70,7 @@ module test
 
    type(clump_filter), allocatable :: filter(:)
 
+   type(test_type), public :: mytype_inst
 
   ! !PUBLIC MEMBER FUNCTIONS:
   public :: Tridiagonal
@@ -216,17 +217,19 @@ contains
       logical, intent(in) :: flag
       integer :: i
       associate(&
-          field1 => mytype2%field1, &
+          field1 => mytype2%field1,&
           field2 => mytype2%field2,&
           field3 => mytype2%field3,&
+          field4 => mytype2%field4,&
           hrv => col_nf_inst%hrv_deadstemn_to_prod10n &
       )
       if ( mytype2%active .or. flag )then
-         do i=1, 10
+         do i=1,10
             field2(i) = field2(i)/field1(i) + field3(i)
             hrv(i) = field2(i)
-         end do 
-      end if 
+            call add(field2(i), field4(i))
+         end do
+      end if
       end associate
    end subroutine trace_dtype_example
 

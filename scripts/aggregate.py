@@ -1,3 +1,4 @@
+import re
 from pprint import pprint
 from typing import NamedTuple
 
@@ -37,8 +38,6 @@ def aggregate_dtype_vars(
                     node_sub.elmtype_access_sum,
                     dtype_info_set,
                 )
-            print(f"=========== {sub.name} =============")
-            pprint(dtype_info_set)
     return
 
 
@@ -56,9 +55,11 @@ def set_active_variables(
         * variable_list   : list of variables that are used
         * dtype_info_list : list for saving to file (redundant?)
     """
+    regex_paren = re.compile(r"\((.+)\)")
     instance_member_vars = [var for var in variable_list if "%" in var]
     for var in instance_member_vars:
         dtype, component = var.split("%")
+        dtype = regex_paren.sub("", dtype)
         if "bounds" in dtype:
             continue
         type_name = type_lookup[dtype]
@@ -80,7 +81,7 @@ def set_active_variables(
                 )
 
     # Set which instances of derived types are actually used.
-    global_vars = {v.split("%")[0] for v in instance_member_vars}
+    global_vars = {regex_paren.sub("", v.split("%")[0]) for v in instance_member_vars}
     global_vars = list(set(global_vars))
     for var in global_vars:
         if "bounds" == var:

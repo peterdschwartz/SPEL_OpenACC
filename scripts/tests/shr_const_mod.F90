@@ -80,14 +80,14 @@ MODULE shr_const_mod
    real(R8),parameter :: SHR_CONST_VSMOW_D   = 155.76e-6_R8   ! 2H/1H in VMSOW
    real(R8),parameter :: SHR_CONST_VSMOW_T   = 1.85e-6_R8  ! 3H/1H in VMSOW
    real(R8),parameter :: SHR_CONST_VSMOW_H   = 0.99984426_R8  ! 1H/Tot in VMSOW
-   ! For best numerics in CAM5
    real(R8),parameter :: SHR_CONST_RSTD_H2ODEV   = 1.0_R8      ! Rstd Dev Use
 
   type, public :: test_type
+    integer  :: active
     real(r8) :: field1(:)
     real(r8) :: field2(:)
-    integer  :: active
     real(r8) :: field3(:)
+    real(r8) :: field4(:)
     contains 
     procedure, public :: Init => test_init
   end type test_type
@@ -101,6 +101,7 @@ contains
     allocate(this%field1(begc:endc))
     allocate(this%field2(begc:endc))
     allocate(this%field3(begc:endc))
+    allocate(this%field4(begc:endc))
     this%active = 1
 
   end subroutine test_init

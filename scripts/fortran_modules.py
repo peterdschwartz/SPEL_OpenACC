@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import subprocess as sp
 import sys
-from copy import copy, deepcopy
-from typing import TYPE_CHECKING, Any
+from copy import deepcopy
+from typing import TYPE_CHECKING, Optional
 
 from scripts.utilityFunctions import Variable
 
 if TYPE_CHECKING:
     from scripts.analyze_subroutines import Subroutine
+    from scripts.DerivedType import DerivedType
 
 import scripts.dynamic_globals as dg
 from scripts.mod_config import ELM_SRC, SHR_SRC, _bc
@@ -95,7 +96,6 @@ def print_spel_module_dependencies(
     this prints their dependencies with the modules containing
     subs being the parents
     """
-    arrow = "-->"
     modtree = []
 
     for sub in subs.values():
@@ -137,6 +137,23 @@ def parse_only_clause(line: str) -> set[PointerAlias]:
     return only_objs_list
 
 
+def build_module_tree(modules: dict[str, FortranModule]) -> list[ModTree]:
+    """
+    Builds a forest (list of ModTree roots) from a dictionary of FortranModule objects.
+    Returns a list because there may be multiple independent module trees.
+    """
+    mod_nodes: dict[str, ModTree] = {name: ModTree(name) for name in modules.keys()}
+    roots = set(mod_nodes.keys())  # Start by assuming all are roots
+
+    for name, module in modules.items():
+        for dep in module.modules:
+            mod_nodes[name].add_child(mod_nodes[dep])
+            if dep in roots:
+                roots.remove(dep)
+
+    return [mod_nodes[root] for root in roots]
+
+
 class FortranModule:
     """
     A class to represent a Fortran module.
@@ -155,11 +172,13 @@ class FortranModule:
         # modules available to all subroutines
         self.head_modules: dict[str, ModUsage] = {}
         self.filepath = fname  # the file path of the module
-        self.ln = ln  # line number of start module block
-        self.defined_types = {}  # user types defined in the module
-        self.modified = False  # if module has been through modify_file or not.
-        self.variables_sorted = False
-        self.end_of_head_ln: int = 99999999
+        self.ln: int = ln  # line number of start module block
+        self.defined_types: dict[str, DerivedType] = (
+            {}
+        )  # user types defined in the module
+        self.modified: bool = False  # if module has been through modify_file or not.
+        self.variables_sorted: bool = False
+        self.end_of_head_ln: int = 99999
         self.num_lines: int
 
     def __repr__(self):
@@ -247,3 +266,35 @@ class FortranModule:
             ofile.write(_bc.OKGREEN + f"{self.defined_types[utype]}\n" + _bc.ENDC)
 
         return None
+
+
+class ModTree:
+    def __init__(self, node):
+        self.node: str = node
+        self.children: list[ModTree] = []
+        self.parent: Optional[ModTree] = None
+
+    def add_child(self, child: "ModTree"):
+        child.parent = self
+        self.children.append(child)
+
+    def traverse_preorder(self):
+        yield self
+        for child in self.children:
+            yield from child.traverse_preorder()
+
+    def traverse_postorder(self):
+        for child in self.children:
+            yield from child.traverse_postorder()
+        yield self
+
+    def __repr__(self):
+        return f"ModTree({self.node}, children={len(self.children)})"
+
+    def print_tree(self, level: int = 0):
+        if level == 0:
+            print("ModTree for", self.node)
+        indent = "|--" * level
+        print(f"{indent}>{self.node}")
+        for child in self.children:
+            child.print_tree(level + 1)

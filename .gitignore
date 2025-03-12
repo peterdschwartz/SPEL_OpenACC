@@ -53,3 +53,5 @@ Thumbs.db
 **/scripts/database/csv/
 *.egg-info/
 .sfdx/
+
+.fortls.json

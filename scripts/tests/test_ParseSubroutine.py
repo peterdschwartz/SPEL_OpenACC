@@ -138,10 +138,11 @@ def test_getArguments(subtests):
                 "mytype2%field1": "r",
                 "mytype2%field2": "rw",
                 "mytype2%field3": "r",
+                "mytype2%field4": "rw",
                 "mytype2%active": "r",
                 "col_nf_inst": "w",
                 "col_nf_inst%hrv_deadstemn_to_prod10n": "w",
-                "flag":'r',
+                "flag": "r",
             },
         }
 
@@ -205,11 +206,24 @@ def test_getArguments(subtests):
             with subtests.test(msg=subname):
                 assert expected_arg_status[subname] == test_dict
 
-        # aggregate_dtype_vars(
-        #     sub_dict=main_sub_dict,
-        #     type_dict=type_dict,
-        #     inst_to_dtype_map=instance_to_user_type,
-        # )
+        for subname in expected_arg_status:
+            print(subname)
+            childsub = main_sub_dict[subname]
+            pprint(childsub.elmtype_access_sum)
+
+        aggregate_dtype_vars(
+            sub_dict=main_sub_dict,
+            type_dict=type_dict,
+            inst_to_dtype_map=instance_to_user_type,
+        )
+
+        active_set: set[str] = set()
+        for inst_name, dtype in instance_dict.items():
+            if not dtype.instances[inst_name].active:
+                continue
+            for field_var in dtype.components.values():
+                if field_var.active:
+                    active_set.add(f"{inst_name}%{field_var.name}")
 
 
 def test_arg_intent():

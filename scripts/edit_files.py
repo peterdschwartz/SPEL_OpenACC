@@ -7,16 +7,18 @@ import sys
 from scripts.analyze_subroutines import Subroutine
 from scripts.check_sections import (check_function_start, check_if_block,
                                     create_function)
-from scripts.DerivedType import get_derived_type_definition
-from scripts.fortran_modules import (FortranModule, get_filename_from_module,
+from scripts.DerivedType import DerivedType, get_derived_type_definition
+from scripts.fortran_modules import (FortranModule, ModTree, build_module_tree,
+                                     get_filename_from_module,
                                      get_module_name_from_file,
                                      parse_only_clause)
 from scripts.mod_config import E3SM_SRCROOT, spel_output_dir
 from scripts.profiler_context import profile_ctx
 from scripts.types import PreProcTuple
 from scripts.utilityFunctions import (check_cpp_line, comment_line,
-                                      find_variables, get_interface_list,
-                                      line_unwrapper, parse_line_for_variables)
+                                      find_file_for_subroutine, find_variables,
+                                      get_interface_list, line_unwrapper,
+                                      parse_line_for_variables)
 
 # Compile list of lower-case module names to remove
 # SPEL expects these all to be lower-case currently
@@ -99,6 +101,9 @@ macros = ["MODAL_AER"]
 # The preprocessed file will have a '# <line_number>' indicating
 # the line number immediately after the #endif in the original file.
 
+ModDict = dict[str, FortranModule]
+SubDict = dict[str, Subroutine]
+TypeDict = dict[str, DerivedType]
 
 def remove_subroutine(og_lines, cpp_lines, start):
     """Function to comment out an entire subroutine"""
@@ -739,12 +744,12 @@ def modify_file(
 
 
 def process_for_unit_test(
-    fname: str,
     case_dir: str,
     mod_dict: dict[str, FortranModule],
     sub_dict: dict[str,Subroutine],
-    mods: list[str]=[],
-    required_mods=[],
+    mods: list[str],
+    required_mods: list[str],
+    sub_name_list: list[str],
     overwrite=False,
     verbose=False,
     singlefile=False,
@@ -765,21 +770,15 @@ def process_for_unit_test(
         verbose  -> Print more info
         singlefile -> flag that disables recursive processing.
     """
-    func_name = "process_for_unit_test"
+    func_name = "process_for_unit_test::"
 
-    initial_mods = mods.copy()
     # First, get complete list of module to be processed and removed.
     # and then add processed file to list of mods:
-    if not mods:
-        lower_mods = [m.lower() for m in mods]
-        if fname.lower() not in lower_mods:
-            mods.append(fname)
-    else:
-        lower_mods = []
 
     with profile_ctx(enabled=False, section="get_used_mods") as pc:
         # Find if this file has any not-processed mods
-        if not singlefile:
+        for s in sub_name_list:
+            fname, _, _ = find_file_for_subroutine(name=s)
             mods, mod_dict = get_used_mods(
                 ifile=fname,
                 mods=mods,
@@ -799,21 +798,13 @@ def process_for_unit_test(
                 mod_dict=mod_dict,
             )
 
-
     for fort_mod in mod_dict.values():
         fort_mod.modules = fort_mod.sort_module_deps(startln=0,endln=fort_mod.num_lines)
         fort_mod.head_modules = fort_mod.sort_module_deps(startln=0,endln=fort_mod.end_of_head_ln)
 
     # Sort the file dependencies
     with profile_ctx(enabled=False, section="sort_file_dependency") as pc:
-        linenumber, unit_test_module = get_module_name_from_file(fpath=fname)
-        file_list: list[str] = []
-        sort_file_dependency(mod_dict, unit_test_module, file_list)
-
-        if verbose:
-            print("Newly added mods after processing required mods:")
-            new_mods = [m.split("/")[-1] for m in mods if m not in initial_mods]
-            print( new_mods)
+        ordered_mods = sort_file_dependency(mod_dict)
 
     # Next, each needed module is parsed for subroutines and removal of
     # any dependencies that are not needed for an ELM unit test (eg., I/O libs,...)
@@ -821,8 +812,10 @@ def process_for_unit_test(
     #    Modules are parsed starting with leaf nodes to decrease the likelihood of
     #    a child subroutine not having been instantiated
     with profile_ctx(enabled=False,section="modify_file") as pc:
-        for mod_file in file_list:
-            _, mod_name = get_module_name_from_file(mod_file)
+        for mod_name in ordered_mods:
+            mod_file = get_filename_from_module(mod_name)
+            if not mod_file:
+                sys.exit(f"Error -- couldn't find file for {mod_name}")
             # Avoid preprocessing files over and over
             if mod_dict[mod_name].modified:
                 continue
@@ -850,12 +843,8 @@ def process_for_unit_test(
         if subname not in sub_dict:
             sub_dict[subname] = sub
 
-    if verbose :
-        print(f"File list for Unit Test: {case_dir}")
-        for f in file_list:
-            print(f)
 
-    return file_list
+    return ordered_mods
 
 
 def remove_reference_to_subroutine(lines, subnames):
@@ -880,51 +869,18 @@ def remove_reference_to_subroutine(lines, subnames):
     return lines
 
 
-def sort_file_dependency(mod_dict, unittest_module, file_list=[], verbose=False):
+def sort_file_dependency(mod_dict: ModDict)-> list[str]:
     """
     Function that unravels a dictionary of all module files
     that were parsed in process_for_unit_test.
 
     Each element of the dictionary is a FortranModule object.
     """
-    # Start with the module that we want to test
-    main_fort_mod = mod_dict[unittest_module]
+    trees: list[ModTree] = build_module_tree(mod_dict)
+    order: list[str] = []
+    for tree in trees:
+        for node in tree.traverse_postorder():
+            if node.node not in order:
+                order.append(node.node)
 
-    for mod in main_fort_mod.modules.keys():
-        if mod in bad_modules:
-            continue
-
-        # Get module instance from dictionary
-        dependency_mod = mod_dict[mod]
-        if dependency_mod.filepath in file_list:
-            continue
-
-        # This module has no other dependencies, add to list
-        if not dependency_mod.modules and dependency_mod.filepath not in file_list:
-            file_list.append(dependency_mod.filepath)
-            continue
-
-        # Test to see if all of its dependencies are in the file list
-        for dep_mod in dependency_mod.modules:
-            if mod in bad_modules:
-                continue
-
-            # Check if module dependencies are already in the file list
-            if mod_dict[dep_mod].filepath not in file_list:
-                if verbose:
-                    print(f"Switching to {dep_mod} to get its dependencies")
-                dep_file_list = sort_file_dependency(
-                    mod_dict, unittest_module=dep_mod, file_list=file_list
-                )
-
-                if verbose:
-                    print(f"New dependency list: {dep_file_list}")
-                    print(f"Current list is:\n{file_list}")
-        # Since all of its dependencies are in the file list, add the module to the list
-        if dependency_mod.filepath not in file_list:
-            file_list.append(dependency_mod.filepath)
-
-    if main_fort_mod.filepath not in file_list:
-        file_list.append(main_fort_mod.filepath)
-
-    return file_list
+    return [m for m in order]

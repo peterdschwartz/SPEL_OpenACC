@@ -273,25 +273,3 @@ class CallTree:
 
         for child in self.children:
             child.print_tree(level + 1)
-
-    def remove(self):
-        """
-        Removes this node from the tree by reattaching its children to its parent.
-        Raises a ValueError if attempting to remove the root node.
-        -- self must be a child node!
-        """
-        if self.parent is None:
-            raise ValueError("CallTree:::Cannot remove the root node.")
-
-        parent = self.parent
-        index = parent.children.index(self)
-
-        # Update parent references for this node's children.
-        for child in self.children:
-            child.parent = parent
-
-        # Short-hand slice syntax to replace child node with it's children
-        parent.children[index : index + 1] = self.children
-
-        self.children = []
-        self.parent = None

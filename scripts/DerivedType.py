@@ -89,18 +89,16 @@ class DerivedType(object):
     """
     def __init__(
         self,
-        type_name,
-        vmod,  # module name
-        fpath=None,  # path to mod file
-        components=None,  # list of type and component name
-        instances={},
+        type_name: str,
+        vmod: str,
+        fpath: Optional[str]=None, 
     ):
         self.type_name = type_name
         if fpath:
-            self.filepath = fpath
+            self.filepath: str = fpath
         else:
-            self.filepath = ""
-            cmd = f'find {ELM_SRC}  \( -path "*external_models*" \) -prune -o  -name "{vmod}.F90" '
+            self.filepath: str = ""
+            cmd = rf'find {ELM_SRC}  \( -path "*external_models*" \) -prune -o  -name "{vmod}.F90"'
             output = sp.getoutput(cmd)
             if not output:
                 sys.exit(f"Couldn't locate file {vmod}")
@@ -119,9 +117,9 @@ class DerivedType(object):
         self.components: dict[str, Variable] = {}
         self.instances: dict[str, Variable] = {}
         # Flag to see if Derived Type has been analyzed
-        self.analyzed = False
-        self.active = False
-        self.init_sub = None
+        self.analyzed: bool = False
+        self.active: bool = False
+        self.init_sub: Optional[str] = None
         self.procedures: dict[str,str] = {}
 
     def __repr__(self):
@@ -426,7 +424,7 @@ def get_component(instance_dict: Dict[str, DerivedType], dtype_field: str)->Opti
     inst_name = regex_paren.sub("",inst_name)
     dtype = instance_dict[inst_name]
     if field in dtype.components:
-        var: Variable = dtype.components[field]
+        var: Variable = dtype.components[field].copy()
         return var
     else:
         if field not in dtype.procedures:
@@ -435,7 +433,7 @@ def get_component(instance_dict: Dict[str, DerivedType], dtype_field: str)->Opti
 
 def expand_dtype(dtype_vars: list[Variable], type_dict: dict[str, DerivedType])->dict[str,Variable]:
     """Function to take a dtype and create a dict with a key for each var%field"""
-    def adj_var_name(var,inst_var):
+    def adj_var_name(var: Variable,inst_var: Variable):
         dim_str = "(index)" if inst_var.dim>0 else ""
         new_var = var.copy()
         new_var.name = f"{ inst_var.name }{dim_str}%{var.name}"
@@ -448,9 +446,6 @@ def expand_dtype(dtype_vars: list[Variable], type_dict: dict[str, DerivedType])-
         temp: dict[str,Variable] = {
           f"{dtype_var.name}%{field.name}": adj_var_name(field,dtype_var) for field in fields
         }
-        if dtype.type_name == "landunit_physical_properties":
-            print("expand_dtype")
-            pprint(temp)
         result.update(temp)
     return result
 

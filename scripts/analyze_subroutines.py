@@ -630,7 +630,10 @@ class Subroutine(object):
 
         # remove struct of arrays/field/access from dtype_vars and replace with the instance var
         regex_inst_name = re.compile(r'(?:\(\w+\))?%\w+')
-        var_dict: dict[str,Variable] = {key:val for key,val in self.dtype_vars.items() if not regex_inst_name.search(key)}
+        var_dict: dict[str,Variable] = {
+            key:val for key,val in self.dtype_vars.items() 
+            if not regex_inst_name.search(key)
+        }
         inst_set = {regex_inst_name.sub("",x) for x in self.dtype_vars.keys() if regex_inst_name.search(x)}
 
         for inst in inst_set:
@@ -680,13 +683,12 @@ class Subroutine(object):
 
         self.global_analyzed = True
 
-
-        for var in self.Arguments.values():
-            if var.type not in intrinsic_types:
-                inst_set.add(var.name)
-        if inst_set and self.sub_call_desc:
-            trace_derived_type_arguments(parent_sub=self,sub_dict=sub_dict,inst_set=inst_set,
-            )
+        # for var in self.Arguments.values():
+        #     if var.type not in intrinsic_types:
+        #         inst_set.add(var.name)
+        # if inst_set and self.sub_call_desc:
+        #     trace_derived_type_arguments(parent_sub=self,sub_dict=sub_dict,inst_set=inst_set,
+        #     )
 
         return
 

@@ -7,7 +7,7 @@ from scripts.aggregate import aggregate_dtype_vars
 from scripts.analyze_subroutines import Subroutine
 from scripts.DerivedType import DerivedType
 from scripts.edit_files import sort_file_dependency
-from scripts.fortran_modules import FortranModule
+from scripts.fortran_modules import FortranModule, get_filename_from_module
 from scripts.helper_functions import construct_call_tree
 from scripts.mod_config import (_bc, default_mods, scripts_dir, spel_mods_dir,
                                 spel_output_dir, unittests_dir)
@@ -34,7 +34,6 @@ def main() -> None:
     from scripts.export_objects import pickle_unit_test
     from scripts.utilityFunctions import (find_file_for_subroutine,
                                           insert_header_for_unittest)
-    from scripts.variable_analysis import determine_global_variable_status
 
     # Set up Argument Parser
     desc = (
@@ -98,50 +97,37 @@ def main() -> None:
     # Initialize dictionary that will hold instance of all subroutines encountered.
     main_sub_dict: SubDict = {}
 
-    # Initialize lists that will hold global variables based on read/write status
-    read_types = []
-    write_types = []
-
     # dictionary holds instances for Unit Test specific subroutines
-    sub_name_list = [s.lower() for s in sub_name_list]
+    sub_name_list: list[str] = [s.lower() for s in sub_name_list]
     subroutines: SubDict = {}
 
     # List to hold all the modules needed for the unit test
     needed_mods = []
     mod_dict: ModDict = {}
-    for s in sub_name_list:
-        # Get general info of the subroutine
-        # Process files by removing certain modules
-        # so that a standalone unit test can be compiled.
-        # All file information will be stored in `mod_dict` and `main_sub_dict`
-        if preprocess and not opt:
-            fn, startl, endl = find_file_for_subroutine(name=s)
-            file_list = process_for_unit_test(
-                fname=fn,
-                case_dir=case_dir,
-                mod_dict=mod_dict,
-                mods=needed_mods,
-                required_mods=default_mods,
-                sub_dict=main_sub_dict,
-                overwrite=True,
-                verbose=False,
-            )
-            subroutines[s] = main_sub_dict[s]
-            subroutines[s].unit_test_function = True
+    # Get general info of the subroutine
+    # Process files by removing certain modules
+    # so that a standalone unit test can be compiled.
+    # All file information will be stored in `mod_dict` and `main_sub_dict`
+    ordered_mods = process_for_unit_test(
+        case_dir=case_dir,
+        mod_dict=mod_dict,
+        mods=needed_mods,
+        required_mods=default_mods,
+        sub_dict=main_sub_dict,
+        sub_name_list=sub_name_list,
+        overwrite=True,
+        verbose=False,
+    )
 
-    if not mod_dict or not file_list:
+    for s in sub_name_list:
+        subroutines[s] = main_sub_dict[s]
+        subroutines[s].unit_test_function = True
+
+    print("ordered_mods:")
+    pprint(ordered_mods)
+    if not mod_dict or not ordered_mods:
         print(f"{func_name}::Error didn't find any modules related to subroutines")
         sys.exit(1)
-
-    # NOTE: Need a method to merge the file order when using multiple subroutines
-    #       for unit-test
-    if len(sub_name_list) == 1:
-        for rmod in default_mods:
-            test_list: list[str] = []
-            sort_file_dependency(mod_dict, rmod, test_list)
-            indices = [file_list.index(f) for f in test_list[:-1]]
-            index = max(indices)
-            file_list.insert(index + 1, test_list[-1])
 
     type_dict: TypeDict = {}
     for mod in mod_dict.values():
@@ -178,6 +164,21 @@ def main() -> None:
         inst_to_dtype_map=instance_to_user_type,
     )
 
+    instance_dict: dict[str, DerivedType] = {}
+    for type_name, dtype in type_dict.items():
+        for instance in dtype.instances.values():
+            instance_dict[instance.name] = dtype
+
+    active_set: set[str] = set()
+    for inst_name, dtype in instance_dict.items():
+        if not dtype.instances[inst_name].active:
+            continue
+        for field_var in dtype.components.values():
+            if field_var.active:
+                active_set.add(f"{inst_name}%{field_var.name}")
+
+    print("=================== ACTIVE ELMTYPES ==================")
+    pprint(sorted(active_set))
     for sub in subroutines.values():
         for key in list(sub.elmtype_access_sum.keys()):
             c13c14 = bool("c13" in key or "c14" in key)
@@ -186,20 +187,13 @@ def main() -> None:
                 continue
 
     # Create a makefile for the unit test
+    file_list = [get_filename_from_module(m) for m in ordered_mods]
     wr.generate_makefile(files=file_list, case_dir=case_dir)
 
     # Make sure physical properties types are read/written:
     set_pp = {"veg_pp", "lun_pp", "col_pp", "grc_pp", "top_pp"}
 
-    aggregated_elmtypes_list = []
-    for x in read_types:
-        dtype_inst = x.split("%")[0]
-        if dtype_inst not in aggregated_elmtypes_list:
-            aggregated_elmtypes_list.append(dtype_inst)
-    for x in write_types:
-        dtype_inst = x.split("%")[0]
-        if dtype_inst not in aggregated_elmtypes_list:
-            aggregated_elmtypes_list.append(dtype_inst)
+    aggregated_elmtypes_list = {v.split("%")[0] for v in active_set}
 
     # Will need to read in physical properties type
     # so set all components to True
@@ -210,10 +204,6 @@ def main() -> None:
                 var.active = True
                 for field_var in dtype.components.values():
                     field_var.active = True
-
-    for el in write_types:
-        if el not in read_types:
-            read_types.append(el)
 
     print(f"Call Tree for {case_dir}")
     for sub in subroutines.values():
@@ -261,7 +251,7 @@ def main() -> None:
 
     # Print and Write stencil for acc directives to screen to be c/p'ed in main.F90
     # may be worth editing main.F90 directly.
-    aggregated_elmtypes_list.sort(key=lambda v: v.upper())
+    aggregated_elmtypes_list = sorted(aggregated_elmtypes_list)
     acc = _bc.BOLD + _bc.HEADER + "!$acc "
     endc = _bc.ENDC
     print(acc + "enter data copyin( &" + endc)
@@ -276,11 +266,6 @@ def main() -> None:
         else:
             print(acc + el + "     , &" + endc)
     print(acc + "  )" + endc)
-
-    # Remove xxx_pp from read_types
-    for var in set_pp:
-        if var in read_types:
-            read_types.remove(var)
 
     unittest_global_vars: dict[str, Variable] = {}
     for sub in main_sub_dict.values():
@@ -329,8 +314,9 @@ def process_subroutines_for_unit_test(
     type_dict: TypeDict,
 ):
 
-    fut_subs: set[str] = {sub.name for sub in sub_dict.values() if sub.unit_test_function}
-    print("Fut subs:", fut_subs)
+    fut_subs: set[str] = {
+        sub.name for sub in sub_dict.values() if sub.unit_test_function
+    }
 
     for sub in sub_dict.values():
         determine_global_variable_status(mod_dict, sub)
@@ -349,7 +335,6 @@ def process_subroutines_for_unit_test(
             nested=0,
         )
 
-        sub.print_subroutine_info()
         if sub.abstract_call_tree:
             sub.abstract_call_tree.print_tree()
             for tree in sub.abstract_call_tree.traverse_postorder():
