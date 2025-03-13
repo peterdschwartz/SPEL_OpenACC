@@ -298,39 +298,6 @@ class Loop(object):
             for ln, line in enumerate(slice):
                 print(lstart + ln, line.strip("\n"))
 
-    def removeArraysAsIndices(self, vdict, line, arrays, verbose):
-        """
-        Removes arrays such as snl(c) used as indices and sets them as read-only
-        """
-        regex_var = re.compile(r"\w+")
-        temp = line
-        keep_removing = False
-        regex_indices = re.compile(r"(?<=\()(.+)(?=\))")
-
-        for var in arrays:
-            # only get var name
-            v = regex_var.search(var).group()
-
-            regex_check_index = re.compile(
-                f"\w+\([,a-z0-9*-]*(({v})\(.\))[,a-z+0-9-]*\)", re.IGNORECASE
-            )
-            match = regex_check_index.search(temp)
-            if match:
-                if verbose:
-                    print(f"found array {v} used as index")
-                # Add to dict as read-only:
-                vdict.setdefault(v, []).append("r")
-                # substitute from the entire line
-                i = regex_indices.search(var).group()
-                i = f"\({i}\)"
-                temp = re.sub(f"{v}{i}", v, temp)
-                if verbose:
-                    print(var, v)
-                    print("new line is: ", temp)
-                keep_removing = True
-
-        return temp, keep_removing
-
     def parseVariablesinLoop(self, verbose=False):
         """
         Goes through loop line by line and
@@ -340,7 +307,7 @@ class Loop(object):
 
         # non-greedy capture
         # ng_regex_array = re.compile(f'\w+?\({cc}+?\)')
-        ng_regex_array = re.compile("\w+\s*\([,\w+\*-]+\)", re.IGNORECASE)
+        ng_regex_array = re.compile(r"\w+\s*\([,\w+\*-]+\)", re.IGNORECASE)
 
         regex_if = re.compile(r"^(if|else if|elseif)")
         regex_cond = re.compile(r"\((.+)\)")
@@ -348,7 +315,7 @@ class Loop(object):
         #
         # regex to match code that should be ignored
         regex_skip = re.compile(r"^(write|print)")
-        regex_dowhile = re.compile(f"\s*(do while)", re.IGNORECASE)
+        regex_dowhile = re.compile(r"\s*(do while)", re.IGNORECASE)
 
         # regex for scalar variables:
         # since SPEL already has the loop indices, no need to hardcode this?
@@ -378,7 +345,7 @@ class Loop(object):
             ]
             # print(_bc.OKBLUE+f"list of scalars for {self.subcall.name}\n {list_of_scalars}"+_bc.ENDC)
             str_ = "|".join(list_of_scalars)
-            regex_scalars = re.compile(f"(?<!\w)({str_})(?!\w)", re.IGNORECASE)
+            regex_scalars = re.compile(rf"(?<!\w)({str_})(?!\w)", re.IGNORECASE)
         else:
             list_of_scalars = []
 
@@ -424,12 +391,12 @@ class Loop(object):
                     lnew = l
                     removing = True
                     while removing:
-                        temp, removing = self.removeArraysAsIndices(
-                            vdict=variable_dict,
-                            line=lnew,
-                            arrays=m_arr,
-                            verbose=verbose,
-                        )
+                        # temp, removing = self.removeArraysAsIndices(
+                        #     vdict=variable_dict,
+                        #     line=lnew,
+                        #     arrays=m_arr,
+                        #     verbose=verbose,
+                        # )
                         lnew = temp
                         m_arr = ng_regex_array.findall(lnew)
                         if verbose:

@@ -394,6 +394,7 @@ def modify_file(
     that need to be removed.
     """
     func_name = "modify_file::"
+    print(func_name+fn)
 
     # Test if the file in question contains any ifdef statements:
     cmd = f'grep -E "ifn?def"  {fn} | grep -v "_OPENACC"'
@@ -744,7 +745,6 @@ def modify_file(
 
 
 def process_for_unit_test(
-    case_dir: str,
     mod_dict: dict[str, FortranModule],
     sub_dict: dict[str,Subroutine],
     mods: list[str],
@@ -779,6 +779,7 @@ def process_for_unit_test(
         # Find if this file has any not-processed mods
         for s in sub_name_list:
             fname, _, _ = find_file_for_subroutine(name=s)
+            print("fname ", fname)
             mods, mod_dict = get_used_mods(
                 ifile=fname,
                 mods=mods,
@@ -806,6 +807,7 @@ def process_for_unit_test(
     with profile_ctx(enabled=False, section="sort_file_dependency") as pc:
         ordered_mods = sort_file_dependency(mod_dict)
 
+    print("ordered_mods", ordered_mods)
     # Next, each needed module is parsed for subroutines and removal of
     # any dependencies that are not needed for an ELM unit test (eg., I/O libs,...)
     # Note:

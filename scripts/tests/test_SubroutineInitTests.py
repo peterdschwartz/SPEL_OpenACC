@@ -43,7 +43,6 @@ class SubroutineTests(unittest.TestCase):
 
     def test_find_elm_variables(self):
 
-        mod_dict, sub_dict, type_dict = {}, {}, {}
         mod_dict, sub_dict, type_dict = eo.unpickle_unit_test("-352536b")
         subroutine_calls = {}
         for s in sub_dict.keys():
