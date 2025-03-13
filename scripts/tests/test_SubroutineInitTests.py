@@ -3,10 +3,10 @@ import re
 import unittest
 
 import scripts.export_objects as eo
-from scripts.analysis.analyze_elm import elmtypes, generate_noifs, insert_default
-from scripts.analysis.analyze_ifs import flatten, run
-from scripts.analysis.analyze_namelist import find_all_namelist, generate_namelist_dict
 from scripts.analyze_subroutines import Subroutine
+from scripts.nml.analyze_elm import elmtypes, generate_noifs, insert_default
+from scripts.nml.analyze_ifs import flatten, run
+from scripts.nml.analyze_namelist import find_all_namelist, generate_namelist_dict
 from scripts.types import ReadWrite
 
 

@@ -1,11 +1,13 @@
+import os
 import random
+import subprocess as sp
 from string import ascii_lowercase
+
 from analyze_subroutines import Subroutine
 from helper_functions import ReadWrite
-import analysis.analyze_elm as ae
-import analysis.analyze_ifs as ai
-import subprocess as sp
-import os
+
+import scripts.nml.analyze_elm as ae
+import scripts.nml.analyze_ifs as ai
 
 # Declare ln as a global variable
 ln = 0
@@ -243,7 +245,6 @@ def main(num_blocks, max_depth):
 
     else:
         print("OK")
-
         print(prompt)
     print("---------------------------------------------")
 
