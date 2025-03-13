@@ -3,14 +3,23 @@ Python Module that collects functions that
 have broad utility for several modules in SPEL 
 """
 
+from __future__ import annotations
+
+import copy
 import re
 import subprocess as sp
 import sys
+from collections import namedtuple
+from typing import TYPE_CHECKING, Dict, List, Pattern, Tuple
 
-from mod_config import ELM_SRC, _bc
+if TYPE_CHECKING:
+    from scripts.analyze_subroutines import Subroutine
+
+from scripts.fortran_parser.tracing import Trace
+from scripts.mod_config import ELM_SRC, _bc
 
 # Regular Expressions
-find_type = re.compile(r"(?<=\()\w+(?=\))")  # Matches type(user-type) -> user-type
+find_type = re.compile(r"(?<=\()\s*\w+\s*(?=\))")  # Matches type(user-type) -> user-type
 # Match any variable declarations
 find_variables = re.compile(
     r"^(class\s*\(|type\s*\(|integer|real|logical|character)", re.IGNORECASE
@@ -28,6 +37,9 @@ ng_regex_array = re.compile(r"\w+?\s*\(.+?\)")
 # capture array bounds only:
 regex_bounds = re.compile(r"(?<=(\w|\s))\(.+\)")
 
+# Named tuple used to store line numbers
+# for preprocessed and original files
+PreProcTuple = namedtuple("PreProcTuple", ["cpp_ln", "ln"])
 
 class Variable(object):
     """
@@ -45,12 +57,12 @@ class Variable(object):
 
     def __init__(
         self,
-        type,
-        name,
-        subgrid,
-        ln,
-        dim,
-        parameter=False,
+        type:str,
+        name:str,
+        subgrid: str,
+        ln: int,
+        dim: int,
+        parameter:bool=False,
         declaration="",
         optional=False,
         keyword="",
@@ -59,32 +71,33 @@ class Variable(object):
         private=False,
         bounds="",
         ptrscalar=False,
+        intent="",
     ):
-        self.type = type
-        self.name = name
+        self.type: str = type
+        self.name: str = name
         self.subgrid = subgrid
-        self.ln = ln
-        self.dim = dim
-        self.parameter = parameter
+        self.ln: int = ln
+        self.dim: int = dim
+        self.parameter: bool = parameter
         # These are used for Argument variables
-        self.optional = optional
-        self.keyword = keyword
+        self.optional: bool = optional
+        self.keyword: str = keyword
+        self.intent: str = intent
         # filter_used corresponds to adjusting memory allocations
         self.filter_used = ""
-        self.subs = []
+
         # Mostly used for global derived-type variables
         if declaration:
             self.declaration = declaration
         else:
             self.declaration = ""
-        self.active = active
-        self.private = private
+        self.active: bool = active
+        self.private: bool = private
         self.default_value = None
-        self.pointer = pointer.copy()
-        self.bounds = bounds
+        self.pointer: list[str] = pointer.copy()
+        self.bounds: str = bounds
         self.ptrscalar = ptrscalar
 
-    # Define equality for comparison of two Variables
     def __eq__(self, other):
         if (
             self.name == other.name
@@ -95,7 +108,6 @@ class Variable(object):
         else:
             return False
 
-    # Override __str__ for easy printing
     def __str__(self):
         if self.dim > 0:
             return f"{self.type} {self.name} {self.bounds}"
@@ -107,11 +119,12 @@ class Variable(object):
             return f"Variable({self.type} {self.name} {self.bounds})"
         else:
             return f"Variable({self.type} {self.name})"
+    
+    def copy(self):
+        return copy.deepcopy(self)
 
     def printVariable(self, ofile=sys.stdout):
         ofile.write(f"{self}\n")
-        if self.subs:
-            ofile.write(f"Passed to {self.subs} {self.keyword}\n")
 
 
 def comment_line(lines, ct, mode="normal", verbose=False):
@@ -147,6 +160,24 @@ def comment_line(lines, ct, mode="normal", verbose=False):
         continuation = bool(newline.strip("\n").strip().endswith("&"))
     return lines, ct
 
+def split_func_line(line):
+    """
+    Function to split function definition line
+    """
+    func_name = "split_func_line::"
+    regex_func = re.compile(r"\b(function)\b")
+    regex_remove = re.compile(r"\b(pure|elemental)\b")
+
+    split_line = regex_func.split(line)
+    split_line = [s.strip() for s in split_line]
+    split_line[0] = regex_remove.sub("",split_line[0]).strip()
+
+    if len(split_line) != 3 or split_line[1].strip() != "function":
+        print(f"{func_name}Split Failed", split_line)
+        sys.exit(1)
+
+    return split_line
+
 
 def removeBounds(line, verbose=False):
     """
@@ -158,11 +189,11 @@ def removeBounds(line, verbose=False):
     this may be better off using a tokenizer and parser for the
     parenthesis.
     """
-    cc = "[ a-zA-Z0-9%\-\+]*?:[ a-zA-Z0-9%\-\+]*?"
-    non_greedy1D = re.compile(f"\({cc}\)")
-    non_greedy2D = re.compile(f"\({cc},{cc}\)")
-    non_greedy3D = re.compile(f"\({cc},{cc},{cc}\)")
-    non_greedy4D = re.compile(f"\({cc},{cc},{cc},{cc}\)")
+    cc = r"[ a-zA-Z0-9%\-\+]*?:[ a-zA-Z0-9%\-\+]*?"
+    non_greedy1D = re.compile(r"\({}\)".format(cc))
+    non_greedy2D = re.compile(r"\({},{}\)".format(cc,cc))
+    non_greedy3D = re.compile(r"\({},{},{}\)".format(cc,cc,cc))
+    non_greedy4D = re.compile(r"\({},{},{},{}\)".format(cc,cc,cc,cc))
     regex_array_as_index = re.compile(r"\w+\s*\([,\w+\*-]+\)", re.IGNORECASE)
     # ng_array_ind = re.compile(r'(?<=\w)\s*(\(.+?\))')
     ng_array_ind = re.compile(r"(?<=\w)\s*\(([^()]*|(?:\([^()]*\))*)\)")
@@ -213,7 +244,8 @@ def removeBounds(line, verbose=False):
     return newline
 
 
-def getArguments(l, verbose=False):
+@Trace.trace_decorator("getArguments")
+def getArguments(full_line, verbose=False)->List[str]:
     """
     Function that takes a string of the subroutine call
     as an argument and returns the variables
@@ -226,11 +258,12 @@ def getArguments(l, verbose=False):
     resolve ambiguities from interfaces, and
     track global variables passed as arguments.
     """
+
     if verbose:
-        print(_bc.WARNING + f"getArguments:: Processing {l}" + _bc.ENDC)
+        print(_bc.WARNING + f"getArguments:: Processing {full_line}" + _bc.ENDC)
     # Matches longest string between parentheses
-    par = re.compile("(?<=\().+(?=\))")
-    m = par.search(l)
+    par = re.compile(r"(?<=\().+(?=\))")
+    m = par.search(full_line)
     if not m:
         args = []
         return args
@@ -394,7 +427,7 @@ def get_interface_list():
     return interface_list
 
 
-def getLocalVariables(sub, verbose=False, class_var=False):
+def getLocalVariables(sub: Subroutine, verbose=False, class_var=False):
     """
     this function will retrieve  the local variables from
     the subroutine at startline, endline in the given file
@@ -402,17 +435,13 @@ def getLocalVariables(sub, verbose=False, class_var=False):
     """
     func_name = "getLocalVariables"
 
-    filename = sub.filepath
-    subname = sub.name
-    file = open(filename, "r")
-    lines = file.readlines()
-    file.close()
-    startline = sub.startline
-    endline = sub.endline
+    lines = sub.sub_lines
 
     args_present = bool(sub.dummy_args_list)
     if verbose:
-        print(f"{func_name}::{filename},{subname} at L{startline}-{endline}")
+        fileinfo = sub.get_file_info()
+        print(f"{func_name}::{fileinfo}")
+
     cc = "."
     # non-greedy capture
     ng_regex_array = re.compile(r"\w+?\s*\({}+?\)".format(cc))
@@ -424,26 +453,26 @@ def getLocalVariables(sub, verbose=False, class_var=False):
     else:
         match_arg = None
 
-    find_type = re.compile(r"(?<=\()\w+(?=\))")
     class_var = re.compile(r"^(class\s*\()", re.IGNORECASE)
     find_variables = re.compile(
-        "^(class\s*\(|type\s*\(|integer|real|logical|character)", re.IGNORECASE
+        r"^(class\s*\(|type\s*\(|integer|real|logical|character)", re.IGNORECASE
     )
     regex_var = re.compile(r"\w+")
-    regex_subgrid_index = re.compile("(?<=bounds\%beg)[a-z]", re.IGNORECASE)
+    regex_subgrid_index = re.compile(r"(?<=bounds\%beg)[a-z]", re.IGNORECASE)
     # test for intrinsic data types or user defined
     intrinsic_type = re.compile(r"^(integer|real|logical|character)", re.IGNORECASE)
     user_type = re.compile(r"^(class\s*\(|type\s*\()", re.IGNORECASE)
     ng_array_ind = re.compile(r"(?<=\w)\s*(\(.+?\))")
 
-    ln = startline
-    while ln < endline:
-        line, ln = line_unwrapper(lines=lines, ct=ln)
-        line = line.strip().lower()
+    for line_pair in lines:
+        ln = line_pair.ln
+        line = line_pair.line
 
         match_variable = find_variables.search(line)
 
         if match_variable:
+            if verbose:
+                print(f"{func_name} Matched:{match_variable.group()},{line}")
             # Track variable declaration start / end
             if sub.var_declaration_startl == 0:
                 sub.var_declaration_startl = ln
@@ -463,6 +492,7 @@ def getLocalVariables(sub, verbose=False, class_var=False):
                     data_type = find_type.search(line).group()
 
                 temp_vars = intrinsic_type.sub("", line)
+                temp_decl = line.replace(temp_vars,"")
             else:
                 # Could be a list of variables
                 temp_decl = line.split("::")[0]
@@ -520,6 +550,7 @@ def getLocalVariables(sub, verbose=False, class_var=False):
                             dim,
                             parameter=parameter,
                             optional=optional,
+                            bounds=bounds,
                         )
                     else:
                         sub.LocalVariables["arrays"][varname] = Variable(
@@ -557,7 +588,7 @@ def getLocalVariables(sub, verbose=False, class_var=False):
                     )
                 else:
                     if "=" in var:
-                        var = var.split("=")[0]
+                        var = var.split("=")[0].strip()
                     sub.LocalVariables["scalars"][var] = Variable(
                         data_type, var, "", ln, dim=0, parameter=parameter
                     )
@@ -570,7 +601,6 @@ def determine_class_instance(sub, verbose=False):
     """
     Find out what the data structure 'this' corresponds to
     """
-    import subprocess as sp
 
     func_name = "determine_class_instance"
     filename = sub.filepath
@@ -689,7 +719,7 @@ def adjust_array_access_and_allocation(local_arrs, sub, dargs=False, verbose=Fal
             track_changes.append(lnew)
 
     # Go through all loops and make replacements for filter index
-    ng_regex_array = re.compile("\w+\s*\([,\w+\*-]+\)", re.IGNORECASE)
+    ng_regex_array = re.compile(r"\w+\s*\([,\w+\*-]+\)", re.IGNORECASE)
     regex_var = re.compile(r"\w+")
     regex_indices = re.compile(r"(?<=\()(.+)(?=\))")
     print("Going through loops")
@@ -754,18 +784,18 @@ def adjust_array_access_and_allocation(local_arrs, sub, dargs=False, verbose=Fal
 
                         # Make replacement in line: (assumes subgrid is first index!!)
                         # lnew = lnew.replace(f"{v}({subgrid}",f"{v}(f{subgrid}")
-                        lnew = re.sub(f"{v}\s*\({subgrid}", f"{v}(f{subgrid}", lnew)
+                        lnew = re.sub(r"{}\s*\({}".format(v,subgrid), r"{}(f{}".format(v,subgrid), lnew)
                         replaced = True
 
                     regex_check_index = re.compile(
-                        f"\w+\([,a-z0-9*-]*(({v})\(.\))[,a-z+0-9-]*\)", re.IGNORECASE
+                        r"\w+\([,a-z0-9*-]*(({})\(.\))[,a-z+0-9-]*\)".format(v), re.IGNORECASE
                     )
                     match = regex_check_index.search(temp_line)
                     if match:  # array {v} is being used as an index
                         # substitute from the entire line
                         i = regex_indices.search(arr).group()
-                        i = f"\({i}\)"
-                        temp_line = re.sub(f"{v}{i}", v, temp_line)
+                        i = r"\({}\)".format(i)
+                        temp_line = re.sub(r"{}{}".format(v,i), v, temp_line)
                         removing = True
                 m_arr = ng_regex_array.findall(temp_line)
 
@@ -807,7 +837,7 @@ def adjust_array_access_and_allocation(local_arrs, sub, dargs=False, verbose=Fal
         if m_skip:
             print(_bc.FAIL + f"{subname} must be manually altered !" + _bc.ENDC)
             continue
-        regex_subcall = re.compile(f"\s+(call)\s+({subname})", re.IGNORECASE)
+        regex_subcall = re.compile(r"\s+(call)\s+({})".format(subname), re.IGNORECASE)
 
         for arg in args:
             # If index fails, then there is an inconsistency
@@ -818,11 +848,11 @@ def adjust_array_access_and_allocation(local_arrs, sub, dargs=False, verbose=Fal
             local_var = local_arrs[loc_]
             filter_used = local_var.filter_used + arg.subgrid
             # bounds string:
-            bounds_string = f"(\s*bounds%beg{arg.subgrid}\s*:\s*bounds%end{arg.subgrid}\s*|\s*beg{arg.subgrid}\s*:\s*end{arg.subgrid}\s*)"
+            bounds_string = r"(\s*bounds%beg{}\s*:\s*bounds%end{}\s*|\s*beg{}\s*:\s*end{}\s*)".format(arg.subgrid,arg.subgrid,arg.subgrid,arg.subgrid)
             # string to replace bounds with
             num_filter = "num_" + filter_used.replace("filter_", "")
             num_filter = f"1:{num_filter}"
-            regex_array_arg = re.compile(f"{arg.name}\s*\({bounds_string}")
+            regex_array_arg = re.compile(r"{}\s*\({}".format(arg.name,bounds_string))
 
             for ln in range(sub.startline, sub.endline):
                 line = lines[ln]
@@ -928,13 +958,13 @@ def adjust_child_sub_arguments(sub, file, lstart, lend, args):
             sys.exit(f"Error keyword for {arg.name} in {sub.name} is missing")
 
         regex_arg_type = re.compile(f"{arg.type}", re.IGNORECASE)
-        regex_arg_name = re.compile(f"{kw}\s*\(", re.IGNORECASE)
+        regex_arg_name = re.compile(r"{}\s*\(".format(kw), re.IGNORECASE)
         regex_bounds_full = re.compile(
-            f"({kw}\s*\()(bounds%beg{arg.subgrid})\s*(:)\s*(bounds%end{arg.subgrid})\s*(\))",
+            r"({}\s*\()(bounds%beg{})\s*(:)\s*(bounds%end{})\s*(\))".format(kw,arg.subgrid,arg.subgrid),
             re.IGNORECASE,
         )
         regex_bounds = re.compile(
-            f"({kw}\s*\(\s*bounds%beg{arg.subgrid}[\s:]+\))", re.IGNORECASE
+            r"({}\s*\(\s*bounds%beg{}[\s:]+\))".format(kw,arg.subgrid), re.IGNORECASE
         )
         for ct in range(lstart - 1, lend):
             #
@@ -1067,7 +1097,7 @@ def determine_filter_access(sub, verbose=False):
         )
 
 
-def line_unwrapper(lines, ct, verbose=False):
+def line_unwrapper(lines: list[str], ct: int, verbose: bool=False) -> Tuple[str, int]:
     """
     Function that takes code segment that has line continuations
     and returns it all on one line.
@@ -1077,7 +1107,7 @@ def line_unwrapper(lines, ct, verbose=False):
     # remove new line character
     simple_l = simple_l.rstrip("\n").strip()
     continuation = bool(simple_l.endswith("&"))
-    full_line = simple_l
+    full_line = simple_l.lower()
     newct = ct
     while continuation:
         newct += 1
@@ -1090,13 +1120,14 @@ def line_unwrapper(lines, ct, verbose=False):
         # Fortran allow empty lines in between line continuations
         if simple_l.isspace() or not simple_l:
             continue
-        full_line = full_line[:-1] + simple_l.strip()
+        full_line = full_line[:-1] + simple_l.strip().lower()
         continuation = bool(full_line.endswith("&"))
 
     # Debug check:
     if verbose:
-        print("Original lines:\n", lines[ct:newct])
+        print("Original lines:\n", lines[ct:newct+1])
         print("Single line\n:", full_line)
+        print("old, new ln:", ct, newct)
 
     return full_line, newct
 
@@ -1151,9 +1182,8 @@ def parse_line_for_variables(ifile, l, ln, ptr=False, verbose=False):
             # regex to separate type from variable when there is no '::' separator
             ng_type = re.compile(r"^\w+?\s*\(.+?\)")
             match_type = ng_type.search(l)
-            if (
-                match_type
-            ):  # Means there exists a character(len=) or type(.) or real(r8)
+            if (match_type):
+                # Means there exists a character(len=) or type(.) or real(r8)
                 temp_decl = match_type.group()
                 temp_vars = l.split(temp_decl)[1]
             else:  # means it's a simple decl such as 'integer'
@@ -1249,3 +1279,65 @@ def parse_line_for_variables(ifile, l, ln, ptr=False, verbose=False):
             )
 
     return variable_list
+
+def check_cpp_line(base_fn, og_lines, cpp_lines, cpp_ln, og_ln, verbose=False):
+    """Function to check if the compiler preprocessor (cpp) line
+    is a cpp comment and adjust the line numbers accordingly.
+    returns the adjusted line numbers
+    """
+    func_name = "check_cpp_line::"
+    # regex to match if the proprocessor comments refer to mod_file
+    regex_file = re.compile(r"({})".format(base_fn))
+    # regex matches a preprocessor comment
+    regex_cpp_comment = re.compile(r"(^# [0-9]+)")
+    # Store current lines to check
+    cpp_line = cpp_lines[cpp_ln]
+    line = og_lines[og_ln]
+    line = line.split("!")[0].strip()
+
+    # (NOTE: this is unnecessary and overly specific to elm use case?)
+    regex_include_assert = re.compile(r"^(#include)\s+[\"\'](shr_assert.h)[\'\"]")
+    if regex_include_assert.search(line):
+        if verbose:
+            print(f"{func_name}Found include statement to comment out:\n{line}")
+            print(f"cpp line: {cpp_line}")
+        newline = line.replace("#include", "!#py #include")
+        og_lines[og_ln] = newline
+        # include statements take up multiple lines:
+        match_file = regex_file.search(cpp_line)
+        while not match_file:
+            cpp_ln += 1
+            cpp_line = cpp_lines[cpp_ln]
+            match_file = regex_file.search(cpp_line)
+
+    # Check if the line is a preprocessor comment
+    m_cpp = regex_cpp_comment.search(cpp_line)
+    while(m_cpp):
+        # Check if the comment refers to the mod_file
+        match_file = regex_file.search(cpp_line)
+        if match_file:
+            # Get the line for the original file, adjusted for 0-based indexing
+            # NOTE: if not match_file, then the comment is for an include statement
+            #       which will be handled in the main part of the code?
+            og_ln = int(m_cpp.group().split()[1]) - 1
+            if verbose:
+                print(f"{func_name}:: Found CPP comment, new line number: {og_ln}")
+
+        # Since it was a comment, go to the next line
+        cpp_ln += 1
+        m_cpp = regex_cpp_comment.search(cpp_lines[cpp_ln])
+
+    return cpp_ln, og_ln, og_lines
+
+
+def search_in_file_section(fpath: str, start_ln:int, end_ln: int, pattern: Pattern,):
+    """
+    Function that iterates through the lines in a file using filter builtin.
+    """
+    with open(fpath, "r") as file:
+        lines = enumerate(file, start=0)
+        section = filter(lambda x: start_ln <= x[0] <= end_ln, lines)
+        matches = [line[1] for line in filter(lambda x: pattern.search(x[1]), section)]
+
+    return matches
+

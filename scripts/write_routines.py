@@ -1,16 +1,23 @@
+from __future__ import annotations
+
 import re
 import subprocess as sp
 import sys
 from collections import namedtuple
+from typing import TYPE_CHECKING, Dict
 
-from analyze_subroutines import Subroutine
-from fortran_modules import get_module_name_from_file
-from mod_config import (ELM_SRC, PHYSICAL_PROP_TYPE_LIST, _bc, elm_dir_regex,
-                        preproc_list, shr_dir_regex, spel_mods_dir,
-                        spel_output_dir, unit_test_files)
-from utilityFunctions import (comment_line, find_file_for_subroutine,
-                              getArguments, line_unwrapper)
+from scripts.analyze_subroutines import Subroutine
+from scripts.fortran_modules import get_module_name_from_file
+from scripts.mod_config import (ELM_SRC, PHYSICAL_PROP_TYPE_LIST, _bc,
+                                elm_dir_regex, preproc_list, shr_dir_regex,
+                                spel_mods_dir, spel_output_dir,
+                                unit_test_files)
+from scripts.utilityFunctions import (Variable, comment_line,
+                                      find_file_for_subroutine, getArguments,
+                                      line_unwrapper)
 
+if TYPE_CHECKING:
+    from scripts.DerivedType import DerivedType
 TAB_WIDTH = 2
 indent = 1
 
@@ -173,11 +180,9 @@ def write_elminstMod(typedict, case_dir):
 
 
 def clean_use_statements(mod_list, file, case_dir):
-    from edit_files import comment_line
-
     """
-     function that will clean both initializeParameters
-     and readConstants
+    function that will clean both initializeParameters
+    and readConstants
     """
     ifile = open(f"{spel_mods_dir}{file}.F90", "r")
     lines = ifile.readlines()
@@ -238,9 +243,9 @@ def insert_at_token(lines, token, lines_to_add):
 
 
 def find_parent_subroutine_call(
-    subroutines: dict[str, Subroutine],
-    type_dict,
-    inst_to_type,
+    subroutines: Dict[str, Subroutine],
+    type_dict: dict[str, DerivedType],
+    inst_to_type: dict[str,str],
 ):
     """
     Function that for a list of Subroutines, finds a call signature to
@@ -267,6 +272,8 @@ def find_parent_subroutine_call(
         lines = ifile.readlines()
         ifile.close()
 
+        _, mod_name = get_module_name_from_file(filename)
+
         ct = call_ln
         call_string, ct = line_unwrapper(lines, ct)
         delta_ln = ct - call_ln + 1
@@ -289,7 +296,13 @@ def find_parent_subroutine_call(
             print(f"Error::Couldn't find calling subroutine for {sub.name}")
             sys.exit(1)
         fn, startl, endl = find_file_for_subroutine(name=subname, fn=filename)
-        parent_sub = Subroutine(subname, fn, [""], start=startl, end=endl)
+        parent_sub = Subroutine(
+            name=subname,
+            mod_name=mod_name,
+            file=fn,
+            start=startl,
+            end=endl,
+        )
 
         args_as_vars = {}
         args_as_instances = {}
@@ -312,8 +325,8 @@ def find_parent_subroutine_call(
             if arg in parent_sub.Arguments:
                 argvar = parent_sub.Arguments[arg]
                 if argvar.type in type_dict:
-                    # Choose an instance?
-                    inst_var = type_dict[argvar.type].instances[0]
+                    dtype = type_dict[argvar.type]
+                    inst_var: Variable = list(dtype.instances.values())[0]
                     args_as_instances[inst_var.name] = inst_var
                 else:
                     args_as_vars[arg] = parent_sub.Arguments[arg]
@@ -322,13 +335,24 @@ def find_parent_subroutine_call(
             elif arg in parent_sub.LocalVariables["scalars"]:
                 args_as_vars[arg] = parent_sub.LocalVariables["scalars"][arg]
             else:
-                print(_bc.FAIL + "STILL CAN'T FIND ARGS (non-derived type global var?)")
+                # Assume it's a derived type removed for fut purposes (ie, alm_fates)
+                print(
+                    _bc.WARNING + f"Can't find {arg} (non-udt global var?)" + _bc.ENDC
+                )
+                args_as_vars[arg] = Variable(
+                    type="integer",
+                    name=arg,
+                    dim=0,
+                    subgrid="?",
+                    bounds="",
+                    ln=-1,
+                )
 
         # Variables to have declarations added to main.F90
         if args_as_vars:
             for argvar in args_as_vars.values():
                 type_string = argvar.type
-                if type_string not in ["real", "integer", "character", "logical"]:
+                if type_string not in { "real", "integer", "character", "logical" }:
                     type_string = f"type({type_string})"
                 elif type_string == "real":
                     type_string = f"{type_string}(r8)"
@@ -348,7 +372,52 @@ def find_parent_subroutine_call(
     return Additions(calls=calls, mods=mods_to_add, vars=var_decl_to_add)
 
 
-def prepare_main(subroutines, type_dict, instance_to_type, casedir):
+def adjust_call_sig(args, calls, num_filter_members):
+    """
+    Function to replace typical elm variables (ie, filters)
+    """
+    regex_filter = re.compile(r"\b(filter_)")
+    filter_member_str = "|".join(num_filter_members)
+    regex_numf = re.compile(r"\b({})\b".format(filter_member_str))
+    print("numf:", filter_member_str)
+
+    adj_args = args[:]
+    adj_calls = calls[:]
+    for i, decl in enumerate(args):
+        m_f = regex_filter.search(decl)
+        m_numf = regex_numf.search(decl)
+        if m_f:
+            adj_args.remove(decl)
+        elif m_numf:
+            adj_args.remove(decl)
+        elif "bounds" in decl:
+            adj_args.remove(decl)
+
+    for i, el in enumerate(calls):
+        adj_calls[i] = adj_calls[i].replace("bounds", "bounds_clump")
+        adj_calls[i] = regex_filter.sub("filter(nc)%", adj_calls[i])
+        m_numf = regex_numf.findall(el)
+        for repl in m_numf:
+            adj_calls[i] = adj_calls[i].replace(repl, f"filter(nc)%{repl}")
+
+    return adj_args, adj_calls
+
+
+def get_filter_members(filter_type: DerivedType):
+    member_list = []
+    for member_var in filter_type.components.values():
+        if "num_" in member_var.name:
+            member_list.append(member_var.name)
+
+    return member_list
+
+
+def prepare_main(
+        subroutines: dict[str,Subroutine],
+        type_dict: dict[str,DerivedType],
+        instance_to_type: dict[str,str],
+        casedir:str,
+):
     """
     Function to insert USE dependencies into main.F90 and subroutine calls for the FUT subs
     """
@@ -361,17 +430,22 @@ def prepare_main(subroutines, type_dict, instance_to_type, casedir):
     call_token = "!#CALL_SUB"
     modules_to_add = []
     for s in subroutines.values():
-        _, mod = get_module_name_from_file(s.filepath)
+        mod = s.module
         modules_to_add.append(f"use {mod}, only : {s.name}\n")
 
     additions = find_parent_subroutine_call(subroutines, type_dict, instance_to_type)
 
+    num_filters = get_filter_members(type_dict["clumpfilter"])
+    adj_args, adj_calls = adjust_call_sig(additions.vars, additions.calls, num_filters)
+
     modules_to_add.extend(additions.mods)
 
     lines = insert_at_token(lines=lines, token=use_token, lines_to_add=modules_to_add)
-    lines = insert_at_token(lines=lines, token=var_token, lines_to_add=additions.vars)
+    lines = insert_at_token(lines=lines, token=var_token, lines_to_add=adj_args)
     lines = insert_at_token(
-        lines=lines, token=call_token, lines_to_add=reversed(additions.calls)
+        lines=lines,
+        token=call_token,
+        lines_to_add=reversed(adj_calls),
     )
     with open(f"{casedir}/main.F90", "w") as iofile:
         iofile.writelines(lines)
@@ -415,12 +489,12 @@ def prepare_unit_test_files(
         of.writelines(lines)
 
     # Write DeepCopyMod for UnitTest
-    create_deepcopy_module(type_dict, case_dir)
+    create_deepcopy_module(type_dict, case_dir, "DeepCopyMod")
 
     return
 
 
-def duplicate_clumps(typedict):
+def duplicate_clumps(typedict: dict[str,DerivedType]):
     """
     Function that writes a Fortran module containing
     subroutines needed to duplicate the input data
@@ -501,15 +575,20 @@ def duplicate_clumps(typedict):
         if dtype.active and type_name in PHYSICAL_PROP_TYPE_LIST:
             for var in dtype.instances.values():
                 if var.active:
-                    for c in dtype.components.values():
-                        active = c["active"]
-                        field_var = c["var"]
-                        bounds = c["bounds"]
+                    for field_var in dtype.components.values():
+                        active = field_var.active
+                        bounds = field_var.bounds
                         if not active:
                             continue
-                        if field_var.name in ignore_list:
+                        if "%" not in field_var.name:
+                            fname = var.name + "%" + field_var.name
+                            comp_name = field_var.name
+                        else:
+                            fname = field_var.name
+                            comp_name = field_var.name.split("%")[1]
+                        if comp_name in ignore_list:
                             continue
-                        fname = var.name + "%" + field_var.name
+
                         dim = bounds
                         newdim = get_delta_from_dim(dim, "y")
                         dim1 = get_delta_from_dim(dim, "n")
@@ -545,13 +624,17 @@ def duplicate_clumps(typedict):
             for var in dtype.instances.values():
                 if not var.active:
                     continue
-                for c in dtype.components.values():
-                    active = c["active"]
-                    field_var = c["var"]
-                    bounds = c["bounds"]
+                for field_var in dtype.components.values():
+                    active = field_var.active
+                    bounds = field_var.bounds
                     if not active:
                         continue
-                    fname = var.name + "%" + field_var.name
+                    if "%" not in field_var.name:
+                        fname = var.name + "%" + field_var.name
+                        comp_name = field_var.name
+                    else:
+                        fname = field_var.name
+                        comp_name = field_var.name.split("%")[1]
                     dim = bounds
                     newdim = get_delta_from_dim(dim, "y")
                     dim1 = get_delta_from_dim(dim, "n")
@@ -595,10 +678,10 @@ def create_constants_io(mode, global_vars, casedir):
     lines.append(tabs + "use fileio_mod, only : fio_open, fio_close\n")
     if mode == "r":
         lines.append(tabs + "use fileio_mod, only : fio_read\n")
-    lines.append(tabs + "integer :: fid, errcode=0\n")
+    lines.append(tabs + "integer :: fid = 18, errcode=0\n")
     lines.append(tabs + 'character(len=64) :: ofile = "E3SM_constants.txt"\n')
-    lines.append(tabs + "fid = 23\n")
-    lines.append(tabs + "call fio_open(fid,ofile, 2)\n\n")
+    access = "1" if mode == "r" else "2"
+    lines.append(tabs + f"call fio_open(fid,ofile, {access})\n\n")
     for gv in global_vars.values():
         if gv.parameter or not gv.active:
             continue
@@ -606,7 +689,7 @@ def create_constants_io(mode, global_vars, casedir):
             lines.append(f'{tabs}write(fid,"(A)") "{gv.name}"\n')
             lines.append(f"{tabs}write(fid,*) {gv.name}\n")
         else:
-            str1 = f"{tabs}call fio_read(18,'{gv.name}', {gv.name}, errcode=errcode)\n"
+            str1 = f"{tabs}call fio_read(fid,'{gv.name}', {gv.name}, errcode=errcode)\n"
             str2 = f"{tabs}if (errcode .ne. 0) stop\n"
             lines.append(str1)
             lines.append(str2)
@@ -659,16 +742,11 @@ def create_write_vars(typedict, subname, use_isotopes=False):
 
     for dtype in typedict.values():
         if dtype.active:
-            dtype.create_write_read_functions("w", ofile, gpu=True)
-
-    # TODO: can't decide if icemask_grc is needed by default.
-    # glc2lnd_vars%icemask:
-    # ofile.write(spaces+"write(fid,'(A)') 'glc2lnd_vars%icemask_grc'\n")
-    # ofile.write(spaces+'write(fid,*) glc2lnd_vars%icemask_grc')
+            create_write_read_functions(dtype,"w", ofile, gpu=True)
 
     for dtype in typedict.values():
         if dtype.active:
-            dtype.create_write_read_functions("w", ofile, gpu=True)
+            create_write_read_functions(dtype,"w", ofile, gpu=True)
 
     ofile.write(spaces + "call fio_open(fid,ofile, 2)\n\n")
     ofile.write(spaces + 'write(fid,"(A)") "wt_lunit"\n')
@@ -680,11 +758,11 @@ def create_write_vars(typedict, subname, use_isotopes=False):
     #  the physical property types will be done first.
     for dtype in typedict.values():
         if dtype.active and dtype.type_name in PHYSICAL_PROP_TYPE_LIST:
-            dtype.create_write_read_functions("w", ofile)
+            create_write_read_functions(dtype,"w", ofile)
 
     for dtype in typedict.values():
         if dtype.active and dtype.type_name not in PHYSICAL_PROP_TYPE_LIST:
-            dtype.create_write_read_functions("w", ofile)
+            create_write_read_functions(dtype,"w", ofile)
 
     ofile.write(spaces + "call fio_close(fid)\n")
     ofile.write("end subroutine write_vars\n")
@@ -783,12 +861,12 @@ def create_read_vars(typedict):
     # Start with physical property types
     for dtype in typedict.values():
         if dtype.active and dtype.type_name in PHYSICAL_PROP_TYPE_LIST:
-            dtype.create_write_read_functions("r", ofile)
+            create_write_read_functions(dtype,"r", ofile)
     ofile.write(spaces + "else\n")
 
     for dtype in typedict.values():
         if dtype.active and dtype.type_name not in PHYSICAL_PROP_TYPE_LIST:
-            dtype.create_write_read_functions("r", ofile)
+            create_write_read_functions(dtype,"r", ofile)
 
     ofile.write(spaces + "end if\n")
     ofile.write(spaces + "call fio_close(18)\n")
@@ -815,9 +893,8 @@ def create_pointer_type_sub(lines, dtype, all_active=False):
 
     # Allocate the instance based on the number of unique targets for the pointer fields:
     num_targets = 0
-    for member in dtype.components.values():
-        member_var = member["var"]
-        active = member["active"]
+    for member_var in dtype.components.values():
+        active = member_var.active
         num_targets_new = len(member_var.pointer)
         if num_targets == 0:
             num_targets = num_targets_new
@@ -826,7 +903,7 @@ def create_pointer_type_sub(lines, dtype, all_active=False):
             sys.exit(1)
 
 
-def create_type_sub(lines, dtype, all_active=False):
+def create_type_sub(lines, dtype: DerivedType, all_active=False):
     """
     Functiion that creates a subroutine to allocate
     the active members of dtype
@@ -867,20 +944,20 @@ def create_type_sub(lines, dtype, all_active=False):
         lines.append(tabs + "do i = 1, N\n")
         tabs = set_indent("shift")
     inst_name = "this_type" if inst_dim == 0 else "this_type(i)"
-    for member in dtype.components.values():
-        member_var = member["var"]
-        active = member["active"]
+    for member_var in dtype.components.values():
+        active = member_var.active
         if active:
             dim_string = ""
+            field_name = member_var.name.split("%")[1] if "%" in member_var.name else member_var.name
             if member_var.dim > 0:
                 dim_li = [":" for i in range(0, member_var.dim)]
                 dim_string = ",".join(dim_li)
                 dim_string = f"({dim_string})"
-                bounds = member["bounds"].strip()
-                statement = f"{tabs}allocate({inst_name}%{member_var.name}{bounds});"
+                bounds = member_var.bounds
+                statement = f"{tabs}allocate({inst_name}%{field_name}{bounds});"
                 lines.append(statement)
             elif member_var.ptrscalar:
-                statement = f"{tabs}allocate({inst_name}%{member_var.name});"
+                statement = f"{tabs}allocate({inst_name}%{field_name});"
                 lines.append(statement)
 
             init_val = None
@@ -897,7 +974,7 @@ def create_type_sub(lines, dtype, all_active=False):
             if not init_val:
                 print(f"Error: No init_val for {member_var}")
                 sys.exit(1)
-            init_statement = f"{inst_name}%{member_var.name}{dim_string} = {init_val}\n"
+            init_statement = f"{inst_name}%{field_name}{dim_string} = {init_val}\n"
             lines.append(init_statement)
 
     # End subroutine:
@@ -982,7 +1059,7 @@ def create_type_allocators(type_dict, casedir):
     return allocations
 
 
-def create_deepcopy_subroutine(lines, dtype, all_active=False):
+def create_deepcopy_subroutine(lines, dtype: DerivedType, all_active=False):
     """
     Function to generate a subroutine for dtype that manually
     copies over the active members of dtype.
@@ -1000,9 +1077,9 @@ def create_deepcopy_subroutine(lines, dtype, all_active=False):
             print(_bc.WARNING + f"WARNING:Instance dim > 1D: {inst}" + _bc.ENDC)
 
     members_to_copy = [
-        comp["var"]
-        for comp in dtype.components.values()
-        if comp["active"] or all_active
+        field
+        for field in dtype.components.values()
+        if field.active or all_active
     ]
     if scalar:
         subname = f"deepcopy_{dtype.type_name}"
@@ -1065,20 +1142,20 @@ def create_deepcopy_subroutine(lines, dtype, all_active=False):
     return lines
 
 
-def create_deepcopy_module(type_dict, casedir):
+def create_deepcopy_module(type_dict, casedir, modname, all_active=False):
     """
     Function to create subroutine(s) for performing a manual deepcopy
     """
     tabs = set_indent("reset")
     lines = []
 
-    lines.append("module DeepCopyMod\n")
+    lines.append(f"module {modname}\n")
 
     active_instances = {
         inst_var.name: inst_var
         for dtype in type_dict.values()
         for inst_var in dtype.instances.values()
-        if inst_var.active
+        if inst_var.active or all_active
     }
     active_types = {inst_var.type: True for inst_var in active_instances.values()}
 
@@ -1096,10 +1173,103 @@ def create_deepcopy_module(type_dict, casedir):
 
     for type_name in active_types:
         dtype = type_dict[type_name]
-        lines = create_deepcopy_subroutine(lines, dtype)
+        lines = create_deepcopy_subroutine(
+            lines=lines, dtype=dtype, all_active=all_active
+        )
 
-    lines.append("end module DeepCopyMod")
+    lines.append(f"end module {modname}")
 
-    with open(f"{casedir}/DeepCopyMod.F90", "w") as ofile:
+    with open(f"{casedir}/{modname}.F90", "w") as ofile:
         ofile.writelines(lines)
     return None
+
+
+def create_write_read_functions(dtype: DerivedType, rw, ofile, gpu=False):
+    """
+    This function will write two .F90 functions that write read and write statements for all
+    components of the derived type
+    rw is a variable that holds either read or write mode
+    """
+    tab = " " * 2
+
+    fates_list = ["veg_pp%is_veg", "veg_pp%is_bareground", "veg_pp%wt_ed"]
+    for var in dtype.instances.values():
+        if not var.active:
+            continue
+        if rw.lower() == "write" or rw.lower() == "w":
+            ofile.write(tab + "\n")
+            ofile.write(
+                tab
+                + f"!====================== {var.name} ======================!\n"
+            )
+            ofile.write(tab + "\n")
+            if gpu:
+                ofile.write(tab + "!$acc update self(& \n")
+
+            # Any component of the derived type accessed by the Unit Test should have been toggled active at this point.
+            # Go through the instance of this derived type and write I/O for any active components.
+            vars = []
+            for field_var in dtype.components.values():
+                active = field_var.active
+                if not active:
+                    continue
+
+                # Filter out C13/C14 duplicates and fates only variables.
+                c13c14 = bool("c13" in field_var.name or "c14" in field_var.name)
+                if c13c14:
+                    continue
+                if "%" not in field_var.name:
+                    fname = var.name + "%" + field_var.name
+                else:
+                    fname = field_var.name
+                if fname in fates_list:
+                    continue
+                if gpu:
+                    vars.append(fname)
+                else:
+                    str1 = f'write (fid, "(A)") "{fname}" \n'
+                    str2 = f"write (fid, *) {fname}\n"
+                    ofile.write(tab + str1)
+                    ofile.write(tab + str2)
+            if gpu:
+                for n, v in enumerate(vars):
+                    if n + 1 < len(vars):
+                        ofile.write(tab + f"!$acc {v}, &\n")
+                    else:
+                        ofile.write(tab + f"!$acc {v} )\n")
+        elif rw.lower() == "read" or rw.lower() == "r":
+            ofile.write(tab + "\n")
+            ofile.write(
+                tab
+                + "!====================== {} ======================!\n".format(
+                    var.name
+                )
+            )
+            ofile.write(tab + "\n")
+
+            # Any component of the derived type accessed by the Unit Test should have been toggled active at this point.
+            # Go through the instance of this derived type and write I/O for any active components.
+            for field_var in dtype.components.values():
+                active = field_var.active
+                bounds = field_var.bounds
+                if not active:
+                    continue
+                c13c14 = bool("c13" in field_var.name or "c14" in field_var.name)
+                if c13c14:
+                    continue
+                if "%" not in field_var.name:
+                    fname = var.name + "%" + field_var.name
+                else:
+                    fname = field_var.name
+                if fname in fates_list:
+                    continue
+                dim = bounds
+                dim1 = get_delta_from_dim(dim, "y")
+                dim1 = dim1.replace("_all", "")
+                str1 = "call fio_read(18,'{}', {}{}, errcode=errcode)\n".format(
+                    fname, fname, dim1
+                )
+                str2 = "if (errcode .ne. 0) stop\n"
+                ofile.write(tab + str1)
+                ofile.write(tab + str2)
+    return

@@ -3,10 +3,11 @@ import json
 from django.conf import settings
 from django.db import connection
 
+from .models import SubroutineActiveGlobalVars, SubroutineCalltree
+
 DB_NAME = settings.DATABASES["default"]["NAME"]
 
 modules = {}
-subroutines = {}
 
 
 class Node:
@@ -14,7 +15,20 @@ class Node:
         if dependency is None:
             dependency = []
         self.name = name
-        self.dependency = dependency
+        self.children = dependency
+
+    def __repr__(self):
+        return f"Node(name:{self.name},dep:{self.children})"
+
+    # def print_tree(self, level: int = 0):
+    #     """Recursively prints the tree in a hierarchical format."""
+    #     if level == 0:
+    #         print("CallTree for ", self.node.subname)
+    #     indent = "|--" * level
+    #     print(f"{indent}>{self.node.subname}")
+    #
+    #     for child in self.children:
+    #         child.print_tree(level + 1)
 
 
 def modules_dfs(mod_id, node):
@@ -32,7 +46,7 @@ def modules_dfs(mod_id, node):
         dep = i[2]
         if dep not in visited:
             n = Node(modules[dep])
-            node.dependency.append(n)
+            node.children.append(n)
             modules_dfs(dep, n)
 
         visited.append(dep)
@@ -40,7 +54,7 @@ def modules_dfs(mod_id, node):
 
 def jsonify(node, d):
     d["node"] = {"name": node.name, "children": []}
-    for child in node.dependency:
+    for child in node.children:
         if child.name != "shr_kind_mod" and child.name != "NULL":
             child_dict = {}
             jsonify(child, child_dict)
@@ -74,132 +88,162 @@ def get_module_calltree(mod_name):
     return json.dumps(r)
 
 
-def subroutine_active_table(instance, member):
-    s = None
-    with connection.cursor() as cur:
-        cur.execute(
-            f"""
-            SELECT 
-                m1.subroutine_name, 
-                m2.instance_name, 
-                m4.member_name, 
-                m3.status 
-            FROM 
-                subroutines m1 
-            JOIN 
-                user_type_instances m2 
-            JOIN 
-                subroutine_active_global_vars m3 
-            JOIN 
-                type_definitions m4 
-            WHERE 
-                m3.subroutine_id = m1.subroutine_id 
-            AND 
-                m3.instance_id = m2.instance_id 
-            AND 
-                m3.member_id = m4.define_id 
-            AND 
-                m1.subroutine_id NOT IN (SELECT child_subroutine_id FROM {DB_NAME}.subroutine_calltree)
-            AND 
-                m2.instance_name = '{instance}'
-            AND
-                m4.member_name = '{member}' 
-            """
+def get_subroutine_details(instance, member, mode):
+    from django.db.models import F
+
+    """
+    Function that queries database
+    """
+    # Filter subroutines not in the call tree
+    if mode == "head":
+        excluded_subroutines = SubroutineCalltree.objects.values_list(
+            "child_subroutine", flat=True
         )
-        s = cur.fetchall()
-    return [i[0] for i in s]
+    else:
+        excluded_subroutines = []
 
-
-def subroutine_active_table_ALL(instance, member):
-    s = None
-    with connection.cursor() as cur:
-        cur.execute(
-            f"""
-            SELECT 
-                m1.subroutine_name, 
-                m2.instance_name, 
-                m4.member_name, 
-                m3.status 
-            FROM 
-                subroutines m1 
-            JOIN 
-                user_type_instances m2 
-            JOIN 
-                subroutine_active_global_vars m3 
-            JOIN 
-                type_definitions m4 
-            WHERE 
-                m3.subroutine_id = m1.subroutine_id 
-            AND 
-                m3.instance_id = m2.instance_id 
-            AND 
-                m3.member_id = m4.define_id 
-            AND 
-                m2.instance_name = '{instance}'
-            AND
-                m4.member_name = '{member}' 
-            
-            """
+    if instance != "":
+        if member != "":
+            # Query the database with partial matches
+            results = (
+                SubroutineActiveGlobalVars.objects.filter(
+                    instance__instance_name=instance,
+                    member__member_name__contains=member,  # Partial match for member_name
+                )
+                .exclude(subroutine__in=list(excluded_subroutines))
+                .values(
+                    sub=F("subroutine__subroutine_name"),
+                    inst=F("instance__instance_name"),
+                    m=F("member__member_name"),
+                    rw=F("status"),
+                )
+            )
+        else:
+            results = (
+                SubroutineActiveGlobalVars.objects.filter(
+                    instance__instance_name__contains=instance,
+                )
+                .exclude(subroutine__in=list(excluded_subroutines))
+                .values(
+                    sub=F("subroutine__subroutine_name"),
+                    inst=F("instance__instance_name"),
+                    m=F("member__member_name"),
+                    rw=F("status"),
+                )
+            )
+    elif instance == "" and member == "":
+        results = SubroutineActiveGlobalVars.objects.all().values(
+            sub=F("subroutine__subroutine_name"),
+            inst=F("instance__instance_name"),
+            m=F("member__member_name"),
+            rw=F("status"),
         )
-        s = cur.fetchall()
-    return s
+    return results
 
 
-def subroutine_dfs(sub_id, node):
-    if sub_id == 0:
-        return
-    visited = []
-    s = None
-    with connection.cursor() as cur:
-        cur.execute(
-            f"SELECT * FROM subroutine_calltree WHERE parent_subroutine_id={sub_id} order by parent_id"
-        )
-        s = cur.fetchall()
+def build_calltree(root_subroutine_name, active_subs=None):
+    """
+    Build a call tree starting from the subroutine with name root_subroutine_name.
+    If active_subs is provided (a set or list of subroutine names),
+    only include children whose names are in active_subs.
+    """
+    from app.models import SubroutineCalltree, Subroutines
 
-    for i in s:
-        dep = i[2]
-        if subroutines[dep] == "Null":
+    try:
+        root_sub = Subroutines.objects.get(subroutine_name=root_subroutine_name)
+    except Subroutines.DoesNotExist:
+        return None
+
+    # Create a mapping: parent_subroutine_id -> list of child Subroutines
+    # Instead of doing many queries, we fetch all edges in one go.
+    edges = SubroutineCalltree.objects.select_related(
+        "parent_subroutine", "child_subroutine"
+    ).all()
+    calltree_map = {}
+    for edge in edges:
+        parent_id = edge.parent_subroutine.subroutine_name
+        calltree_map.setdefault(parent_id, []).append(edge.child_subroutine)
+
+    # Build the tree using a queue (BFS) to avoid recursion.
+    root_node = Node(root_sub.subroutine_name)
+    queue = [(root_sub, root_node)]
+    visited = set()
+
+    while queue:
+        current_sub, current_node = queue.pop(0)
+        # Avoid cycles:
+        if current_sub.subroutine_name in visited:
             continue
-        if dep not in visited:
-            n = Node(subroutines[dep])
-            node.dependency.append(n)
-            subroutine_dfs(dep, n)
+        visited.add(current_sub.subroutine_name)
+        children = calltree_map.get(current_sub.subroutine_name, [])
+        for child in children:
+            child_node = Node(child.subroutine_name)
+            current_node.children.append(child_node)
+            queue.append((child, child_node))
 
-        visited.append(dep)
+    def prune_tree(node):
+        # If active_subs is None, we don't filter.
+        if active_subs is None:
+            return True
+        # Check if the current node is active.
+        contains_active = node.name in active_subs
+        pruned_children = []
+        for child in node.children:
+            # Recursively prune children.
+            if prune_tree(child):
+                pruned_children.append(child)
+                contains_active = True
+        node.children = pruned_children
+        return contains_active
+
+    prune_tree(root_node)
+    return root_node
 
 
 def subroutine_calltree_helper():
+    subroutines = {}
     with connection.cursor() as cur:
         cur.execute("SELECT * FROM subroutines")
         s = cur.fetchall()
     for i in s:
         subroutines[i[0]] = i[1]
 
-    return subroutines
+    sub_to_id = {val: key for key, val in subroutines.items()}
+    return subroutines, sub_to_id
 
 
 def get_subroutine_calltree(instance, member):
-    res = []
-    if instance != "" and member != "":
-        subs = subroutine_active_table(instance, member)
-        all = subroutine_active_table_ALL(instance, member)
-    else:
-        all = []
-    for sub_name in subs:
-        if sub_name == "Null":
-            continue
-        root = Node("")
-        subroutines = subroutine_calltree_helper()
-        root.name = sub_name
-        key = None
+    tree = []
 
-        try:
-            key = list(subroutines.keys())[list(subroutines.values()).index(sub_name)]
-        except ValueError as e:
-            return "n/a"
+    active_vars_query = get_subroutine_details(instance, member, mode="")
+    parent_subs = get_subroutine_details(instance, member, mode="head")
 
-        subroutine_dfs(key, root)
-        r = {}
-        jsonify(root, r)
-        res.append(json.dumps(r))
-    return res, all
+    parent_sub_names = []
+    [
+        parent_sub_names.append(row["sub"])
+        for row in parent_subs
+        if row["sub"] not in parent_sub_names
+    ]
+
+    active_subs = []
+    if active_vars_query:
+        [
+            active_subs.append(s["sub"])
+            for s in active_vars_query
+            if s["sub"] not in active_subs
+        ]
+
+    active_vars_table = []
+    for item in active_vars_query:
+        row = [
+            item["sub"],
+            f'{item["inst"]}%{item["m"]}',
+            item["rw"],
+        ]
+        active_vars_table.append(row)
+
+    for sub_name in parent_sub_names:
+        root = build_calltree(sub_name, active_subs)
+        tree.append(root)
+
+    return tree, active_vars_table

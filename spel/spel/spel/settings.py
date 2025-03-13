@@ -27,7 +27,6 @@ ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
 # Application definition
 
 INSTALLED_APPS = [
-    # 'django.contrib.contenttypes',
     "app",
     "django.contrib.admin",
     "django.contrib.auth",
@@ -67,22 +66,11 @@ TEMPLATES = [
 
 
 WSGI_APPLICATION = "spel.wsgi.application"
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.mysql',
-#         'NAME': os.getenv("MYSQL_DATABASE"),
-#         'USER': os.getenv("MYSQL_USER"),
-#         "PASSWORD": os.getenv("MYSQL_PASSWORD"),
-#         "HOST": os.getenv("MYSQL_HOST"),
-#         "PORT": os.getenv("MYSQL_PORT"),
-
-#     }
-# }
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.mysql",
         "CONN_MAX_AGE": 3600,
-        "NAME": "elm_database",
+        "NAME": "spel_database",
         "USER": "root",
         "PASSWORD": "123",
         "HOST": "localhost",
@@ -95,18 +83,6 @@ DATABASES = {
         },
     }
 }
-
-
-# Database
-# https://docs.djangoproject.com/en/5.1/ref/settings/#databases
-
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
-#     }
-# }
-
 
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators

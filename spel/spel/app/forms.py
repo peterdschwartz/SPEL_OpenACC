@@ -1,11 +1,10 @@
 from django import forms
-from .models import SubroutineActiaveGlobalVars
 
-class S(forms.ModelForm):
+from .models import SubroutineActiveGlobalVars
+
+
+class SubroutineActiveSearch(forms.ModelForm):
     class Meta:
-        model = SubroutineActiaveGlobalVars
-        fields = [
-            "id",
-            "subroutine",
-            "variable_name"
-        ]
+        model = SubroutineActiveGlobalVars
+        fields = ["id", "subroutine", "variable_name"]
+

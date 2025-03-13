@@ -1,51 +1,47 @@
+from __future__ import annotations
+
 import subprocess as sp
 import sys
+from copy import deepcopy
+from typing import TYPE_CHECKING, Optional
 
-from mod_config import ELM_SRC, SHR_SRC, _bc
+from scripts.utilityFunctions import Variable
 
+if TYPE_CHECKING:
+    from scripts.analyze_subroutines import Subroutine
+    from scripts.DerivedType import DerivedType
 
-# NOTE: Create Class for used objects that are aliased
-#   i.e.,    `ptr` => 'long_object_name'
-# This could be used for assiociate lists, but the only
-# current implementation is for determining which intrinsic type
-# global variables are used for a given calltree.
-class PointerAlias:
-    def __init__(self, ptr, obj):
-        self.ptr = ptr
-        self.obj = obj
-
-    def __eq__(self, other):
-        return (self.ptr == other.ptr) and (self.obj == other.obj)
-
-    def __str__(self):
-        if self.ptr:
-            return f"{ self.ptr } => { self.obj }"
-        else:
-            return f"{ self.obj }"
-
-    def __repr__(self):
-        return f"{self.ptr} => {self.obj}"
+import scripts.dynamic_globals as dg
+from scripts.mod_config import ELM_SRC, SHR_SRC, _bc
+from scripts.types import ModUsage, PointerAlias
 
 
-def get_module_name_from_file(fpath) -> tuple[int, str]:
+def get_module_name_from_file(fpath: str) -> tuple[int, str]:
     """
     Given a file path, returns the name of the module
     """
-    cmd = f'grep -rin -E "^[[:space:]]*module [[:space:]]*[[:alnum:]]+" {fpath}'
-    # the module declaration will be the first one. Any others will be interfaces
-    module_name = sp.getoutput(cmd).split("\n")[0]
-    # grep will have pattern <line_number>:module <module_name>
-    linenumber, module_name = module_name.split(":")
-    # split by space and get the module name
-    module_name = module_name.split()[1]
+    if fpath not in dg.map_fpath_to_module_name:
+        cmd = f'grep -rin -E "^[[:space:]]*module [[:space:]]*[[:alnum:]]+" {fpath}'
+        # the module declaration will be the first one. Any others will be interfaces
+        module_name = sp.getoutput(cmd).split("\n")[0]
+        # grep will have pattern <line_number>:module <module_name>
+        linenumber, module_name = module_name.split(":")
+        module_name = module_name.split()[1].lower()
+        linenumber = int(linenumber)
+        dg.map_fpath_to_module_name[fpath] = (linenumber, module_name)
+    else:
+        linenumber, module_name = dg.map_fpath_to_module_name[fpath]
 
-    return int(linenumber), module_name.lower()
+    return linenumber, module_name
 
 
-def get_filename_from_module(module_name, verbose=False):
+def get_filename_from_module(module_name: str, verbose: bool = False):
     """
     Given a module name, returns the file path of the module
     """
+    if module_name in dg.map_module_name_to_fpath:
+        return dg.map_module_name_to_fpath[module_name]
+
     cmd = f'grep -rin --exclude-dir=external_models/ "module {module_name}" {ELM_SRC}*'
     elm_output = sp.getoutput(cmd)
     if not elm_output:
@@ -67,6 +63,9 @@ def get_filename_from_module(module_name, verbose=False):
             file_path = shr_output.split("\n")[0].split(":")[0]
     else:
         file_path = elm_output.split("\n")[0].split(":")[0]
+
+    dg.map_module_name_to_fpath[module_name] = file_path
+
     return file_path
 
 
@@ -87,18 +86,21 @@ def unravel_module_dependencies(modtree, mod_dict, mod, depth=0):
     return modtree
 
 
-def print_spel_module_dependencies(mod_dict, subs, depth=0):
+def print_spel_module_dependencies(
+    mod_dict: dict[str, FortranModule],
+    subs: dict[str, Subroutine],
+    depth=0,
+):
     """
     Given a dictionary of modules needed for this unit-test
     this prints their dependencies with the modules containing
     subs being the parents
     """
-    arrow = "-->"
     modtree = []
 
     for sub in subs.values():
         depth = 0
-        linenumber, module_name = get_module_name_from_file(sub.filepath)
+        module_name = sub.module
         sub_module = mod_dict[module_name]
         modtree.append({"module": module_name, "depth": depth})
         depth += 1
@@ -112,7 +114,7 @@ def print_spel_module_dependencies(mod_dict, subs, depth=0):
     return modtree
 
 
-def parse_only_clause(line: str):
+def parse_only_clause(line: str) -> set[PointerAlias]:
     """
     Input a line of the form: `use modname, only: name1,name2,...`
     """
@@ -120,19 +122,36 @@ def parse_only_clause(line: str):
     only_l = line.split(":")[1]
     only_l = only_l.split(",")
 
-    only_objs_list = []
+    only_objs_list = set()
     # Go through list of objects, determine '=>' usage.
     for ptrobj in only_l:
         if "=>" in ptrobj:
             ptr, obj = ptrobj.split("=>")
             ptr = ptr.strip()
             obj = obj.strip()
-            only_objs_list.append(PointerAlias(ptr=ptr, obj=obj))
+            only_objs_list.add(PointerAlias(ptr=ptr, obj=obj))
         else:
             obj = ptrobj.strip()
-            only_objs_list.append(PointerAlias(ptr=None, obj=obj))
+            only_objs_list.add(PointerAlias(ptr=None, obj=obj))
 
     return only_objs_list
+
+
+def build_module_tree(modules: dict[str, FortranModule]) -> list[ModTree]:
+    """
+    Builds a forest (list of ModTree roots) from a dictionary of FortranModule objects.
+    Returns a list because there may be multiple independent module trees.
+    """
+    mod_nodes: dict[str, ModTree] = {name: ModTree(name) for name in modules.keys()}
+    roots = set(mod_nodes.keys())  # Start by assuming all are roots
+
+    for name, module in modules.items():
+        for dep in module.modules:
+            mod_nodes[name].add_child(mod_nodes[dep])
+            if dep in roots:
+                roots.remove(dep)
+
+    return [mod_nodes[root] for root in roots]
 
 
 class FortranModule:
@@ -145,14 +164,70 @@ class FortranModule:
 
     def __init__(self, name, fname, ln):
         self.name = name  # name of the module
-        self.global_vars = []  # any variables declared in the module
-        self.subroutines = []  # any subroutines declared in the module
-        self.modules = {}  # any modules used in the module
+        self.global_vars: dict[str, Variable] = {}  # variables decl in the module
+        self.subroutines: set[str] = set()  # any subroutines declared in the module
+        self.modules: dict[str, ModUsage] = {}  # any modules used in the module
+        self.modules_by_ln: dict[str, ModUsage] = {}
+
+        # modules available to all subroutines
+        self.head_modules: dict[str, ModUsage] = {}
         self.filepath = fname  # the file path of the module
-        self.ln = ln  # line number of start module block
-        self.defined_types = {}  # user types defined in the module
-        self.modified = False  # if module has been through modify_file or not.
-        self.variables_sorted = False
+        self.ln: int = ln  # line number of start module block
+        self.defined_types: dict[str, DerivedType] = (
+            {}
+        )  # user types defined in the module
+        self.modified: bool = False  # if module has been through modify_file or not.
+        self.variables_sorted: bool = False
+        self.end_of_head_ln: int = 99999
+        self.num_lines: int
+
+    def __repr__(self):
+        return f"FortranModule({self.name})"
+
+    def add_dependency(self, mod: str, line: str, ln: int):
+        """
+        Adds module dependency and either only the items accessed
+        or "all" for blanket usage of module
+
+        Dependencies here are stored with their linenumber that way module head
+        and subroutine specific usages can be easily sorted.
+        """
+        mod_key = f"{mod}@{ln}"
+
+        curr_usage = self.modules_by_ln.get(mod_key)
+        if curr_usage is None:
+            self.modules_by_ln[mod_key] = ModUsage(all=False, clause_vars=set())
+
+        # Check if there is an only statement AND that the entire module isn't used.
+        if "only" in line and not (self.modules_by_ln[mod_key].all):
+            obj_set = parse_only_clause(line)
+            self.modules_by_ln[mod_key].clause_vars |= obj_set
+        else:
+            # Even if only clause was previously used, overwrite
+            # and assume it's all used.
+            self.modules_by_ln[mod_key].all = True
+
+    def sort_module_deps(self, startln: int, endln: int) -> dict[str, ModUsage]:
+        """
+        Sort the modules_by_ln into either a dict for all dependencies
+        or a dict for only modules in the module head
+        """
+        sorted_dict: dict[str, ModUsage] = {}
+        for modln, muse in self.modules_by_ln.items():
+            mod_name, ln = modln.split("@")
+            if startln < int(ln) < endln:
+                if mod_name in sorted_dict:
+                    cur_usage = sorted_dict[mod_name]
+                    if cur_usage.all:
+                        continue
+                    if muse.all:
+                        sorted_dict[mod_name].all = True
+                    else:
+                        sorted_dict[mod_name].clause_vars |= muse.clause_vars
+                else:
+                    sorted_dict[mod_name] = deepcopy(muse)
+
+        return sorted_dict
 
     def print_module_info(self, ofile=sys.stdout):
         """
@@ -183,7 +258,7 @@ class FortranModule:
                     ofile.write("\n")
 
         ofile.write(_bc.BOLD + _bc.WARNING + "Variables:\n" + _bc.ENDC)
-        for variable in self.global_vars:
+        for variable in self.global_vars.values():
             print(_bc.OKGREEN + f"{variable}" + _bc.ENDC)
 
         ofile.write(_bc.WARNING + "User Types:\n" + _bc.ENDC)
@@ -192,29 +267,34 @@ class FortranModule:
 
         return None
 
-    def sort_used_variables(self, mod_dict, verbose=False):
-        """
-        Go through the used modules, if any variables are used,
-        replace their string name with their variable instance.
-        """
-        func_name = "sort_used_vars"
-        # return early if already called
-        if self.variables_sorted:
-            return None
-        for used_mod_name, only_clause in self.modules.items():
-            used_mod = mod_dict[used_mod_name]
-            # go through `only` clause and check if any are global vars
-            if only_clause != "all":
-                for ptrobj in only_clause:
-                    objname = ptrobj.obj
-                    for var in used_mod.global_vars:
-                        if objname == var.name:
-                            ptrobj.obj = var
-                            break
-                    if verbose:
-                        if isinstance(ptrobj.obj, str):
-                            print(
-                                f"{func_name}::{objname} from {used_mod_name} -- not Variable"
-                            )
-        self.variables_sorted = True
-        return None
+
+class ModTree:
+    def __init__(self, node):
+        self.node: str = node
+        self.children: list[ModTree] = []
+        self.parent: Optional[ModTree] = None
+
+    def add_child(self, child: "ModTree"):
+        child.parent = self
+        self.children.append(child)
+
+    def traverse_preorder(self):
+        yield self
+        for child in self.children:
+            yield from child.traverse_preorder()
+
+    def traverse_postorder(self):
+        for child in self.children:
+            yield from child.traverse_postorder()
+        yield self
+
+    def __repr__(self):
+        return f"ModTree({self.node}, children={len(self.children)})"
+
+    def print_tree(self, level: int = 0):
+        if level == 0:
+            print("ModTree for", self.node)
+        indent = "|--" * level
+        print(f"{indent}>{self.node}")
+        for child in self.children:
+            child.print_tree(level + 1)

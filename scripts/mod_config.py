@@ -4,6 +4,7 @@ import re
 # Configure path information
 scripts_dir = os.path.dirname(__file__)
 spel_dir = f"{scripts_dir}/../"
+django_database = f"{spel_dir}/spel/spel/app/management/commands/csv/"
 unittests_dir = spel_dir + "unit-tests/"
 spel_mods_dir = spel_dir + "SourceFiles/"
 spel_output_dir = scripts_dir + "/script-output/"
@@ -39,7 +40,7 @@ regex_skip_string = re.compile(f"({dont_adjust_string})", re.IGNORECASE)
 
 # List of modules needed for domain decomposition -- required for all unit-tests
 # NOTE: These hardcoded lists should be deprecated by now?
-default_mods = ["subgridMod", "filterMod"]
+default_mods = ["subgridmod", "filtermod"]
 
 preproc_list = [
     "AllocationMod",

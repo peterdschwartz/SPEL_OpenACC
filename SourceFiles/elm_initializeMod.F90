@@ -53,7 +53,7 @@ contains
       integer :: nc
       integer :: begp, endp, begc, endc, begg, endg, begl, endl, begt, endt
       integer :: i, j
-      character(len=256) :: in_file_vars = 'LakeTemperature_vars.txt'
+      character(len=256) :: in_file_vars = 'test_vars.txt'
       character(len=256) :: in_file_constants = "E3SM_constants.txt"
       type(bounds_type)  :: bounds_proc
       type(bounds_type)  :: bounds_clump

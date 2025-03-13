@@ -1,0 +1,7 @@
+{% if results %}
+{% for result in results %}
+<li>{{ result.name }}</li>
+{% endfor %}
+{% else %}
+<li>No suggestions found</li>
+{% endif %}

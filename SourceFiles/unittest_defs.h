@@ -5,3 +5,5 @@
 #define is_active_betr_bgc .false.
 #define npes 1 
 #define iam masterproc
+#define temperature_type integer
+#define hlm_fates_interface_type integer

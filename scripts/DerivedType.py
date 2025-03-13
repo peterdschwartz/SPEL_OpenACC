@@ -1,11 +1,20 @@
+from __future__ import annotations
+
 import re
 import subprocess as sp
 import sys
+from pprint import pprint
+from typing import TYPE_CHECKING, Dict, Optional
 
-import write_routines as wr
-from fortran_modules import get_module_name_from_file
-from mod_config import ELM_SRC, _bc, _no_colors
-from utilityFunctions import Variable, line_unwrapper, parse_line_for_variables
+import scripts.dynamic_globals as dg
+
+if TYPE_CHECKING:
+    from scripts.fortran_modules import FortranModule
+
+from scripts.fortran_modules import get_module_name_from_file
+from scripts.mod_config import ELM_SRC, _bc, _no_colors
+from scripts.utilityFunctions import (Variable, line_unwrapper,
+                                      parse_line_for_variables)
 
 ## arrow and tab are strings for writing files or printing readable output
 arrow = "|--->"
@@ -24,15 +33,22 @@ def get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=Fa
     type_end_line = 0
     user_derived_type = DerivedType(type_name, vmod=modname, fpath=ifile)
 
+    regex_contains = re.compile(r"\b(contains)\b")
+    regex_end_type = re.compile(r"^(end\s+type)")
+
     member_list = []
     ct = ln
     while ct < len(lines):
         full_line, ct = line_unwrapper(lines, ct)
         full_line = full_line.strip().lower()
         # test to see if we exceeded type definition
-        _end = re.search(r"^(end\s+type)", full_line)
-        if verbose:
-            print(full_line)
+        _end = regex_end_type.search(full_line)
+        _contains = regex_contains.search(full_line)
+        if _contains:
+            ct = user_derived_type.get_type_procedures(regex_end_type, lines, ct)
+            type_end_line = ct
+            break
+
         if not _end:
             data_type = re.compile(r"^\s*(real|integer|logical|character)")
             m = data_type.search(full_line)
@@ -44,10 +60,9 @@ def get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=Fa
                 else:
                     pot_ptr = False
                 lprime = re.sub(r"(?<={})(.+)(?=::)".format(datatype), "", full_line)
-
                 lprime = re.sub(r"(\s*=>\s*null\(\))", "", lprime)
                 variable_list = parse_line_for_variables(
-                    ifile=ifile, l=lprime, ln=ct, ptr=pot_ptr
+                    ifile=ifile, l=lprime, ln=ct, ptr=pot_ptr, verbose=verbose,
                 )
                 if verbose:
                     print(f"variable list : {variable_list}")
@@ -64,64 +79,26 @@ def get_derived_type_definition(ifile, modname, lines, ln, type_name, verbose=Fa
         print(f"File: {ifile}, start line {ln}")
         sys.exit(1)
 
-    # Find all instances of the derived type:
-    grep = "grep -rin --exclude-dir=external_models/"
-    cmd = (
-        f'{grep} "type\s*(\s*{type_name}\s*)" {ELM_SRC}* | grep "::" | grep -v "intent"'
-    )
-    output = sp.getoutput(cmd)
-
-    regex_paren = re.compile(r"\((.+)\)")
-    #
-    # Each element in output should have the format:
-    # <filepath> : <ln> : type(<type_name>) :: <instance_name>
-    instance_list = {}
-    if output:
-        output = output.split("\n")
-        for el in output:
-            inst_name = el.split("::")[-1]
-            inst_name = inst_name.split("!")[0].strip().lower()
-
-            filepath = el.split(":")[0].strip()
-            ln = int(el.split(":")[1].strip())
-            mod_ln, module_name = get_module_name_from_file(filepath)
-
-            dim = inst_name.count(":")
-            inst_name = regex_paren.sub("", inst_name)
-
-            inst_var = Variable(
-                type=type_name,
-                name=inst_name,
-                subgrid="?",
-                ln=ln,
-                dim=dim,
-                declaration=module_name,
-            )
-            if inst_var.name not in instance_list:
-                instance_list[inst_var.name] = inst_var
-                if verbose:
-                    print(f"Adding instance {type_name} {inst_name},{dim}")
-
-    user_derived_type.instances = instance_list.copy()
 
     return user_derived_type, ct
 
 
 class DerivedType(object):
+    """
+    Class to represent Fortran user-derived type
+    """
     def __init__(
         self,
-        type_name,
-        vmod,  # module name
-        fpath=None,  # path to mod file
-        components=None,  # list of type and component name
-        instances={},
+        type_name: str,
+        vmod: str,
+        fpath: Optional[str]=None, 
     ):
         self.type_name = type_name
         if fpath:
-            self.filepath = fpath
+            self.filepath: str = fpath
         else:
-            self.filepath = ""
-            cmd = f'find {ELM_SRC}  \( -path "*external_models*" \) -prune -o  -name "{vmod}.F90" '
+            self.filepath: str = ""
+            cmd = rf'find {ELM_SRC}  \( -path "*external_models*" \) -prune -o  -name "{vmod}.F90"'
             output = sp.getoutput(cmd)
             if not output:
                 sys.exit(f"Couldn't locate file {vmod}")
@@ -130,24 +107,78 @@ class DerivedType(object):
                 for el in output:
                     if "external_models" not in el:
                         self.filepath = el
+
         if not self.filepath:
             sys.exit(
                 f"Couldn't find file for {type_name}\ncmd:{cmd}\n" f"output: {output}\n"
             )
 
         self.declaration = vmod
-        self.components = {}
+        self.components: dict[str, Variable] = {}
         self.instances: dict[str, Variable] = {}
         # Flag to see if Derived Type has been analyzed
-        self.analyzed = False
-        self.active = False
-        self.init_sub = None
+        self.analyzed: bool = False
+        self.active: bool = False
+        self.init_sub: Optional[str] = None
+        self.procedures: dict[str,str] = {}
 
     def __repr__(self):
         return f"DerivedType({self.type_name})"
 
+    def find_instances(self, mod_dict: dict[str,FortranModule]):
+        # Find all instances of the derived type:
+        grep = "grep -rin --exclude-dir=external_models/"
+        cmd = (
+            rf'{grep} "type\s*(\s*{self.type_name}\s*)" {ELM_SRC}* | grep "::" | grep -v "intent"'
+        )
+        output = sp.getoutput(cmd)
+
+        regex_paren = re.compile(r"\((.+)\)")
+        #
+        # Each element in output should have the format:
+        # <filepath> : <ln> : type(<type_name>) :: <instance_name>
+        instance_list = {}
+        if not output:
+            return
+
+        output = output.split("\n")
+        for el in output:
+            inst_name = el.split("::")[-1]
+            inst_name = inst_name.split("!")[0].strip().lower()
+
+            filepath = el.split(":")[0].strip()
+            ln = int(el.split(":")[1].strip())
+            _, module_name = get_module_name_from_file(filepath)
+            if module_name not in mod_dict:
+                end_of_head_ln = find_module_head_end(module_name, filepath)
+            else:
+                fort_mod = mod_dict[module_name]
+                end_of_head_ln = fort_mod.end_of_head_ln
+            if ln > end_of_head_ln:
+                continue
+
+            dim = inst_name.count(":")
+            inst_name = regex_paren.sub("", inst_name)
+
+            inst_var = Variable(
+                type=self.type_name,
+                name=inst_name,
+                subgrid="?",
+                ln=ln,
+                dim=dim,
+                declaration=module_name,
+            )
+            if inst_var.name not in instance_list:
+                instance_list[inst_var.name] = inst_var
+
+        self.instances = instance_list.copy()
+
     def _add_components(
-        self, member_list: list[Variable], lines, type_end, verbose=False
+        self,
+        member_list: list[Variable],
+        lines,
+        type_end,
+        verbose=False,
     ):
         """
         Function to add components to the derived type.
@@ -196,10 +227,10 @@ class DerivedType(object):
                     member_name = match_ptrinit.groups()[0].replace("%", "")
                     target = match_ptrinit.groups()[2].strip()
                     if added_member_to_type[member_name]:
-                        var_inst = self.components[member_name]["var"]
+                        var_inst = self.components[member_name]
                         if target not in var_inst.pointer:
                             var_inst.pointer.append(target)
-                            self.components[member_name]["var"] = var_inst
+                            self.components[member_name] = var_inst
                         ln += 1
                         continue
                     else:
@@ -213,7 +244,7 @@ class DerivedType(object):
                             print(member_arr_or_ptr[member_name])
                             sys.exit(0)
                         var_inst.pointer.append(target)
-                        member = {"active": False, "var": var_inst, "bounds": None}
+                        member = var_inst
                         self.components[var_inst.name] = member
                         added_member_to_type[member_name] = True
 
@@ -231,6 +262,7 @@ class DerivedType(object):
                         var_inst = member_arr_or_ptr[varname]
                         regex_b = re.compile(r"(?<=(%{}))\s*\((.+?)\)".format(varname))
                         bounds = regex_b.search(full_line).group()
+                        var_inst.bounds = bounds.strip()
                         beg_x = re.search(r"(?<=(beg))[a-z]", bounds, re.IGNORECASE)
                         if beg_x:
                             end_x = re.search(r"(?<=(end))[a-z]", bounds, re.IGNORECASE)
@@ -242,8 +274,7 @@ class DerivedType(object):
                             else:
                                 var_inst.subgrid = beg_x.group()
 
-                        member = {"active": False, "var": var_inst, "bounds": bounds}
-                        self.components[var_inst.name] = member
+                        self.components[var_inst.name] = var_inst
                         added_member_to_type[varname] = True
                 ln += 1
             if not init_sub:
@@ -256,13 +287,8 @@ class DerivedType(object):
             else:
                 self.init_sub = init_sub
 
-        # member scalars:
         for scalar in member_scalars.values():
-            self.components[scalar.name] = {
-                "active": False,
-                "var": scalar,
-                "bounds": None,
-            }
+            self.components[scalar.name] = scalar
         if debug:
             sys.exit()
 
@@ -283,13 +309,21 @@ class DerivedType(object):
         for v in self.instances.values():
             ofile.write(hl.OKBLUE + f"{v.type} {v.name} {v.declaration}\n" + hl.ENDC)
         ofile.write(hl.WARNING + f"Initialized in {self.init_sub} \n" + hl.ENDC)
+        if self.procedures:
+            ofile.write(hl.OKGREEN + f"Type Procedures:\n")
+            for alias, proc in self.procedures.items():
+                if alias != proc:
+                    ofile.write(f"{alias} => {proc}\n")
+                else:
+                    ofile.write(f"{alias}\n")
+            ofile.write(hl.ENDC)
         if long:
             ofile.write("w/ components:\n")
-            for c in self.components.values():
-                status = c["active"]
-                var = c["var"]
+            for field_var in self.components.values():
+                status = field_var.active
+                var = field_var
                 if var.dim > 0:
-                    bounds = c["bounds"]
+                    bounds = field_var.bounds
                 else:
                     bounds = ""
                 if not var.pointer:
@@ -300,91 +334,6 @@ class DerivedType(object):
                 ofile.write(str_ + "\n")
         return None
 
-    def create_write_read_functions(self, rw, ofile, gpu=False):
-        """
-        This function will write two .F90 functions that write read and write statements for all
-        components of the derived type
-        rw is a variable that holds either read or write mode
-        """
-
-        fates_list = ["veg_pp%is_veg", "veg_pp%is_bareground", "veg_pp%wt_ed"]
-        for var in self.instances.values():
-            if not var.active:
-                continue
-            if rw.lower() == "write" or rw.lower() == "w":
-                ofile.write(tab + "\n")
-                ofile.write(
-                    tab
-                    + "!====================== {} ======================!\n".format(
-                        var.name
-                    )
-                )
-                ofile.write(tab + "\n")
-                if gpu:
-                    ofile.write(tab + "!$acc update self(& \n")
-
-                # Any component of the derived type accessed by the Unit Test should have been toggled active at this point.
-                # Go through the instance of this derived type and write I/O for any active components.
-                vars = []
-                for component in self.components.values():
-                    active = component["active"]
-                    field_var = component["var"]
-                    if not active:
-                        continue
-
-                    # Filter out C13/C14 duplicates and fates only variables.
-                    c13c14 = bool("c13" in field_var.name or "c14" in field_var.name)
-                    if c13c14:
-                        continue
-                    fname = var.name + "%" + field_var.name
-                    if fname in fates_list:
-                        continue
-                    if gpu:
-                        vars.append(fname)
-                    else:
-                        str1 = f'write (fid, "(A)") "{fname}" \n'
-                        str2 = f"write (fid, *) {fname}\n"
-                        ofile.write(tab + str1)
-                        ofile.write(tab + str2)
-                if gpu:
-                    for n, v in enumerate(vars):
-                        if n + 1 < len(vars):
-                            ofile.write(tab + f"!$acc {v}, &\n")
-                        else:
-                            ofile.write(tab + f"!$acc {v} )\n")
-            elif rw.lower() == "read" or rw.lower() == "r":
-                ofile.write(tab + "\n")
-                ofile.write(
-                    tab
-                    + "!====================== {} ======================!\n".format(
-                        var.name
-                    )
-                )
-                ofile.write(tab + "\n")
-
-                # Any component of the derived type accessed by the Unit Test should have been toggled active at this point.
-                # Go through the instance of this derived type and write I/O for any active components.
-                for component in self.components.values():
-                    active = component["active"]
-                    field_var = component["var"]
-                    bounds = component["bounds"]
-                    if not active:
-                        continue
-                    c13c14 = bool("c13" in field_var.name or "c14" in field_var.name)
-                    if c13c14:
-                        continue
-                    fname = var.name + "%" + field_var.name
-                    if fname in fates_list:
-                        continue
-                    dim = bounds
-                    dim1 = wr.get_delta_from_dim(dim, "y")
-                    dim1 = dim1.replace("_all", "")
-                    str1 = "call fio_read(18,'{}', {}{}, errcode=errcode)\n".format(
-                        fname, fname, dim1
-                    )
-                    str2 = "if (errcode .ne. 0) stop\n"
-                    ofile.write(tab + str1)
-                    ofile.write(tab + str2)
 
     def manual_deep_copy(self, ofile=sys.stdout):
         """
@@ -405,8 +354,7 @@ class DerivedType(object):
                 print("Error: multi-dimensional Array of Structs found: ", inst)
                 sys.exit(1)
             ofile.write(tabs * depth + "!$acc enter data copyin(&\n")
-            for num, comp in enumerate(self.components.values()):
-                member = comp["var"]
+            for num, member in enumerate(self.components.values()):
                 dim_string = ""
                 if member.dim > 0:
                     dim_li = [":" for i in range(0, member.dim)]
@@ -426,3 +374,106 @@ class DerivedType(object):
                 ofile.write(tabs * depth + "end do\n")
 
         return None
+
+    def get_type_procedures(self, regex_end, lines, ln):
+        """
+        Function
+        """
+        func_name = "get_type_procedures::"
+        regex_proc = re.compile(r"^(procedure)\b")
+
+        ln += 1
+        full_line, ln = line_unwrapper(lines, ln)
+        m_end = regex_end.search(full_line)
+        while not m_end:
+            m_proc = regex_proc.search(full_line)
+            if m_proc:
+                if "::" not in full_line:
+                    print(
+                        f"{func_name}Error-type proc syntax unaccounted for\n{full_line}"
+                    )
+                    sys.exit(1)
+
+                proc_string = full_line.split("::")[1]
+                if "=>" in proc_string:
+                    # There's an alias:
+                    split_str = proc_string.split("=>")
+                    alias = split_str[0].strip()
+                    proc_name = split_str[1].strip()
+                else:
+                    alias = proc_string.strip()
+                    proc_name = alias
+                    if "," in proc_name:
+                        print(
+                            f"{func_name}Error - multiple procedures declared on same line?\n{full_line}"
+                        )
+                        sys.exit(1)
+                self.procedures[alias] = proc_name
+            ln += 1
+            full_line, ln = line_unwrapper(lines, ln)
+            m_end = regex_end.search(full_line)
+
+        return ln
+
+def get_component(instance_dict: Dict[str, DerivedType], dtype_field: str)->Optional[Variable]:
+    """
+    Function that looks up inst%field in the instance dict.
+    """
+    regex_paren = re.compile(r"\((.+)\)") # for removing array of struct index
+    inst_name, field = dtype_field.split('%')
+    inst_name = regex_paren.sub("",inst_name)
+    dtype = instance_dict[inst_name]
+    if field in dtype.components:
+        var: Variable = dtype.components[field].copy()
+        return var
+    else:
+        if field not in dtype.procedures:
+            print (f"Error- Couldn't categorize {dtype_field}")
+        return None
+
+def expand_dtype(dtype_vars: list[Variable], type_dict: dict[str, DerivedType])->dict[str,Variable]:
+    """Function to take a dtype and create a dict with a key for each var%field"""
+    def adj_var_name(var: Variable,inst_var: Variable):
+        dim_str = "(index)" if inst_var.dim>0 else ""
+        new_var = var.copy()
+        new_var.name = f"{ inst_var.name }{dim_str}%{var.name}"
+        return new_var
+
+    result: dict[str,Variable] = {}
+    for dtype_var in dtype_vars:
+        dtype = type_dict[dtype_var.type]
+        fields = dtype.components.values()
+        temp: dict[str,Variable] = {
+          f"{dtype_var.name}%{field.name}": adj_var_name(field,dtype_var) for field in fields
+        }
+        result.update(temp)
+    return result
+
+
+def find_module_head_end(mod: str,file_path: str)->int:
+    
+    if mod in dg.map_module_head:
+        return dg.map_module_head[mod]
+    in_type = False 
+    type_start = re.compile(r"^(type\s+)(?!\()", re.IGNORECASE) 
+    type_end   = re.compile(r'\bend\s+type\b', re.IGNORECASE)
+    contains   = re.compile(r'\bcontains\b', re.IGNORECASE)
+    end_head_ln = -1
+    with open(file_path, 'r') as f:
+        for lineno, line in enumerate(f, start=1):
+            line = line.strip().lower()
+            end_head_ln = lineno
+            # If entering a derived type declaration, set the flag.
+            # If we're inside a type and see the end of it, clear the flag.
+            if type_start.search(line):
+                in_type = True
+            if in_type and type_end.search(line):
+                in_type = False
+            if not in_type and contains.search(line):
+                break
+
+    if end_head_ln == -1:
+        print("Error -- couldn't iterate through file", file_path)
+        sys.exit(1)
+    return end_head_ln
+

@@ -55,28 +55,77 @@ tr:nth-child(even) {
     text-decoration: underline; /* Underline on hover to indicate it's clickable */
 }
 
-.child {
-    margin-left: 20px;
-    display: none;
-    /* Initially hide children */
+.left-panel ul, #SubTree{
+  list-style-type: none;
+  margin: 0;
+  padding-left: 10px;
 }
 
-.toggle {
+.left-panel #SubTree{
+    margin: 0;
+    padding-left: 10px;
+}
+
+.left-panel .parent {
+    margin-bottom: 8px; 
+}
+
+.left-panel .parent::before {
+    content: "\265E";
+    display: inline-block;
+    margin-right: 6px;
+}
+
+.child {
+    display: none;
+}
+
+/* When .child is visible */
+.active {
+    display: block;
+}
+
+.box {
     cursor: pointer;
+    user-select: none;
     color: black;
     text-decoration: underline;
-    margin-right: 5px;
 }
 
-.arrow {
+.box::before {
+  content: "\2610";
+  color: black;
+  display: inline-block;
+  margin-right: 6px;
+}
+
+.check-box::before {
+  content: "\2611"; 
+  color: dodgerblue;
+}
+
+.details-btn {
+    font-family: 'Arial Unicode MS';
+    content:
+    background: lightgrey;
+    border: none;
+    font-size: 1rem;
     cursor: pointer;
-    color: blue;
-    margin-right: 5px;
+    color: black;
+}
+
+.details-btn::before {
+    content: "\2263";
+    font-family: 'Arial Unicode MS';
+}
+
+.details-btn:hover {
+    color: #0056b3;
 }
 
 .vl {
     border-left: 2px solid black;
-    height: 500px;
+    height: 500px ;
     position: absolute;
     left: 50%;
     margin-left: -3px;
@@ -155,3 +204,95 @@ text-align: left;
 .right-panel table {
     width : 100%;
 }
+
+
+#suggestions-list {
+    list-style-type: none;
+    padding: 0;
+    margin: 0;
+    max-height: 150px;
+    overflow-y: auto;
+    border: 1px solid #ccc;
+    position: absolute;
+    background: white;
+    width: 100%;
+    z-index: 10;
+}
+
+#suggestions-list li {
+    padding: 5px;
+    cursor: pointer;
+}
+
+#suggestions-list li:hover {
+    background-color: #f0f0f0;
+}
+
+/* Modal overlay */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+/* Modal content styling */
+.modal-content {
+  background: #fff;
+  padding: 20px;
+  border-radius: 8px;
+  max-width: 600px;
+  max-height: 80vh; /* Prevent modal from growing too tall */
+  overflow-y: auto; /* Allow scrolling if content exceeds height */
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+}
+
+/* Uniform spacing for headers, paragraphs, and lists */
+.modal-content h3,
+.modal-content h4,
+.modal-content p {
+  margin-bottom: 0.1em;
+}
+
+/* List styling */
+.info-list {
+  margin-top: 0;
+  list-style: none;
+  padding-left: 0;
+  margin-bottom: 0.1em;
+}
+
+.info-list li {
+  padding: 5px 0;
+  border-bottom: 1px solid #eee;
+}
+
+/* Scrollable section for Active Derived Types */
+.scrollable-section {
+  max-height: 200px; /* Adjust as needed */
+  overflow-y: auto;
+  border: 1px solid #ddd;
+  padding: 10px;
+  margin-bottom: 1em;
+}
+
+/* Button styling */
+.close-btn {
+  background: #007BFF;
+  color: #fff;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.close-btn:hover {
+  background: #0056b3;
+}
+

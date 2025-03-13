@@ -12,7 +12,7 @@ from tabulate import tabulate
 Tally = namedtuple("Tally", ["name", "total", "rmse", "max"])
 
 
-def progressbar(it, prefix="", size=60, out=sys.stdout):  # Python3.6+
+def progressbar(it, prefix="", size=60, out=sys.stdout):
     count = len(it)
     start = time.time()  # time estimate start
 

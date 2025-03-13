@@ -1,10 +1,10 @@
-import mmap
-from mod_config import E3SM_SRCROOT, ELM_SRC
 import linecache
+import mmap
 import re
 import subprocess
 from os.path import join
 
+from scripts.mod_config import E3SM_SRCROOT, ELM_SRC
 
 n = join(ELM_SRC, "biogeochem", "AllocationMod.F90")
 
