@@ -1,4 +1,4 @@
-module test
+module test_sub_parse
 
   use shr_const_mod
 
@@ -525,4 +525,4 @@ contains
 
    end subroutine add
 
-end module test
+end module test_sub_parse

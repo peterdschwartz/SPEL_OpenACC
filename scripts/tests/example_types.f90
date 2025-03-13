@@ -1,4 +1,4 @@
-module test
+module test_types
 
   type, public :: column_nitrogen_flux 
     ! harvest fluxes
@@ -24,4 +24,4 @@ contains
     allocate(this%m_n_to_litr_met_fire            (begc:endc,1:nlevdecomp_full)) ; this%m_n_to_litr_met_fire           (:,:) = spval
   end subroutine col_nf_init
 
-end module test
+end module test_types

@@ -9,8 +9,14 @@ from scripts.DerivedType import DerivedType
 from scripts.edit_files import sort_file_dependency
 from scripts.fortran_modules import FortranModule, get_filename_from_module
 from scripts.helper_functions import construct_call_tree
-from scripts.mod_config import (_bc, default_mods, scripts_dir, spel_mods_dir,
-                                spel_output_dir, unittests_dir)
+from scripts.mod_config import (
+    _bc,
+    default_mods,
+    scripts_dir,
+    spel_mods_dir,
+    spel_output_dir,
+    unittests_dir,
+)
 from scripts.utilityFunctions import Variable
 from scripts.variable_analysis import determine_global_variable_status
 
@@ -32,8 +38,10 @@ def main() -> None:
     import scripts.write_routines as wr
     from scripts.edit_files import process_for_unit_test
     from scripts.export_objects import pickle_unit_test
-    from scripts.utilityFunctions import (find_file_for_subroutine,
-                                          insert_header_for_unittest)
+    from scripts.utilityFunctions import (
+        find_file_for_subroutine,
+        insert_header_for_unittest,
+    )
 
     # Set up Argument Parser
     desc = (
@@ -109,7 +117,6 @@ def main() -> None:
     # so that a standalone unit test can be compiled.
     # All file information will be stored in `mod_dict` and `main_sub_dict`
     ordered_mods = process_for_unit_test(
-        case_dir=case_dir,
         mod_dict=mod_dict,
         mods=needed_mods,
         required_mods=default_mods,
@@ -123,8 +130,6 @@ def main() -> None:
         subroutines[s] = main_sub_dict[s]
         subroutines[s].unit_test_function = True
 
-    print("ordered_mods:")
-    pprint(ordered_mods)
     if not mod_dict or not ordered_mods:
         print(f"{func_name}::Error didn't find any modules related to subroutines")
         sys.exit(1)

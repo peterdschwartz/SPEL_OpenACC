@@ -3,7 +3,6 @@ from __future__ import annotations
 import os.path
 import re
 import sys
-from pprint import pprint
 from typing import Any, Dict, List, Optional
 
 from scripts.DerivedType import DerivedType, get_component
@@ -715,26 +714,6 @@ class Subroutine(object):
             self.elmtype_access_sum[var] = status
         return 
 
-
-    def analyze_calltree(self, tree, casename=None):
-        """
-        returns unraveled calltree
-        """
-        tree_to_write = [[self.name, 0]]
-        for i in range(0, len(tree)):
-            el = tree[i]
-            tree_to_write = determine_level_in_tree(
-                branch=el, tree_to_write=tree_to_write
-            )
-
-        if(casename):
-            ofile = open(f"{casename}/{self.name}CallTree.txt", "w")
-        for branch in tree_to_write:
-            level = branch[1]
-            sub = branch[0]
-            print(level * "|---->" + sub)
-            if(casename): ofile.write(level * "|---->" + sub + "\n")
-        if casename : ofile.close()
 
     def generate_update_directives(self, elmvars_dict, verify_vars):
         """

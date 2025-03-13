@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import re
 import sys
-from dataclasses import asdict
-from pprint import pprint
 from typing import TYPE_CHECKING, Optional
 
 from scripts.mod_config import _bc
@@ -58,6 +56,8 @@ def sub_soa(name: str) -> str:
     inst = regex_paren.sub("(index)", inst)
     return f"{inst}%{field}"
 
+    def __hash__(self):
+        return hash((self.status, self.ln))
 
 def check_field_access(
     var: Variable,

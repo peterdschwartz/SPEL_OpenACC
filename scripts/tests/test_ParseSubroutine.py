@@ -1,11 +1,6 @@
 import os
 from pprint import pprint
-from typing import Dict
 from unittest.mock import patch
-
-import pytest
-
-from scripts.utilityFunctions import Variable
 
 test_dir = os.path.dirname(__file__)
 
@@ -79,6 +74,7 @@ def test_getArguments(subtests):
         from scripts.fortran_modules import FortranModule
         from scripts.mod_config import scripts_dir
         from scripts.UnitTestforELM import process_subroutines_for_unit_test
+        from scripts.utilityFunctions import Variable
 
         expected_arg_status = {
             "test_parsing_sub": {
@@ -154,13 +150,12 @@ def test_getArguments(subtests):
         mod_dict: dict[str, FortranModule] = {}
         main_sub_dict: dict[str, Subroutine] = {}
 
-        file_list = process_for_unit_test(
-            fname=fn,
-            case_dir="./",
+        ordered_mods = process_for_unit_test(
             mod_dict=mod_dict,
             mods=[],
             required_mods=[],
             sub_dict=main_sub_dict,
+            sub_name_list=sub_name_list,
             overwrite=False,
             verbose=False,
         )
@@ -207,9 +202,7 @@ def test_getArguments(subtests):
                 assert expected_arg_status[subname] == test_dict
 
         for subname in expected_arg_status:
-            print(subname)
             childsub = main_sub_dict[subname]
-            pprint(childsub.elmtype_access_sum)
 
         aggregate_dtype_vars(
             sub_dict=main_sub_dict,
@@ -233,8 +226,7 @@ def test_arg_intent():
         import scripts.dynamic_globals as dg
         from scripts.analyze_subroutines import Subroutine
         from scripts.edit_files import process_for_unit_test
-        from scripts.fortran_modules import (FortranModule,
-                                             get_module_name_from_file)
+        from scripts.fortran_modules import FortranModule, get_module_name_from_file
         from scripts.mod_config import scripts_dir
 
         dg.populate_interface_list()
