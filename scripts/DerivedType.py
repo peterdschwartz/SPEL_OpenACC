@@ -3,13 +3,13 @@ from __future__ import annotations
 import re
 import subprocess as sp
 import sys
-from pprint import pprint
 from typing import TYPE_CHECKING, Dict, Optional
 
 import scripts.dynamic_globals as dg
 
 if TYPE_CHECKING:
     from scripts.fortran_modules import FortranModule
+    from scripts.analyze_subroutines import Subroutine
 
 from scripts.fortran_modules import get_module_name_from_file
 from scripts.mod_config import ELM_SRC, _bc, _no_colors
@@ -116,11 +116,12 @@ class DerivedType(object):
         self.declaration = vmod
         self.components: dict[str, Variable] = {}
         self.instances: dict[str, Variable] = {}
-        # Flag to see if Derived Type has been analyzed
         self.analyzed: bool = False
         self.active: bool = False
-        self.init_sub: Optional[str] = None
+        self.init_sub_name: str = ""
         self.procedures: dict[str,str] = {}
+
+        self.init_sub_ptr: Optional[Subroutine] = None
 
     def __repr__(self):
         return f"DerivedType({self.type_name})"
@@ -220,10 +221,7 @@ class DerivedType(object):
                 match_alloc = regex_alloc.findall(full_line)
                 match_ptrinit = regex_ptr_init.search(full_line)
                 if match_ptrinit:
-                    if not subname:
-                        print(self.type_name)
-                        print(match_ptrinit)
-                    init_sub = subname
+                    init_sub = subname.strip()
                     member_name = match_ptrinit.groups()[0].replace("%", "")
                     target = match_ptrinit.groups()[2].strip()
                     if added_member_to_type[member_name]:
@@ -236,12 +234,6 @@ class DerivedType(object):
                     else:
                         var_inst = member_arr_or_ptr[member_name]
                         if var_inst.pointer:
-                            print("Error there should not be any targets yet!!")
-                            print(full_line)
-                            print("member: ", member_name, "target", target)
-                            print(f"Exising targets: {var_inst.pointer}")
-                            print(member_arr_or_ptr)
-                            print(member_arr_or_ptr[member_name])
                             sys.exit(0)
                         var_inst.pointer.append(target)
                         member = var_inst
@@ -249,12 +241,10 @@ class DerivedType(object):
                         added_member_to_type[member_name] = True
 
                 elif match_alloc:
-                    init_sub = subname
+                    init_sub = subname.strip()
                     members_matched = regex_member_name.findall(full_line)
                     members_matched = list(set(members_matched))
-                    if debug:
-                        print("match_alloc:", match_alloc)
-                        print("Member matched:", members_matched)
+
                     for varname in members_matched:
                         varname = varname.replace("%", "")
                         if added_member_to_type[varname]:
@@ -285,7 +275,7 @@ class DerivedType(object):
                 )
                 print(member_arr_or_ptr)
             else:
-                self.init_sub = init_sub
+                self.init_sub_name = init_sub
 
         for scalar in member_scalars.values():
             self.components[scalar.name] = scalar
@@ -308,7 +298,7 @@ class DerivedType(object):
         ofile.write(hl.HEADER + "from Mod: " + base_fn + "\n" + hl.ENDC)
         for v in self.instances.values():
             ofile.write(hl.OKBLUE + f"{v.type} {v.name} {v.declaration}\n" + hl.ENDC)
-        ofile.write(hl.WARNING + f"Initialized in {self.init_sub} \n" + hl.ENDC)
+        ofile.write(hl.WARNING + f"Initialized in {self.init_sub_name} \n" + hl.ENDC)
         if self.procedures:
             ofile.write(hl.OKGREEN + f"Type Procedures:\n")
             for alias, proc in self.procedures.items():
@@ -441,6 +431,8 @@ def expand_dtype(dtype_vars: list[Variable], type_dict: dict[str, DerivedType])-
 
     result: dict[str,Variable] = {}
     for dtype_var in dtype_vars:
+        if dtype_var.type not in type_dict:
+            continue
         dtype = type_dict[dtype_var.type]
         fields = dtype.components.values()
         temp: dict[str,Variable] = {

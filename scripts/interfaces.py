@@ -183,7 +183,6 @@ def resolve_interface2(
     args_desc: list[ArgDesc],
     sub_dict: dict[str, Subroutine],
 ) -> Optional[str]:
-
     iprocs = get_interface_procedures(iname)
 
     for proc in iprocs:

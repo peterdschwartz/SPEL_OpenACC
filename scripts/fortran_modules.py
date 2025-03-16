@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 import scripts.dynamic_globals as dg
 from scripts.mod_config import ELM_SRC, SHR_SRC, _bc
-from scripts.types import ModUsage, PointerAlias
+from scripts.types import LineTuple, ModUsage, PointerAlias
 
 
 def get_module_name_from_file(fpath: str) -> tuple[int, str]:
@@ -154,6 +154,33 @@ def build_module_tree(modules: dict[str, FortranModule]) -> list[ModTree]:
     return [mod_nodes[root] for root in roots]
 
 
+def insert_header_for_unittest(
+    mod_list: list[str], mod_dict: dict[str, FortranModule], casedir: str
+):
+    """
+    Function that will insert the header file into files needed for unit test
+    The header file contains definitions to aid in compilation (e.g, override pio types)
+    """
+
+    func_name = "insert_header_for_unittest"
+
+    for mod_name in mod_list:
+
+        f = get_filename_from_module(mod_name)
+        assert f
+        # Change path to unit test case directory
+        fpath = casedir + "/" + f.split("/")[-1]
+        fort_mod = mod_dict[mod_name]
+
+        ifile = open(fpath, "r")
+        lines = ifile.readlines()
+        ifile.close()
+        lines.insert(fort_mod.ln, '#include "unittest_defs.h"\n')
+        with open(fpath, "w") as ofile:
+            ofile.writelines(lines)
+    return None
+
+
 class FortranModule:
     """
     A class to represent a Fortran module.
@@ -164,25 +191,34 @@ class FortranModule:
 
     def __init__(self, name, fname, ln):
         self.name = name  # name of the module
-        self.global_vars: dict[str, Variable] = {}  # variables decl in the module
-        self.subroutines: set[str] = set()  # any subroutines declared in the module
-        self.modules: dict[str, ModUsage] = {}  # any modules used in the module
+        self.filepath = fname  # the file path of the module
+        self.ln: int = ln  # line number of start module block
+        self.num_lines: int = -1
+
+        # objects in declared
+        self.global_vars: dict[str, Variable] = {}
+        self.subroutines: set[str] = set()
+        self.defined_types: dict[str, DerivedType] = {}
+
+        # module dependencies
+        self.modules: dict[str, ModUsage] = {}
         self.modules_by_ln: dict[str, ModUsage] = {}
 
         # modules available to all subroutines
         self.head_modules: dict[str, ModUsage] = {}
-        self.filepath = fname  # the file path of the module
-        self.ln: int = ln  # line number of start module block
-        self.defined_types: dict[str, DerivedType] = (
-            {}
-        )  # user types defined in the module
+
         self.modified: bool = False  # if module has been through modify_file or not.
         self.variables_sorted: bool = False
         self.end_of_head_ln: int = 99999
-        self.num_lines: int
+
+        self.module_lines: list[LineTuple] = []
 
     def __repr__(self):
         return f"FortranModule({self.name})"
+
+    def get_mod_lines(self):
+        return self.module_lines
+
 
     def add_dependency(self, mod: str, line: str, ln: int):
         """

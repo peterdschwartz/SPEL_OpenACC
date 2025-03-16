@@ -1,6 +1,10 @@
 module test_sub_parse
 
   use shr_const_mod
+  use constants_mod, only: nlevdecomp_full, use_fates
+
+  use remove_mod, only : elm_fates
+  real(r8), parameter :: nan = SHR_CONST_SPVAL
 
   integer, parameter, public :: BOUNDS_SUBGRID_GRIDCELL = 1
   integer, parameter, public :: BOUNDS_SUBGRID_TOPOUNIT = 2
@@ -13,9 +17,20 @@ module test_sub_parse
   ! Define possible bounds levels
   integer, parameter, public :: BOUNDS_LEVEL_PROC  = 1
   integer, parameter, public :: BOUNDS_LEVEL_CLUMP = 2
-   integer :: nlevdecomp
+  integer :: nlevdecomp
+  integer,  pointer :: ft_index_bigleaf(:)                      ! array holding the pft index of each competitor
+  real(r8), allocatable,target :: veg_rootc_bigleaf(:,:)        ! column-level fine-root biomas kgc/m3
 
-  type bounds_type
+#ifndef DCPL
+   integer :: cpp(11:11)
+#else
+   integer :: og(1)
+   if (.true.) then 
+      print*, 'what'
+   end if
+#endif
+
+ type bounds_type
      ! The following variables correspond to "Local" quantities
      integer :: begg, endg                       ! beginning and ending gridcell index
      integer :: begt, endt                       ! beginning and ending topographic unit index
@@ -81,13 +96,20 @@ module test_sub_parse
 
 contains
 
+   subroutine allocInit(bounds)
+      type(bounds_type), intent(in) :: bounds
+       allocate(ft_index_bigleaf(bounds%begp:bounds%endp)); 
+       ft_index_bigleaf(bounds%begp:bounds%endp) = -1
+       allocate(veg_rootc_bigleaf(bounds%begp:bounds%endp,1:nlevdecomp));veg_rootc_bigleaf(bounds%begp:bounds%endp,1:nlevdecomp) = nan
+   end subroutine allocInit
+
    subroutine allocate_filter(this, begc, endc)
       type(clump_filter) , INTENT(INOUT) :: this
       integer, intent(in) :: begc, endc
       allocate(this%soilc(1:endc-begc+1)); this%soilc(:) = -1
    end subroutine allocate_filter
 
-   function constructor(bounds) result(this)
+function constructor(bounds) result(this)
     !
     ! !DESCRIPTION:
     ! Initialize a patch_state_updater_type object
@@ -138,8 +160,8 @@ contains
       real(r8), INTENT(IN) :: var2(bounds%begg:)
       real(r8), INTENT(inout) :: var3
       logical  :: input4
-
-      integer :: x, y, g
+      real(r8) :: x, y
+      integer :: g
       g = 1
 
       if (input4)then 
@@ -155,7 +177,7 @@ contains
 
    subroutine call_sub(numf, bounds, mytype)
       use shr_const_mod, only : test_type
-      use constants_mod, only : i_const
+      use constants_mod, only : i_const, param2
 
       integer, intent(in) :: numf
       type(bounds_type), intent(in) :: bounds
@@ -181,6 +203,13 @@ contains
 
       i_type = i_const - 3
 
+      if (use_fates) then 
+         do i =1, elm_fates%num
+            elm_fates%field(i) = field1(i)
+         end do
+        ft_index_bigleaf(c) = field1(c)
+      end if
+
       select case (i_type)
       case (1)  ! C
          test_ptr => col_nf%m_n_to_litr_met_fire
@@ -191,12 +220,12 @@ contains
       filter(i_type)%num_soilc = 10
       filter(i_type)%soilc(:) = 4
 
-      mytype%field2(:) = test_ptr(:,1)
+      mytype%field2(:) = test_ptr(:,1)*param2(:)
 
       field1(c) = shr_const_pi*mytype%field2(c)
 
       call test_parsing_sub(bounds, max(input1*shr_const_pi, local_var+input2(g)), &
-         col_nf%m_n_to_litr_met_fire(c,1:N), landunit_is_special(g),var3=input3+1)
+         col_nf%m_n_to_litr_met_fire(c,1:N), landunit_is_special(g),var3=input3)
 
       call Tridiagonal(bounds, -lbj+1, four, jtop, numf, soilc, a_tri, b_tri, c_tri, r_tri, u_tri)
       call col_nf%Init(bounds%begc, bounds%endc)
@@ -204,6 +233,7 @@ contains
       call ptr_test_sub(filter(i_type)%num_soilc, filter(i_type)%soilc, test_ptr)
 
       call trace_dtype_example(mytype, col_nf, .true.)
+      veg_rootc_bigleaf(:,:) = 2
 
       test_ptr(:,:) = SHR_CONST_SPVAL
 
@@ -257,7 +287,7 @@ contains
       character(len=*), parameter :: subname = 'landunit_is_special'
       !-----------------------------------------------------------------------
 
-      !#py SHR_ASSERT((ltype >= 1 .and. ltype <= max_lunit), subname//': ltype out of bounds')
+      SHR_ASSERT((ltype >= 1 .and. ltype <= max_lunit), subname//': ltype out of bounds')
 
       if (ltype == istsoil .or. ltype == istcrop) then
          is_special = .false.
@@ -267,7 +297,7 @@ contains
 
    end function landunit_is_special
 
-   type(prior_weights_type) function constructor(bounds)
+   type(prior_weights_type) function weight_constructor(bounds)
       !
       ! !DESCRIPTION:
       ! Initialize a prior_weights_type object
@@ -281,10 +311,10 @@ contains
       ! ----------------------------------------------------------------------
 
 
-      allocate (constructor%pwtcol(bounds%begp:bounds%endp))
-      allocate (constructor%cactive(bounds%begc:bounds%endc))
+      allocate (weight_constructor%pwtcol(bounds%begp:bounds%endp))
+      allocate (weight_constructor%cactive(bounds%begc:bounds%endc))
 
-   end function constructor
+   end function weight_constructor
 
    function old_weight_was_zero(this, bounds)
       !

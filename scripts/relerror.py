@@ -1,5 +1,3 @@
-import argparse
-import os
 import sys
 import time
 from collections import namedtuple
@@ -53,11 +51,8 @@ def rel_error(refdata, compdata, var, error_log):
     original_vals = refdata[var].values
     comp_vals = compdata[var].values
     dims = refdata[var].dims
-    if len(dims) < 2:
-        return error_log, None
     dtype = refdata[var].dtype
     sizes = refdata[var].sizes
-    numg = sizes["lndgrid"]
     if comp_vals.shape != original_vals.shape:
         print(f"Error {var} dimensions do not match between files")
         print(f"OG : {original_vals.shape}\n TEST : {comp_vals.shape}")
@@ -65,9 +60,8 @@ def rel_error(refdata, compdata, var, error_log):
 
     # Set parameters and initialize diff log
     EPSILON = 1.0e-50
-    ERROR = 1.0e-16  # Threshold to report
+    ERROR = 0.0e-25  # Threshold to report
     NUMLOGS = 8  # total number of examples to report
-    diff_log = []
     diff_vals = original_vals - comp_vals
     diff_vals = np.abs(diff_vals)
 
@@ -96,15 +90,20 @@ def rel_error(refdata, compdata, var, error_log):
     if len(sig_diffs) > 0:
         dims_str = [k for k in sizes.keys()]
         dims_str = ",".join(dims_str)
-        newvar_header = [f"{var}", "**", "**", "**"]
+        newvar_header = [f"{var}", "Ref", "Test", "Diff"]
 
         # Calculate RMSE:
         rmse = np.sqrt(((og_vals - test_vals) ** 2).mean()) / np.sqrt(len(og_vals))
-        summary = Tally("Summary", len(sig_diffs), rmse, np.max(sig_diffs))
+        summary = Tally(
+            "Summary",
+            f"#{len(sig_diffs)}",
+            f"rmse: {rmse}",
+            f"max: {np.max(sig_diffs)}",
+        )
         error_log.append(tuple(newvar_header))
         for i, diff in enumerate(sig_diffs):
             indices[i] += 1
-            coords = tuple(indices[i])
+            coords = tuple(int(x) for x in indices[i])
             og_val = og_vals[i]
             t_val = test_vals[i]
             if i <= NUMLOGS:
@@ -116,49 +115,33 @@ def rel_error(refdata, compdata, var, error_log):
     return error_log, summary
 
 
-def main():
+def is_numeric(dtype: str):
+    return np.issubdtype(dtype, np.number)
+
+
+def find_diffs(refn: str, compfn: str, var: str = "", ostream=sys.stdout):
     """
     Function to compare two netcdf files and report any significant diffs
     """
-    parser = argparse.ArgumentParser(
-        prog="relerror", description="Determine relative error."
-    )
-    parser.add_argument("-c", action="store", required=True, dest="refn")
-    parser.add_argument("-g", action="store", required=True, dest="compfn")
-    parser.add_argument("-v", action="store", required=False, dest="var")
-    parser.add_argument("-P", action="store_true", required=False, dest="print")
-    args = parser.parse_args()
-    if args.var is None:
-        findall = True
-    else:
-        findall = False
-    print("Reference File is:", args.refn)
-    print(f"Comparison File is:", args.compfn)
+    findall = True if not var else False
+    print("Reference File is:", refn)
+    print("Comparison File is:", compfn)
     print("Findall is:", findall)
-    dtype_list = ["float32", "int32"]
-    refdata = xarray.open_dataset(args.refn)
-    compdata = xarray.open_dataset(args.compfn)
 
-    if args.print:
-        ofile = sys.stdout
-    else:
-        ofile = open("comparsion.txt", "w")
+    refdata = xarray.open_dataset(refn)
+    compdata = xarray.open_dataset(compfn)
 
     if findall:
         var_names = [var for var in refdata.keys()]
         current_var = var_names[0]
         error_log = []
         for var in progressbar(var_names, "VAR:", 40):
-            if refdata[var].dtype in dtype_list:
+            dtype: str = refdata[var].dtype
+            if is_numeric(dtype):
                 error_log, summary = rel_error(refdata, compdata, var, error_log)
     else:
-        var = args.var
         error_log = []
         error_log, summary = rel_error(refdata, compdata, var, error_log)
-    ofile.write(tabulate(error_log, tablefmt="psql"))
-    ofile.write("\n")
-    ofile.close()
-
-
-if __name__ == "__main__":
-    main()
+    ostream.write(tabulate(error_log, tablefmt="psql"))
+    ostream.write("\n")
+    ostream.close()

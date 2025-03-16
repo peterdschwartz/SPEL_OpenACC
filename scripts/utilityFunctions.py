@@ -10,7 +10,9 @@ import re
 import subprocess as sp
 import sys
 from collections import namedtuple
-from typing import TYPE_CHECKING, Dict, List, Pattern, Tuple
+from typing import TYPE_CHECKING, List, Pattern, Tuple
+
+from scripts.types import LineTuple
 
 if TYPE_CHECKING:
     from scripts.analyze_subroutines import Subroutine
@@ -22,7 +24,7 @@ from scripts.mod_config import ELM_SRC, _bc
 find_type = re.compile(r"(?<=\()\s*\w+\s*(?=\))")  # Matches type(user-type) -> user-type
 # Match any variable declarations
 find_variables = re.compile(
-    r"^(class\s*\(|type\s*\(|integer|real|logical|character)", re.IGNORECASE
+    r"^(class\s*\(|type\s*\(|integer|real|logical|character|complex)", re.IGNORECASE
 )
 # Match variable names
 regex_var = re.compile(r"\w+")
@@ -86,17 +88,22 @@ class Variable(object):
         # filter_used corresponds to adjusting memory allocations
         self.filter_used = ""
 
-        # Mostly used for global derived-type variables
+        # Module where variable is declared
         if declaration:
-            self.declaration = declaration
+            self.declaration: str = declaration
         else:
-            self.declaration = ""
+            self.declaration: str = ""
         self.active: bool = active
         self.private: bool = private
         self.default_value = None
         self.pointer: list[str] = pointer.copy()
         self.bounds: str = bounds
         self.ptrscalar = ptrscalar
+
+        self.allocatable: bool = False
+        if self.dim > 0 and not self.bounds:
+            self.allocatable = True
+
 
     def __eq__(self, other):
         if (
@@ -127,17 +134,10 @@ class Variable(object):
         ofile.write(f"{self}\n")
 
 
-def comment_line(lines, ct, mode="normal", verbose=False):
+def comment_line(lines: list[LineTuple], ct: int, verbose:bool=False):
     """
-    function comments out lines accounting for line continuation
+    Function comments out lines accounting for line continuation
     """
-    if mode == "normal":
-        comment_ = "!#py "
-    if mode == "fates":
-        comment_ = "!#fates_py "
-    if mode == "betr":
-        comment_ = "!#betr_py "
-
     newline = lines[ct]
     # Get first non-whitespace character:
     str_ = newline.strip()[0]
@@ -164,7 +164,7 @@ def split_func_line(line):
     """
     Function to split function definition line
     """
-    func_name = "split_func_line::"
+    func_name = "( split_func_line )"
     regex_func = re.compile(r"\b(function)\b")
     regex_remove = re.compile(r"\b(pure|elemental)\b")
 
@@ -309,6 +309,23 @@ def lineContinuationAdjustment(lines, ln, verbose=False):
 
     return l, lines_to_skip
 
+def unwrap_section(lines: list[str], startln: int)->list[LineTuple]:
+    """
+    lines: list of fortran lines to adjust for lineconinuation
+    startln: line number for first line in lines in the file.
+    """
+    fline_list: list[LineTuple] = []
+    ln: int = 0
+    while ln < len(lines):
+        full_line, new_ln = line_unwrapper(lines, ln)
+        if(full_line):
+            statements = full_line.split(";")
+            for stmt in statements:
+                fline_list.append(LineTuple(line=stmt.strip(),ln=ln))
+        ln = new_ln + 1
+
+    fline_list = [ LineTuple(line=f.line,ln=f.ln+startln) for f in fline_list ]
+    return fline_list
 
 def find_end_subroutine(fn, startline):
     """
@@ -1130,41 +1147,6 @@ def line_unwrapper(lines: list[str], ct: int, verbose: bool=False) -> Tuple[str,
         print("old, new ln:", ct, newct)
 
     return full_line, newct
-
-
-def insert_header_for_unittest(file_list, casedir, mod_dict):
-    """
-    Function that will insert the header file into files needed for unit test
-    The header file contains definitions to aid in compilation (e.g, override pio types)
-    """
-    from fortran_modules import get_module_name_from_file
-
-    func_name = "insert_header_for_unittest"
-
-    # Loop through files, insert header, and save them to the Unit Test dir
-    for f in file_list:
-
-        # Retrieve module name for the file and the linenumber it starts at.
-        # Note that `linenumber` is 1-indexed from grep. So that if we insert,
-        # at that loc here, it will be just after the "module" statement.
-        linenumber, mod_name = get_module_name_from_file(f)
-
-        # Change path to unit test case directory
-        base_fn = f.split("/")[-1]
-        new_fpath = casedir + "/" + base_fn
-        # NOTE: removed this check since the current SPEL will only ever
-        #       insert headers into files within the case directory.
-        # First check if the header is already included
-        # match_include = re.search(
-        #     r'^(#include "unittest_defs.h")', lines[linenumber]
-        # )
-        ifile = open(f, "r")
-        lines = ifile.readlines()
-        ifile.close()
-        lines.insert(linenumber, '#include "unittest_defs.h"\n')
-        with open(new_fpath, "w") as ofile:
-            ofile.writelines(lines)
-    return None
 
 
 def parse_line_for_variables(ifile, l, ln, ptr=False, verbose=False):

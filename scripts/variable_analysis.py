@@ -1,16 +1,57 @@
 from __future__ import annotations
 
+import logging
+import pprint
 import re
-from pprint import pprint
+from logging import Logger
 from typing import TYPE_CHECKING, Dict
 
-from scripts.types import LineTuple, ModUsage, PointerAlias
+from scripts.logging_configs import get_logger, set_logger_level
+from scripts.types import LineTuple, ModUsage
 
 if TYPE_CHECKING:
     from scripts.analyze_subroutines import Subroutine
 
-from scripts.fortran_modules import FortranModule, get_module_name_from_file
+from scripts.fortran_modules import FortranModule
 from scripts.utilityFunctions import Variable
+
+
+def find_global_var_bounds(
+    global_vars: dict[str, Variable],
+    mod_dict: dict[str, FortranModule],
+    logger: Logger,
+):
+    func_name = "(find_global_var_bounds)"
+
+    regex_alloc = re.compile(r"^(allocate\b)")
+    # sort globals by module
+    sorted_gv_by_map: dict[str, list[str]] = {}
+    for gv in global_vars.values():
+        if gv.dim != 0 and not gv.bounds:
+            sorted_gv_by_map.setdefault(gv.declaration, []).append(rf"{gv.name}")
+
+    for mod, var_list in sorted_gv_by_map.items():
+
+        fline_list = mod_dict[mod].module_lines
+        var_str = "|".join(var_list)
+
+        alloc_lines = [
+            line for line in filter(lambda x: regex_alloc.search(x.line), fline_list)
+        ]
+        regex_var = re.compile(rf"\b({var_str})\b")
+        var_lines = [
+            line for line in filter(lambda x: regex_var.search(x.line), alloc_lines)
+        ]
+
+        for lpair in var_lines:
+            line = lpair.line.strip()
+            regex_var_and_bounds = re.compile(rf"({var_str})\s*(\(.+?\))")
+            for match in regex_var_and_bounds.finditer(line):
+                varname = match.group(1)
+                bounds = match.group(2)
+                global_vars[varname].bounds = bounds[1:-1]
+
+    return
 
 
 def add_global_vars(
@@ -69,9 +110,12 @@ def determine_global_variable_status(
         * mod_dict : dictionary of unit test modules
         * subroutines : list of Subroutine objects
     """
-    func_name = "determine_global_variables_status"
+    func_name = "( determine_global_variables_status )"
+    logger: Logger = get_logger("ActiveGlobals")
+    set_logger_level(logger, logging.DEBUG)
 
     fileinfo = sub.get_file_info(all=True)
+
     # temp mod dict for only those related to this Sub
     test_modules: Dict[str, FortranModule] = {}
     modname = sub.module
@@ -84,6 +128,14 @@ def determine_global_variable_status(
     for mod_name, musage in sub_dep.items():
         add_global_vars(dep_mod=mod_dict[mod_name], vars=variables, mod_usage=musage)
 
+    intrinsic_types = ["real", "character", "logical", "integer"]
+    variables.update(
+        {
+            key: val
+            for key, val in sub_mod.global_vars.items()
+            if val.type in intrinsic_types
+        }
+    )
     if not variables:
         return
     # Create regex from the possible variables
@@ -98,6 +150,8 @@ def determine_global_variable_status(
         print(f"{func_name}::test modules ", test_modules)
         print(f"{func_name}::active_vars :", active_vars)
     if active_vars:
+        active_var_dict = {var: variables[var] for var in active_vars}
+        find_global_var_bounds(active_var_dict, mod_dict, logger)
         for var in active_vars:
             variables[var].active = True
             sub.active_global_vars[var] = variables[var].copy()

@@ -1,8 +1,11 @@
+import logging
 import os
 from pprint import pprint
 from unittest.mock import patch
 
-test_dir = os.path.dirname(__file__)
+test_dir = os.path.dirname(__file__) + "/"
+logger = logging.getLogger("TEST")
+logging.basicConfig(level=logging.INFO)  # change to DEBUG to see detailed logs
 
 
 def test_Functions():
@@ -45,7 +48,7 @@ def test_Functions():
         sub_dict = modify_file(
             lines,
             fn,
-            sub_dict={},
+            sub_init_dict={},
             mod_name=mod_name,
             verbose=False,
             overwrite=False,
@@ -59,7 +62,7 @@ def test_Functions():
                 assert ans == comp, f"Failed for function: {key}"
 
 
-def test_getArguments(subtests):
+def test_sub_parse(subtests):
     """
     Test for parsing function/subroutine calls
     """
@@ -116,9 +119,9 @@ def test_getArguments(subtests):
                 "bounds": "r",
                 "bounds%begc": "r",
                 "bounds%endc": "r",
-                "mytype": "w",
+                "mytype": "rw",
                 "mytype%field2": "w",
-                "mytype%field1": "w",
+                "mytype%field1": "rw",
             },
             "col_nf_init": {
                 "begc": "r",
@@ -151,6 +154,7 @@ def test_getArguments(subtests):
         main_sub_dict: dict[str, Subroutine] = {}
 
         ordered_mods = process_for_unit_test(
+            case_dir=test_dir,
             mod_dict=mod_dict,
             mods=[],
             required_mods=[],
@@ -171,7 +175,11 @@ def test_getArguments(subtests):
             dtype.find_instances(mod_dict)
 
         bounds_inst = Variable(
-            type="bounds_type", name="bounds", dim=0, subgrid="?", ln=-1
+            type="bounds_type",
+            name="bounds",
+            dim=0,
+            subgrid="?",
+            ln=-1,
         )
         type_dict["bounds_type"].instances["bounds"] = bounds_inst.copy()
 
@@ -189,8 +197,22 @@ def test_getArguments(subtests):
         )
         active_vars = main_sub_dict[test_sub_name].active_global_vars
 
+        active_globals_fut: dict[str, Variable] = {}
+        for sub in main_sub_dict.values():
+            active_globals_fut.update(sub.active_global_vars)
+
+        for var in main_sub_dict["call_sub"].active_global_vars.values():
+            logger.info(
+                f"Variable Info:\n"
+                f"  name         : {var.name}\n"
+                f"  declaration  : {var.declaration}\n"
+                f"  bounds       : {var.bounds} ({bool(var.bounds)})\n"
+                f"  dim          : {var.dim}\n"
+                f"  ALLOCATABLE  : {var.allocatable}"
+            )
+
         assert (
-            len(active_vars) == 3
+            len(active_vars) == 6
         ), f"Didn't correctly find the active global variables:\n{active_vars}"
 
         for subname in expected_arg_status:

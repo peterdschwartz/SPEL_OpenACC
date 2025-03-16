@@ -1,26 +1,28 @@
 from __future__ import annotations
 
+import logging
 import os.path
 import re
 import sys
+from pprint import pprint
 from typing import Any, Dict, List, Optional
 
 from scripts.DerivedType import DerivedType, get_component
 from scripts.fortran_parser.environment import Environment
-from scripts.fortran_parser.evaluate import regex_ignore
 from scripts.fortran_parser.tracing import Trace
 from scripts.helper_functions import (ReadWrite, SubroutineCall,
                                       analyze_sub_variables, combine_status,
-                                      determine_level_in_tree,
-                                      find_child_subroutines, intrinsic_types,
-                                      is_derived_type, merge_status_list,
-                                      normalize_soa_keys, replace_elmtype_arg,
+                                      find_child_subroutines, is_derived_type,
+                                      merge_status_list, normalize_soa_keys,
+                                      replace_elmtype_arg,
                                       summarize_read_write_status,
                                       trace_derived_type_arguments)
+from scripts.logging_configs import get_logger
 from scripts.LoopConstructs import Loop, exportVariableDependency
 from scripts.mod_config import _bc, _no_colors, spel_dir
 from scripts.process_associate import getAssociateClauseVars
-from scripts.types import ArgLabel, CallDesc, CallTree, FileInfo, LineTuple
+from scripts.types import (ArgLabel, CallDesc, CallTree, FileInfo, LineTuple,
+                           SubInit)
 from scripts.utilityFunctions import (Variable, determine_filter_access,
                                       find_file_for_subroutine,
                                       get_interface_list, getArguments,
@@ -28,6 +30,8 @@ from scripts.utilityFunctions import (Variable, determine_filter_access,
                                       lineContinuationAdjustment,
                                       search_in_file_section, split_func_line)
 
+# Setup logger
+logger = get_logger("SubroutineAnalysis")
 
 class Subroutine(object):
     """
@@ -59,20 +63,9 @@ class Subroutine(object):
 
     def __init__(
         self,
-        name,
-        mod_name,
-        mod_lines=[],
-        file="",
-        calltree=[],
-        start=0,
-        end=0,
-        cpp_start=None,
-        cpp_end=None,
-        cpp_fn=None,
-        ignore_interface=False,
-        verbose=False,
+        init_obj: SubInit,
         lib_func=False,
-        function=None,
+        verbose:bool=False,
     ):
         """
         Initalizes the subroutine object:
@@ -81,30 +74,20 @@ class Subroutine(object):
             3) the associate clause is processed.
         """
 
-        self.name: str = name
+        self.name: str = init_obj.name
         self.library: bool = lib_func
-        self.func = True if function else False
-        if not ignore_interface:
-            if not file and start == 0 and end == 0:
-                file, start, end = find_file_for_subroutine(name=name)
-                # grep isn't zero indexed so subtract 1 from start and end
-                start -= 1
-                end -= 1
+        self.func = True if init_obj.function else False
 
-        self.filepath: str = file
-        self.startline: int = start
-        self.endline: int = end
-        self.module: str = mod_name
+        self.filepath: str = init_obj.file
+        self.startline: int = init_obj.start
+        self.endline: int = init_obj.end
+        self.module: str = init_obj.mod_name
         self.mod_deps: dict[str, str|list[Any]]
         if self.endline == 0 or self.startline == 0 or not self.filepath:
             print(
                 f"Error in finding subroutine {self.name} {self.filepath} {self.startline} {self.endline}"
             )
             sys.exit()
-
-        # Initialize call tree
-        self.calltree = list(calltree)
-        self.calltree.append(name)
 
         # CallTree where repeated child subroutines are not considered.
         self.abstract_call_tree: Optional[CallTree] = None
@@ -126,9 +109,9 @@ class Subroutine(object):
         self.var_declaration_endl: int = 0
 
         # Compiler preprocessor flags
-        self.cpp_startline: int | None = cpp_start
-        self.cpp_endline: int | None = cpp_end
-        self.cpp_filepath: str | None = cpp_fn
+        self.cpp_startline: int | None = init_obj.cpp_start
+        self.cpp_endline: int | None = init_obj.cpp_end
+        self.cpp_filepath: str | None = init_obj.cpp_fn
 
         # Process the Associate Clause
         self.associate_vars: dict[str,str] = {}
@@ -139,25 +122,28 @@ class Subroutine(object):
         self.associate_end: int = -1
 
         self.dummy_args_list: List[str] = []
-        self.return_type = function.return_type if function else ""
-        self.result_name = function.result if function else ""
+        self.return_type = init_obj.function.return_type if init_obj.function else ""
+        self.result_name = init_obj.function.result if init_obj.function else ""
         self.result: Variable|None = None
 
         self.dtype_vars: dict[str, Variable] = {}
         self.sub_lines: list[LineTuple] = []
 
         if not lib_func:
-            self.sub_lines = self.get_sub_lines(mod_lines)
+            self.sub_lines = self.get_sub_lines(init_obj.mod_lines)
+            if(not self.sub_lines):
+                sys.exit(f"FAILED TO GET SUB_LINES FOR { self.name }")
+
             self.associate_vars, jstart, jend = getAssociateClauseVars(self)
             self.associate_start = jstart
             self.associate_end = jend
-            self.reverse_associate_map = {val : key for key, val in self.associate_vars.items()}
+            self.reverse_associate_map: dict[str,str] = {val : key for key, val in self.associate_vars.items()}
 
             self.dummy_args_list = self._get_dummy_args()
             getLocalVariables(self, verbose=verbose)
 
 
-        if function:
+        if init_obj.function:
             if self.result_name in self.Arguments:
                 self.result = self.Arguments.pop(self.result_name)
             else:
@@ -208,7 +194,10 @@ class Subroutine(object):
 
     def __repr__(self) -> str:
         name = "Subroutine" if not self.func else "Function"
-        return f"{name}({self.name})"
+        return f"{name}({self.get_name()})"
+
+    def get_name(self) -> str:
+        return f"{self.module}::{self.name}"
 
     def print_subroutine_info(self, ofile=sys.stdout, long=False):
         """
@@ -282,8 +271,8 @@ class Subroutine(object):
                 elif len(args_and_res) == 2:
                     args.append(args_and_res[1])
                 else:
-                    print(f"{func_name}Error - wrong function dummy args")
-                    print(f"{tabs}{args_and_res}\n{tabs}{full_line}")
+                    logger.error(f"{func_name}Error - wrong function dummy args"
+                        +f"{tabs}{args_and_res}\n{tabs}{full_line}")
                     sys.exit(1)
             else:
                 args = [self.result_name] if self.result_name else []
@@ -298,44 +287,12 @@ class Subroutine(object):
         args = [arg.strip() for arg in args]
         return args
 
-    def _get_global_constants(self, constants):
-        """
-        NOTE: Need to revisit this function
-        This function will loop through an ELM F90 file,
-        collecting all constants
-        """
-        const_mods = [
-            "elm_varcon",
-            "elm_varpar",
-            "landunit_varcon",
-            "column_varcon",
-            "pftvarcon",
-            "elm_varctl",
-        ]
-        file = open(self.filepath, "r")
-        lines = file.readlines()
-        print(f"opened file {self.filepath}")
-        ct = 0
-        while ct < len(lines):
-            line = lines[ct]
-            l = line.strip()
-            match_use = re.search(r"^use ", l.lower())
-            if match_use:
-                l = l.replace(",", " ").replace(":", " ").replace("only", "").split()
-                m = l[1]
-                if m in const_mods:
-                    for c in l[2:]:
-                        if c.lower() not in constants[m]:
-                            constants[m].append(c.lower())
-
-            ct += 1
-        print(constants)
-
 
     def get_dtype_vars(self, instance_dict: Dict[str, DerivedType])-> Dict[str,Variable]:
         """
         Function 
         """
+        index_str = "(index)"
         regex_paren = re.compile(r"\((.+)\)") # for removing array of struct index
         regex_dtype_var = re.compile(r"\w+(?:\(\w+\))?%\w+")
 
@@ -343,11 +300,11 @@ class Subroutine(object):
         matched_lines = [line for line in filter(lambda x: regex_dtype_var.search(x.line), lines)]
 
         def check_local_decls(my_dict):
-            return lambda key: key in my_dict
+            return lambda key: key.replace(index_str,"") in my_dict
 
         def sub_soa(name: str)->str:
             inst, field = name.split("%")
-            inst = regex_paren.sub("(index)", inst)
+            inst = regex_paren.sub(index_str, inst)
             return f"{inst}%{field}"
 
         local_and_args_dict = self.Arguments | self.LocalVariables['arrays'] | self.LocalVariables['scalars']
@@ -398,7 +355,7 @@ class Subroutine(object):
         return None
 
 
-    def get_sub_lines(self, mod_lines=[])-> list[LineTuple]:
+    def get_sub_lines(self, mod_lines: Optional[list[LineTuple]]=None)-> list[LineTuple]:
         """
         Function that returns lines of a subroutine after trimming comments,
         removing line continuations, and lower-case
@@ -410,22 +367,20 @@ class Subroutine(object):
                                            start_ln=fileinfo.startln,
                                            end_ln=fileinfo.endln,
                                            pattern=regex_all,)
+            fline_list: list[LineTuple] = []
+            ln: int = 0
+            while ln < len(lines):
+                full_line, new_ln = line_unwrapper(lines, ln)
+                if(full_line):
+                    statements = full_line.split(";")
+                    for stmt in statements:
+                        fline_list.append(LineTuple(line=stmt.strip(),ln=ln))
+                ln = new_ln + 1
+
+            fline_list = [ LineTuple(line=f.line,ln=f.ln+fileinfo.startln) for f in fline_list ]
         else:
-            indexed_lines = enumerate(mod_lines,start=0)
-            section = filter(lambda x: fileinfo.startln <= x[0] <= fileinfo.endln, indexed_lines)
-            lines = [ line[1] for line in filter(lambda x: regex_all.search(x[1]), section) ]
+            fline_list = [linetuple for linetuple in mod_lines if fileinfo.startln <= linetuple.ln <= fileinfo.endln]
 
-        fline_list: list[LineTuple] = []
-        ln: int = 0
-        while ln < len(lines):
-            full_line, new_ln = line_unwrapper(lines, ln)
-            if(full_line):
-                statements = full_line.split(";")
-                for stmt in statements:
-                    fline_list.append(LineTuple(line=stmt.strip(),ln=ln))
-            ln = new_ln + 1
-
-        fline_list = [ LineTuple(line=f.line,ln=f.ln+fileinfo.startln) for f in fline_list ]
         return fline_list
 
 
@@ -473,8 +428,6 @@ class Subroutine(object):
         """
         Getter that returns tuple for fn, start and stop linenumbers.takes into account cpp files
         """
-        # Note: don't differentiate between cpp files and regular files
-        #       for location of the associate clause.
         if self.cpp_filepath:
             fn = self.cpp_filepath
             if self.associate_end == 0 or all:
@@ -538,7 +491,7 @@ class Subroutine(object):
             * dtype_dict : dict of user type defintions
             * interface_list : contains names of known interfaces
         """
-        func_name = "collect_var_and_call_info"
+        func_name = "collect_var_and_call_info::"
 
         global_vars: Dict[str,DerivedType] = {}
         for dtype in dtype_dict.values():
@@ -571,13 +524,18 @@ class Subroutine(object):
                     + _bc.ENDC
                 )
                 childsub: Subroutine = Subroutine(
-                    name=actual_sub_name,
-                    mod_name="lib",
-                    mod_lines=[],
-                    calltree=[],
-                    file="lib.F90",
-                    start=-999,
-                    end=-999,
+                    init_obj = SubInit(
+                        name=actual_sub_name,
+                        mod_name="lib",
+                        mod_lines=[],
+                        file="lib.F90",
+                        start=-999,
+                        end=-999,
+                        cpp_end=None,
+                        cpp_start=None,
+                        cpp_fn="",
+                        function=None,
+                    ),
                     lib_func=True,
                 )
                 sub_dict[actual_sub_name] = childsub
@@ -726,18 +684,6 @@ class Subroutine(object):
 
         spaces = " " * 2
         ofile.write("subroutine update_vars_{}(gpu,desc)\n".format(self.name))
-
-        replace_inst = [
-            "soilstate_inst",
-            "waterflux_inst",
-            "canopystate_inst",
-            "atm2lnd_inst",
-            "surfalb_inst",
-            "solarabs_inst",
-            "photosyns_inst",
-            "soilhydrology_inst",
-            "urbanparams_inst",
-        ]
 
         for dtype in verify_vars.keys():
             mod = elmvars_dict[dtype].declaration
@@ -1422,7 +1368,8 @@ class Subroutine(object):
                 associate_set.add(key)
         if associate_set:
             var_inst_dict: dict[str,DerivedType] = {
-                var.name: type_dict[var.type] for var in var_dict.values() if is_derived_type(var)
+                var.name: type_dict[var.type] for var in var_dict.values() 
+                if is_derived_type(var) and var.type in type_dict
             }
             for key in associate_set:
                 field_name = self.associate_vars[key]

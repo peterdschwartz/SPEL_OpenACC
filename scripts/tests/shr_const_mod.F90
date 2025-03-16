@@ -83,11 +83,11 @@ MODULE shr_const_mod
    real(R8),parameter :: SHR_CONST_RSTD_H2ODEV   = 1.0_R8      ! Rstd Dev Use
 
   type, public :: test_type
-    integer  :: active
-    real(r8) :: field1(:)
-    real(r8) :: field2(:)
-    real(r8) :: field3(:)
-    real(r8) :: field4(:)
+    logical  :: active
+    real(r8), allocatable :: field1(:)
+    real(r8), allocatable :: field2(:)
+    real(r8), allocatable :: field3(:)
+    real(r8), allocatable :: field4(:)
     contains 
     procedure, public :: Init => test_init
   end type test_type
@@ -102,7 +102,7 @@ contains
     allocate(this%field2(begc:endc))
     allocate(this%field3(begc:endc))
     allocate(this%field4(begc:endc))
-    this%active = 1
+    this%active = .true.
 
   end subroutine test_init
 

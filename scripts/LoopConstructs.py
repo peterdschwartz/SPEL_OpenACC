@@ -108,11 +108,11 @@ def create_latex_table(header, varsForAllLoops, doloops, subname):
     Take dependency data and generate a LaTeX table
     """
 
-    ofile = open(f"./script-output/{subname}Table.tex", "w")
-    ofile.write("\\begin{table*}[]\n")
-    ofile.write("\centering\n")
-    ofile.write("\caption{}\n")
-    ofile.write("\label{tab:my-table}\n")
+    ofile = open(rf"./script-output/{subname}Table.tex", "w")
+    ofile.write(r"\\begin{table*}[]\n")
+    ofile.write(r"\centering\n")
+    ofile.write(r"\caption{}\n")
+    ofile.write(r"\label{tab:my-table}\n")
     # create string for number of columns:
     individual = True
     compressed_vars_loops = {v: [] for v in varsForAllLoops}
@@ -164,43 +164,43 @@ def create_latex_table(header, varsForAllLoops, doloops, subname):
         width = 0.08 / num_loops
         width = round(width, 3)
         if individual:
-            temp = "p{" + f"{width}" + "\\textwidth}"
+            temp = "p{" + f"{width}" + r"\\textwidth}"
             cols += temp * count
         cols += "|"
 
-    ofile.write("\\begin{tabular}{" + cols + "}\n")
-    ofile.write("\hline\n")
+    ofile.write(r"\\begin{tabular}{" + cols + "}\n")
+    ofile.write(r"\hline\n")
     # create string for headers
     hstring = " &"
     num_sections = len(header)
     for section in header[:-1]:
         sname = section[0]
         if "_" in sname:
-            sname = sname.replace("_", "\_")
+            sname = sname.replace("_", r"\_")
         count = section[1]
         if individual:
-            hstring += "\multicolumn{" + f"{count}" + "}{c|}{" + f"{sname}" + "}&"
+            hstring += r"\multicolumn{" + f"{count}" + "}{c|}{" + f"{sname}" + "}&"
         else:
             hstring += sname + "&"
 
     section = header[num_sections - 1]
     sname, count = section
     if "_" in sname:
-        sname = sname.replace("_", "\_")
+        sname = sname.replace("_", r"\_")
     if individual:
-        hstring += "\multicolumn{" + f"{count}" + "}{c|}{" + f"{sname}" + "}\\\\ \n"
+        hstring += r"\multicolumn{" + f"{count}" + "}{c|}{" + f"{sname}" + "}\\\\ \n"
     else:
         hstring += sname + "\\\\ \n"
 
     ofile.write(hstring)
-    ofile.write("\hline\n")
+    ofile.write(r"\hline\n")
 
     # Make string for each table row:
     rows = []
     print(header)
     for var in compressed_vars_loops:
         loop_status = compressed_vars_loops[var]
-        row = var.replace("_", "\_") + "&"
+        row = var.replace("_", r"\_") + "&"
 
         # Add '&' after each section
         section_num = 0
@@ -230,8 +230,8 @@ def create_latex_table(header, varsForAllLoops, doloops, subname):
     for row in rows:
         ofile.write(row + "\n")
 
-    ofile.write("\hline\n")
-    ofile.write("\end{tabular}\n\end{table*}\n")
+    ofile.write(r"\hline\n")
+    ofile.write(r"\end{tabular}\n\end{table*}\n")
     ofile.close()
 
 
@@ -559,7 +559,7 @@ class Loop(object):
             vars_already_examined.append(varname.lower())
 
             # matches only exactly "varname"
-            regex_varname = re.compile(f"(?<!\w)({varname})(?!\w)", re.IGNORECASE)
+            regex_varname = re.compile(rf"(?<!\w)({varname})(?!\w)", re.IGNORECASE)
 
             if "filter" in var:
                 if "filter" in rhs:
@@ -647,7 +647,7 @@ class Loop(object):
                         print(f"checking for same indices for :", l)
                         # using varname here didn't work for some reason
                         ng_regex_array = re.compile(
-                            "\w+\s*\([,\w+\*-]+\)", re.IGNORECASE
+                            r"\w+\s*\([,\w+\*-]+\)", re.IGNORECASE
                         )
 
                         # Get lhs indices:
@@ -697,7 +697,7 @@ class Loop(object):
             dict.fromkeys(m_scalars).keys()
         )  # remove duplicate but keep order
         for lcl_var in m_scalars:
-            regex = re.compile(f"(?<![\w]){lcl_var}(?![\w])")
+            regex = re.compile(rf"(?<![\w]){lcl_var}(?![\w])")
             m_lhs = regex.search(lhs)
             m_rhs = regex.search(rhs)
             if m_lhs and not m_rhs:  # only assigned
