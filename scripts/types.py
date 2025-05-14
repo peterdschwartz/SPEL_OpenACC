@@ -1,11 +1,23 @@
 from __future__ import annotations
 
-from collections import namedtuple
+import logging
+import re
 from dataclasses import asdict, dataclass
-from enum import Enum
-from typing import Any, NamedTuple, Optional
+from enum import Enum, auto
+from logging import Logger
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Optional
 
-from scripts.utilityFunctions import Variable
+from scripts.logging_configs import get_logger
+
+if TYPE_CHECKING:
+    from scripts.analyze_subroutines import Subroutine
+    from scripts.utilityFunctions import Variable
+
+
+class SubStart(NamedTuple):
+    subname: str
+    start_ln: int
+    cpp_ln: Optional[int]
 
 
 class ArgLabel(Enum):
@@ -43,6 +55,18 @@ class IdentKind(Enum):
     slice = 6
     literal = 7
     field = 8
+
+
+@dataclass
+class GlobalVar:
+    """
+    Used to represent global non-derived type variables
+        var: Variable
+        init_sub_ptr: Subroutine
+    """
+
+    var: Variable
+    init_sub_ptr: Subroutine
 
 
 @dataclass
@@ -129,11 +153,27 @@ class CallDesc:
         return
 
 
+class ObjType(Enum):
+    """
+    enum for the kind of object being used:
+        SUBROUTINE
+        VARIABLE
+        DTYPE
+    """
+
+    SUBROUTINE = auto()
+    VARIABLE = auto()
+    DTYPE = auto()
+
+
 @dataclass(frozen=True)
 class PointerAlias:
     """
-    Create Class for used objects that are aliased
-     i.e.,    `ptr` => 'long_object_name'
+    Create Class for used objects that may be aliased
+         i.e.,    `ptr` => 'long_object_name'
+    -------------------------------------------------
+        ptr: Optional[str]
+        obj: str
     """
 
     ptr: Optional[str]
@@ -153,17 +193,81 @@ class PointerAlias:
 class FunctionReturn:
     """
     Dataclass to package fortran function metadata
+        return_type: str
+        name: str
+        result: str
+        start_ln: int
+        cpp_start: int
     """
 
     return_type: str
     name: str
     result: str
     start_ln: int
-    cpp_start: int
+    cpp_start: Optional[int]
 
 
-# Named tuple used to store line numbers for preprocessed and original files
-PreProcTuple = namedtuple("PreProcTuple", ["cpp_ln", "ln"])
+@dataclass
+class SubInit:
+    """
+    Dataclass to Initialize Subroutine
+        name: str
+        mod_name: str
+        file: str
+        cpp_fn: str
+        mod_lines: list[LineTuple]
+        start: int
+        end: int
+        cpp_start: int
+        cpp_end: int
+        function: Optional[FunctionReturn]
+    """
+
+    name: str
+    mod_name: str
+    file: str
+    cpp_fn: str
+    mod_lines: list[LineTuple]
+    start: int
+    end: int
+    cpp_start: Optional[int]
+    cpp_end: Optional[int]
+    function: Optional[FunctionReturn]
+
+
+@dataclass
+class ParseState:
+    """
+    Represent file for parsing
+    """
+
+    module_name: str  # Module in file
+    cpp_file: bool  # File contains compiler preprocessor flags
+    work_lines: list[LineTuple]  # Lines to parse -- may be equivalent to orig_lines
+    orig_lines: list[LineTuple]  # original line number
+    path: str  # path to original file
+    curr_line: Optional[LineTuple]  # current LineTuple
+    line_it: LogicalLineIterator  # Iterator for full fortran statements
+    removed_subs: list[str]  # list of subroutines that have been completely removed
+    sub_init_dict: dict[str, SubInit]  # Init objects for all subroutines in File
+    sub_start: Optional[SubStart]  # Holds start of subroutine info
+    func_init: Optional[FunctionReturn]  # holds start of function info
+    in_sub: bool = False  # flag if parser is currently in a subroutine
+    in_func: bool = False  # flag if parser is in a function
+
+    def get_start_index(self) -> int:
+        return self.line_it.start_index
+
+
+class PreProcTuple(NamedTuple):
+    """
+    Holds line-numbers for original file and cpp file
+        ln: int
+        cpp_ln: Optional[int]
+    """
+
+    ln: int
+    cpp_ln: Optional[int]
 
 
 @dataclass
@@ -172,9 +276,17 @@ class ModUsage:
     clause_vars: set[PointerAlias]
 
 
-class LineTuple(NamedTuple):
+@dataclass
+class LineTuple:
+    """
     line: str
     ln: int
+    commented: bool
+    """
+
+    line: str
+    ln: int
+    commented: bool = False
 
 
 class ReadWrite(object):
@@ -273,3 +385,161 @@ class CallTree:
 
         for child in self.children:
             child.print_tree(level + 1)
+
+
+class LogicalLineIterator:
+    def __init__(self, lines: list[LineTuple], logger: Logger):
+        self.lines = lines
+        self.i = 0
+        self.start_index = 0
+        self.logger: Logger = get_logger("LineIter", level=logging.DEBUG)
+
+    def __iter__(self):
+        return self
+
+    def reset(self):
+        self.i = 0
+        self.start_index = 0
+
+    def strip_comment(self) -> str:
+        in_string = None  # None, "'", or '"'
+        line = self.lines[self.i].line
+        result = []
+        i = 0
+        while i < len(line):
+            c = line[i]
+            if c in ('"', "'"):
+                if in_string is None:
+                    in_string = c
+                elif in_string == c:
+                    # handle escaped quote inside string
+                    if i + 1 < len(line) and line[i + 1] == c:
+                        result.append(c)  # add one quote, skip next
+                        i += 1
+                    else:
+                        in_string = None  # close string
+                result.append(c)
+            elif c == "!" and in_string is None:
+                break  # comment starts here
+            else:
+                result.append(c)
+            i += 1
+        return "".join(result)
+
+    def __next__(self):
+        if self.i >= len(self.lines):
+            raise StopIteration
+        self.start_index = self.i
+
+        full_line = self.strip_comment()
+        full_line = full_line.rstrip("\n").strip()
+        while full_line.rstrip().endswith("&"):
+            full_line = full_line.rstrip()[:-1].strip()
+            self.i += 1
+            if self.i >= len(self.lines):
+                self.logger.error("Error-- line incomplete!")
+                raise StopIteration
+            new_line = self.lines[self.i].line.split("!")[0].strip()
+            # test if line is just a comment
+            if not new_line:
+                full_line += " &"  # re append & so loop goes to next line
+            else:
+                full_line += new_line.rstrip("\n").strip()
+
+        result = (full_line.lower(), self.i)
+        self.i += 1
+        return result
+
+    def next_n(self, n):
+        """Get next n full logical lines."""
+        results = []
+        for _ in range(n):
+            try:
+                results.append(next(self))
+            except StopIteration:
+                break
+        return results
+
+    def peek(self):
+        if self.i >= len(self.lines):
+            return None
+        return self.lines[self.i].line
+
+    def has_next(self):
+        return self.i < len(self.lines)
+
+    def comment_cont_block(self, index: Optional[int] = None):
+        old_index = index if index else self.start_index
+        self.logger.debug(f"Commenting {old_index} -> {self.i}(excl)")
+        for ln in range(old_index, self.i):
+            self.lines[ln].commented = True
+
+    def consume_until(
+        self,
+        end_pattern: re.Pattern,
+        start_pattern: Optional[re.Pattern],
+    ):
+        self.logger.debug(
+            f"(consume_until) patterns:\n {start_pattern}\n {end_pattern}"
+        )
+        results = []
+        ln: int = -1
+        nesting = 0
+        while self.has_next():
+            full_line, ln = next(self)
+            results.append(full_line)
+            if start_pattern and start_pattern.match(full_line):
+                nesting += 1
+            if end_pattern.match(full_line):
+                if nesting == 0:
+                    self.logger.debug(f"(consume_until) final ln: {ln}, {full_line}")
+                    break
+                else:
+                    nesting -= 1
+
+        return results, ln
+
+
+@dataclass
+class Pass:
+    pattern: re.Pattern
+    fn: Callable[[ParseState, logging.Logger], None]
+    name: Optional[str] = None
+
+
+class PassManager:
+    """
+    Class for managing regex passes to modify_file
+    """
+
+    def __init__(self, logger):
+        self.passes: list[Pass] = []
+        self.logger: Logger = logger
+
+    def add_pass(
+        self,
+        pattern: re.Pattern,
+        fn: Callable[[ParseState, Logger], None],
+        name: Optional[str] = None,
+    ):
+        self.passes.append(Pass(pattern, fn, name))
+
+    def remove_pass(self, name: str):
+        self.passes = [p for p in self.passes if p.name != name]
+
+    def run(self, state: ParseState):
+        self.logger.debug(f"Iterating over file with {len(state.line_it.lines)}")
+        for full_line, _ in state.line_it:
+            # ln in LineTuple always points to original loc. line_it.i is cpp_ln if applicable
+            # seems a little circuitous but makes state management easy
+            start_index = state.line_it.start_index
+            orig_ln = state.line_it.lines[start_index].ln
+            status = state.line_it.lines[start_index].commented
+            if not full_line or status:
+                continue
+            state.curr_line = LineTuple(line=full_line, ln=orig_ln)
+            for p in self.passes:
+                if p.pattern.search(full_line):
+                    self.logger.debug(f"Running pass: {p.name or p.fn.__name__}")
+                    p.fn(state, self.logger)
+                    break  # first match wins

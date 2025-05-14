@@ -55,3 +55,13 @@ Thumbs.db
 .sfdx/
 
 .fortls.json
+# Ignore CMake artifacts
+**/CMakeLists.txt.user
+**/CMakeLists.txt.cache
+**/CMakeFiles/
+**/cmake-build-*/
+*.cmake
+*.cmake.user
+**/build/
+schema.pdf
+schema.svg

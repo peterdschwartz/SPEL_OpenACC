@@ -4,6 +4,7 @@ from typing import NamedTuple
 
 from scripts.analyze_subroutines import Subroutine
 from scripts.DerivedType import DerivedType
+from scripts.utilityFunctions import Variable
 
 
 class DtypeVarTuple(NamedTuple):
@@ -38,6 +39,8 @@ def aggregate_dtype_vars(
                     node_sub.elmtype_access_sum,
                     dtype_info_set,
                 )
+    check_inst_active_consistency(type_dict)
+    set_bounds_active(type_dict, inst_to_dtype_map)
     return
 
 
@@ -60,7 +63,7 @@ def set_active_variables(
     for var in instance_member_vars:
         dtype, component = var.split("%")
         dtype = regex_paren.sub("", dtype)
-        if "bounds" in dtype:
+        if "bounds" in dtype or "clumpfilter" in dtype:
             continue
         type_name = type_lookup[dtype]
         type_dict[type_name].active = True
@@ -93,3 +96,43 @@ def set_active_variables(
                 inst.active = True
 
     return None
+
+
+def check_inst_active_consistency(type_dict: dict[str, DerivedType]):
+    """ """
+    dtypes_with_active_fields = set()
+    for dtype in type_dict.values():
+        for field_var in dtype.components.values():
+            if field_var.active:
+                dtypes_with_active_fields.add(dtype.type_name)
+    for dtype in type_dict.values():
+        for inst in dtype.instances.values():
+            if inst.active and dtype.type_name not in dtypes_with_active_fields:
+                print(
+                    f"WARNING -- {dtype.type_name}::{inst.name} active but no fields are!"
+                )
+
+    return
+
+
+def set_bounds_active(type_dict: dict[str, DerivedType], inst_map: dict[str, str]):
+    """
+    Need to hard-code bounds info for subgrid initialization?
+    """
+
+    regex = re.compile(r"((beg|end)(g|l|t|c|p))\b")
+
+    for field in type_dict["bounds_type"].components.values():
+        if regex.match(field.name):
+            field.active = True
+    type_dict["bounds_type"].instances["bounds"] = Variable(
+        type="bounds_type",
+        name="bounds",
+        dim=0,
+        ln=0,
+        declaration="decompmod",
+        subgrid="?",
+        active=True,
+    )
+    inst_map["bounds"] = "bounds_type"
+    return

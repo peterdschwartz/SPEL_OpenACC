@@ -1,12 +1,12 @@
 program main()
 
 use shr_kind_mod, only: r8 => shr_kind_r8
-use update_accMod
+use UpdateParamsAccMod, only: update_params_acc
 use elm_varctl
 use filterMod
 !!use decompMod, only: get_clump_bounds_gpu, gpu_clumps, gpu_procinfo, init_proc_clump_info
 use decompMod, only: get_proc_bounds, get_clump_bounds, procinfo, clumps
-use verificationMod
+use ReadWriteMod, only : write_elmtypes
 use decompMod, only: bounds_type
 #ifdef _CUDA
 use cudafor
@@ -34,10 +34,15 @@ real :: startt, stopt
 real(r8), allocatable :: icemask_dummy_arr(:)
 !#VAR_DECL
 
-
 !========================== Initialize/Allocate variables =======================!
 !First, make sure the right number of inputs have been provided
-IF (COMMAND_ARGUMENT_COUNT() == 1) THEN
+
+IF (COMMAND_ARGUMENT_COUNT() == 0) THEN
+   WRITE (*, *) 'ONE COMMAND-LINE ARGUMENT DETECTED, Defaulting to 1 site per clump'
+   clump_input = 1
+   pproc_input = 1 !1 site per clump
+
+elseIF (COMMAND_ARGUMENT_COUNT() == 1) THEN
    WRITE (*, *) 'ONE COMMAND-LINE ARGUMENT DETECTED, Defaulting to 1 site per clump'
    call get_command_argument(1, clump_input_char)
    READ (clump_input_char, *) clump_input
@@ -51,10 +56,9 @@ ELSEIF (COMMAND_ARGUMENT_COUNT() == 2) THEN
      !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 END IF
 
-call elm_init(clump_input, pproc_input, dtime_mod, year_curr)
+call elm_init(clump_input, pproc_input, dtime_mod, year_curr, bounds_proc)
 declin = -0.4030289369547867
 step_count = 0
-nclumps = procinfo%nclumps
 print *, "number of clumps", nclumps
 print *, "step:", step_count
 
@@ -66,7 +70,7 @@ if (step_count == 0) then
    istat = cudaMemGetInfo(free1, total)
    print *, "Free1:", free1
 #endif
-   call update_acc_variables()
+   call update_params_acc()
 
    !Note: copy/paste enter data directives here for FUT.
    !      Will make this automatic in the future
@@ -74,8 +78,6 @@ if (step_count == 0) then
 
    call get_proc_bounds(bounds_proc)
    ! Calculate filters on device
-   allocate (icemask_dummy_arr(begg:endg))
-   icemask_dummy_arr(:) = 0.d0
    !call setProcFilters(bounds_proc, proc_filter, .false., icemask_dummy_arr)
 
 #if _CUDA
@@ -109,6 +111,7 @@ declinp1 = -0.4023686267583503
 #define gpuflag 0
 #endif
 
+nclumps = procinfo%nclumps
 
 !$acc parallel loop independent gang vector default(present) private(bounds_clump)
 do nc = 1, nclumps
@@ -117,11 +120,14 @@ do nc = 1, nclumps
 
 end do
 
+call write_elmtypes(1,"fut-results.nc", bounds_clump)
+
 #if _CUDA
 istat = cudaMemGetInfo(free1, total)
 print *, "free after kernel:", free1/1.E+9
 #endif
-deallocate (icemask_dummy_arr)
 print *, "done with unit-test execution"
+deallocate (clumps, procinfo%cid)
+deallocate (filter, filter_inactive_and_active)
 
 end Program main

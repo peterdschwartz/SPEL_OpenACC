@@ -303,5 +303,3 @@ def run(filename):
     generate_html(flattened_list, filename)
 
 
-file = "/mnt/c/users/mungs/Desktop/SPEL_OpenACC/scripts/../../repo/E3SM/components/elm/src/biogeochem/AllocationMod.F90"
-run(file)

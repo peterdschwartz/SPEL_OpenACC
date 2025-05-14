@@ -1,8 +1,5 @@
-import argparse
-import csv
 import pickle
 import sys
-from pprint import pprint
 
 import pandas as pd
 
@@ -85,22 +82,14 @@ def unpickle_unit_test(commit):
     return mod_dict, sub_dict, type_dict
 
 
-def export_table_csv():
+def export_table_csv(commit: str):
     """ """
-
-    desc = (
-        " Given input of commit name,"
-        "read pickle files and export csv files for database update"
-    )
-    parser = argparse.ArgumentParser(prog="export", description=desc)
-    parser.add_argument("-c", required=False, dest="commit")
-    args = parser.parse_args()
 
     mod_dict: dict[str, FortranModule] = {}
     sub_dict: dict[str, Subroutine] = {}
     type_dict: dict[str, DerivedType] = {}
 
-    mod_dict, sub_dict, type_dict = unpickle_unit_test(args.commit)
+    mod_dict, sub_dict, type_dict = unpickle_unit_test(commit)
 
     inst_to_dtype: dict[str, DerivedType] = {}
     for dtype in type_dict.values():
@@ -209,8 +198,7 @@ def export_sub_active_dtypes(
     for sub in sub_dict.values():
         module = sub.module
         sub_name = sub.name
-        elmtypes: dict[str, str] = sub.elmtype_r | sub.elmtype_w | sub.elmtype_rw
-        for dtype_var, stat in elmtypes.items():
+        for dtype_var, stat in sub.elmtype_access_sum.items():
             if "%" not in dtype_var:
                 continue
             inst, field = dtype_var.split("%")

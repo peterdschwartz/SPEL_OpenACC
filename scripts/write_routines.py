@@ -1,38 +1,47 @@
 from __future__ import annotations
 
+import logging
 import re
 import subprocess as sp
 import sys
+import textwrap
 from collections import namedtuple
-from typing import TYPE_CHECKING, Dict
+from typing import TYPE_CHECKING, Dict, Iterable
 
+import scripts.io.helper as hio
 from scripts.analyze_subroutines import Subroutine
+from scripts.edit_files import macros
 from scripts.fortran_modules import get_module_name_from_file
+# from scripts.io.hdf5_io import (generate_constants_io_hdf5,
+#                                 generate_elmtypes_io_hdf5)
+from scripts.io.netcdf_io import (generate_constants_io_netcdf,
+                                  generate_elmtypes_io_netcdf, generate_verify)
+from scripts.logging_configs import get_logger
 from scripts.mod_config import (ELM_SRC, PHYSICAL_PROP_TYPE_LIST, _bc,
-                                elm_dir_regex, preproc_list, shr_dir_regex,
                                 spel_mods_dir, spel_output_dir,
                                 unit_test_files)
+from scripts.types import LineTuple, SubInit
 from scripts.utilityFunctions import (Variable, comment_line,
                                       find_file_for_subroutine, getArguments,
-                                      line_unwrapper)
+                                      line_unwrapper, unwrap_section)
 
 if TYPE_CHECKING:
     from scripts.DerivedType import DerivedType
-TAB_WIDTH = 2
-indent = 1
+    TypeDict = dict[str,DerivedType]
+InstToDTypeMap = dict[str,str]
+SubDict = dict[str,Subroutine]
 
-
-def set_indent(mode):
-    global indent
-    global TAB_WIDTH
-    match mode:
-        case "shift":
-            indent += 1
-        case "unshift":
-            indent -= 1
-        case "reset":
-            indent = 1
-    return " " * TAB_WIDTH * indent
+def adjust_bounds(bounds:str)->str:
+    """
+    Function that maps e.g., begx_all -> begx
+    """
+    subgrids = re.findall(r'(?<=beg|end)(g|c|p|t|l)', bounds)
+    if not subgrids:
+        return bounds
+    sg_set: set[str] = set(subgrids)
+    assert len(sg_set) == 1, "Variable is allocated over multiple subgrids!"
+    s = sg_set.pop()
+    return re.sub(rf'(beg|end){s}\w+\b',lambda m: f"{m.group(1)}{s}",bounds)
 
 
 def get_delta_from_dim(dim, delta):
@@ -85,72 +94,135 @@ def get_delta_from_dim(dim, delta):
 
     return newdim
 
+def generate_cmake(files: list[str], case_dir: str):
+    """
+    Generates a CMakeLists.txt file for compiling unit-test 
+    using cmake
+    """
+    from scripts.edit_files import macros
+    exe_name = "elmtest"
 
-def generate_makefile(files, case_dir):
+    cmake_script = textwrap.dedent(f"""
+    cmake_minimum_required(VERSION 3.20)
+    project(ELM-UnitTest LANGUAGES Fortran)
+
+    option(DBG "Enable Debug mode" OFF)
+    option(GPU "Enable OpenACC (GPU) support" OFF)
+
+    set(CMAKE_VERBOSE_MAKEFILE ON)
+    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+    set(CMAKE_Fortran_FLAGS "" CACHE STRING "Fortran Compiler Flags" FORCE)
+    message(STATUS "DBG is ${{DBG}}")
+    if (DBG)
+        message(STATUS "Debug build")
+        set(CMAKE_Fortran_FLAGS "${{CMAKE_Fortran_FLAGS}} -g -O0 -Mchkptr -Mchkstk" CACHE STRING "Fortran Compiler Flags" FORCE)
+    else()
+        message(STATUS "Release build")
+        set(CMAKE_Fortran_FLAGS "${{CMAKE_Fortran_FLAGS}} -fast")
+    endif()
+    if (GPU)
+        message(STATUS "Enabling OpenACC GPU support")
+        set(OPENACC_FLAGS "-gpu -Minfo=accel -cuda")
+        # Append to existing flags for each build type
+        set(CMAKE_Fortran_FLAGS "${{CMAKE_Fortran_FLAGS}} ${{OPENACC_FLAGS}}" CACHE STRING "Fortran Compiler Flags" FORCE)
+    endif()
+
+
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(NetCDFF REQUIRED netcdf-fortran)
+
+    file(GLOB SOURCES "*.F90")
+    add_executable({exe_name} ${{SOURCES}})
+    include_directories(${{NetCDFF_INCLUDE_DIRS}})
+    target_link_directories({exe_name} PRIVATE ${{NetCDFF_LIBRARY_DIRS}})
+    target_link_libraries({exe_name} PRIVATE ${{NetCDFF_LIBRARIES}})
+
+    find_package(MPI REQUIRED)
+    if (MPI_FOUND)
+        include_directories(${{MPI_Fortran_INCLUDE_PATH}})
+        target_link_libraries({exe_name} PRIVATE MPI::MPI_Fortran)
+    endif()
+
+    target_compile_definitions({exe_name} PRIVATE {" ".join(macros)})
+    message(STATUS "Final Fortran flags: ${{CMAKE_Fortran_FLAGS}}")
+    """)
+
+    with open(f"{case_dir}/CMakeLists.txt", "w") as cmake_file:
+        cmake_file.writelines(cmake_script)
+
+
+def generate_makefile(files: list[str], case_dir: str):
     """
     This function takes the list of needed files
     and generates a makefile and finally saves it in the case dir
     """
-    from edit_files import macros
 
-    noF90 = [elm_dir_regex.sub("", f) for f in files]
-    noF90 = [shr_dir_regex.sub("", f) for f in noF90]
+    noF90 = [f.split("/")[-1] for f in files]
     object_list = [f.replace(".F90", ".o") for f in noF90]
 
-    FC = "nvfortran"
+    FC = "mpifort"
     FC_FLAGS_ACC = " -gpu=deepcopy -Minfo=accel -acc -cuda\n"
     FC_FLAGS_DEBUG = " -g -O0 -Mbounds -Mchkptr -Mchkstk\n"
-    # MODEL_FLAGS = " -DMODAL_AER "
     MODEL_FLAGS = "-D" + " -D".join(macros)
-
-    # Get complete preproccesor flags:
-    for f in noF90:
-        if f in preproc_list:
-            temp = f.upper()
-            MODEL_FLAGS = MODEL_FLAGS + " -D" + temp
 
     MODEL_FLAGS = MODEL_FLAGS + "\n"
 
-    ofile = open(f"{case_dir}/Makefile", "w")
-    ofile.write("FC= " + FC + "\n")
-    ofile.write("FC_FLAGS_ACC= " + FC_FLAGS_ACC)
-    ofile.write("FC_FLAGS_DEBUG = " + FC_FLAGS_DEBUG)
-    ofile.write("MODEL_FLAGS= " + MODEL_FLAGS)
-    ofile.write('INCLUDE_DIR = "${CURDIR}"\n')
-    ofile.write("FC_FLAGS = $(FC_FLAGS_DEBUG) $(MODEL_FLAGS)" + "\n")
-    ofile.write("TEST = $(findstring acc,$(FC_FLAGS))\n")
-
-    # Create string of ordered objct files.
     unit_test_objs = " ".join(unit_test_files)
     objs = " ".join(object_list)
-    ofile.write("objects = " + objs + " " + unit_test_objs + "\n")
 
-    ofile.write("elmtest.exe : $(objects)" + "\n")
-    ofile.write("\t" + "$(FC) $(FC_FLAGS) -o elmtest.exe $(objects)" + "\n")
-    ofile.write("\n\n")
-    ofile.write("#.SUFFIXES: .o .F90" + "\n")
+
+    lines: list[str] = [
+        # Extract a candidate directory from the PATH that contains 'hdf5'
+        "HDF5_DIR := $(shell echo $$PATH | awk -F: '{for(i=1;i<=NF;i++){if($$i ~ /hdf5/){print $$i; exit}}}')\n",
+        "HDF5_BASE := $(shell dirname $(HDF5_DIR))\n",
+        "HDF5_INC := $(HDF5_BASE)/include\n",
+        "HDF5_LIB := $(HDF5_BASE)/lib\n",
+        "ifeq ($(HDF5_DIR),)\n",
+        "$(info Couldn't find hdf5 in path)\n",
+        "else\n",
+        "$(info HDF5_DIR: $(HDF5_DIR))\n",
+        "endif\n",
+        "FC= " + FC + "\n",
+        "FC_FLAGS_ACC= " + FC_FLAGS_ACC,
+        "FC_FLAGS_DEBUG = " + FC_FLAGS_DEBUG,
+        "MODEL_FLAGS= " + MODEL_FLAGS,
+        'INCLUDE_DIR = "${CURDIR}"\n',
+        "HDF5_LDFLAGS = -L$(HDF5_LIB) -lhdf5_fortran -lhdf5\n",
+        "FC_FLAGS = $(FC_FLAGS_DEBUG) $(MODEL_FLAGS) -I$(HDF5_INC)\n",
+        "TEST = $(findstring acc,$(FC_FLAGS))\n\n",
+        # Create string of ordered objct files.
+        f"objects = {objs} {unit_test_objs}\n",
+        "elmtest.exe : $(objects)\n",
+        "\t$(FC) $(FC_FLAGS) -o elmtest.exe $(objects) $(HDF5_LDFLAGS)\n\n",
+        "#.SUFFIXES: .o .F90\n",
+    ]
+
+
     # These files do not need to be compiled with ACC flags or optimizations
     # Can cause errors or very long compile times
-    noopt_list = ["fileio_mod", "ReadConstantsMod", "readMod", "duplicateMod"]
+    noopt_list = ["duplicateMod"]
     for f in noopt_list:
-        ofile.write(f"{f}.o : {f}.F90" + "\n")
-        ofile.write("\t" + "$(FC) -O0 -c $(MODEL_FLAGS) $<" + "\n")
+        lines.append(f"{f}.o : {f}.F90\n")
+        lines.append("\t$(FC) -O0 -c $(MODEL_FLAGS) $<\n")
 
-    ofile.write("%.o : %.F90" + "\n")
-    ofile.write("\t" + "$(FC) $(FC_FLAGS) -c -I $(INCLUDE_DIR) $<" + "\n")
+    lines.extend([
+        "%.o : %.F90\n",
+        "\t$(FC) $(FC_FLAGS) -c -I $(INCLUDE_DIR) $<\n",
+        "ifeq (,$(TEST))\n",
+        "verificationMod.o : verificationMod.F90\n",
+        "\t$(FC) -O0 -c $<\n",
+        "else\n",
+        "verificationMod.o : verificationMod.F90\n",
+        "\t$(FC) -O0 -gpu=deepcopy -acc -c $<\n",
+        "endif\n\n",
+         ".PHONY: clean\n" ,
+         "clean:\n" ,
+         "\trm -f *.mod *.o *.exe\n" ,
+    ])
 
-    ofile.write("ifeq (,$(TEST))\n")
-    ofile.write("verificationMod.o : verificationMod.F90\n")
-    ofile.write("\t" + "$(FC) -O0 -c $<\n")
-    ofile.write("else\n")
-    ofile.write("verificationMod.o : verificationMod.F90\n")
-    ofile.write("\t" + "$(FC) -O0 -gpu=deepcopy -acc -c $<\n")
-    ofile.write("endif\n")
-
-    ofile.write("\n\n" + ".PHONY: clean" + "\n")
-    ofile.write("clean:" + "\n")
-    ofile.write("\t" + "rm -f *.mod *.o *.exe" + "\n")
-    ofile.close()
+    with open(f"{case_dir}/Makefile", "w") as ofile:
+        ofile.writelines(lines)
 
 
 def write_elminstMod(typedict, case_dir):
@@ -188,8 +260,8 @@ def clean_use_statements(mod_list, file, case_dir):
     lines = ifile.readlines()
     ifile.close()
 
-    noF90 = [elm_dir_regex.sub("", f) for f in mod_list]
-    noF90 = [shr_dir_regex.sub("", f) for f in noF90]
+    noF90 = [f.split("/")[-1] for f in mod_list]
+    noF90 = [f.split("/")[-1] for f in noF90]
 
     # Doesn't account for module names not being the same as file names
     noF90 = [f.replace(".F90", "") for f in noF90]
@@ -217,8 +289,8 @@ def clean_use_statements(mod_list, file, case_dir):
         ofile.writelines(lines)
 
 
-def insert_at_token(lines, token, lines_to_add):
-    regex_token = re.compile(r"^\s*({})".format(token))
+def insert_at_token(lines: list[str], token: str, lines_to_add: Iterable[str]):
+    regex_token = re.compile(rf"^\s*({token})")
     ln = 0
     token_line = 0
     found_token = False
@@ -233,7 +305,7 @@ def insert_at_token(lines, token, lines_to_add):
             ln += 1
 
     if token_line == 0:
-        print("Error: could find '!#USE_START' in main.F90")
+        print(f"Error: could find {token} in main.F90")
         sys.exit(1)
 
     for line_add in lines_to_add:
@@ -255,6 +327,7 @@ def find_parent_subroutine_call(
     manual modification may be required
     """
 
+    logger = get_logger("WriteRoutines",level=logging.INFO)
     search_file = ELM_SRC
     mods_to_add = []
     var_decl_to_add = []
@@ -269,40 +342,47 @@ def find_parent_subroutine_call(
         call_ln = int(output[1]) - 1
 
         ifile = open(filename, "r")
-        lines = ifile.readlines()
+        raw_lines = ifile.readlines()
         ifile.close()
+        mod_lines = unwrap_section(raw_lines,startln=0)
 
         _, mod_name = get_module_name_from_file(filename)
 
-        ct = call_ln
-        call_string, ct = line_unwrapper(lines, ct)
-        delta_ln = ct - call_ln + 1
-        calls.extend(lines[call_ln : call_ln + delta_ln])
-        args = getArguments(call_string)
+        idx, call_string = next(((i, el) for i,el in enumerate(mod_lines) if el.ln == call_ln), (None,None))
+        if not call_string or not idx or call_ln != mod_lines[idx].ln:
+            logger.error(f"Couldn't match call_string for {name}. Expected call_ln {call_ln} -- got {mod_lines[idx].ln}")
+            sys.exit(1)
+        calls.append(call_string.line)
+        args = getArguments(call_string.line)
 
         # Search backwards from subroutine call to get the calling subroutine :
         subname = None
-        for ln in range(call_ln, -1, -1):
-            line = lines[ln]
+        for ln in range(idx, -1, -1):
+            line = mod_lines[ln].line
             match_sub = re.search(r"^\s*(subroutine)\s+", line)
             if match_sub:
-                full_line, _ = line_unwrapper(lines, ln)
                 split_str = match_sub.group().strip()
-                subname = full_line.split(split_str)[1].split("(")[0].strip()
-                print("Found Subroutine:\n", subname)
+                subname = line.split(split_str)[1].split("(")[0].strip()
+                logger.info(f"Found Subroutine: {subname}\n")
                 break
 
         if not subname:
-            print(f"Error::Couldn't find calling subroutine for {sub.name}")
+            logger.error(f"Error::Couldn't find calling subroutine for {sub.name}")
             sys.exit(1)
         fn, startl, endl = find_file_for_subroutine(name=subname, fn=filename)
-        parent_sub = Subroutine(
+        sub_init = SubInit(
             name=subname,
             mod_name=mod_name,
             file=fn,
             start=startl,
             end=endl,
+            mod_lines=mod_lines,
+            function=None,
+            cpp_start=None,
+            cpp_end=None,
+            cpp_fn="",
         )
+        parent_sub = Subroutine(init_obj=sub_init)
 
         args_as_vars = {}
         args_as_instances = {}
@@ -336,7 +416,7 @@ def find_parent_subroutine_call(
                 args_as_vars[arg] = parent_sub.LocalVariables["scalars"][arg]
             else:
                 # Assume it's a derived type removed for fut purposes (ie, alm_fates)
-                print(
+                logger.info(
                     _bc.WARNING + f"Can't find {arg} (non-udt global var?)" + _bc.ENDC
                 )
                 args_as_vars[arg] = Variable(
@@ -376,10 +456,9 @@ def adjust_call_sig(args, calls, num_filter_members):
     """
     Function to replace typical elm variables (ie, filters)
     """
-    regex_filter = re.compile(r"\b(filter_)")
+    regex_filter = re.compile(r"\b(filter_)\w+")
     filter_member_str = "|".join(num_filter_members)
     regex_numf = re.compile(r"\b({})\b".format(filter_member_str))
-    print("numf:", filter_member_str)
 
     adj_args = args[:]
     adj_calls = calls[:]
@@ -389,16 +468,16 @@ def adjust_call_sig(args, calls, num_filter_members):
         if m_f:
             adj_args.remove(decl)
         elif m_numf:
+            print(f"removing: {decl} matched {m_numf.group()}")
             adj_args.remove(decl)
         elif "bounds" in decl:
             adj_args.remove(decl)
 
     for i, el in enumerate(calls):
-        adj_calls[i] = adj_calls[i].replace("bounds", "bounds_clump")
-        adj_calls[i] = regex_filter.sub("filter(nc)%", adj_calls[i])
-        m_numf = regex_numf.findall(el)
-        for repl in m_numf:
-            adj_calls[i] = adj_calls[i].replace(repl, f"filter(nc)%{repl}")
+        if re.search("\b(bounds)\b",adj_calls[i]):
+            adj_calls[i] = adj_calls[i].replace("bounds", "bounds_clump")
+        if regex_filter.search(adj_calls[i]):
+            adj_calls[i] = adj_calls[i].replace("filter_","filter(nc)")
 
     return adj_args, adj_calls
 
@@ -413,10 +492,10 @@ def get_filter_members(filter_type: DerivedType):
 
 
 def prepare_main(
-        subroutines: dict[str,Subroutine],
-        type_dict: dict[str,DerivedType],
-        instance_to_type: dict[str,str],
-        casedir:str,
+    subroutines: dict[str,Subroutine],
+    type_dict: dict[str,DerivedType],
+    instance_to_type: dict[str,str],
+    casedir:str,
 ):
     """
     Function to insert USE dependencies into main.F90 and subroutine calls for the FUT subs
@@ -447,6 +526,19 @@ def prepare_main(
         token=call_token,
         lines_to_add=reversed(adj_calls),
     )
+
+    active_inst: set[str] = set()
+    for dtype in type_dict.values():
+        for instance in dtype.instances.values():
+            if instance.active:
+                active_inst.add(instance.name)
+
+    copyin_lines: list[str] = ["!$acc enter data copyin(& \n"]
+    for el in sorted(active_inst):
+        copyin_lines.append(f"!$acc& {el},&\n")
+    copyin_lines.append("!$acc& )\n")
+    lines = insert_at_token(lines=lines,token="!#ACC_COPYIN",lines_to_add=copyin_lines)
+
     with open(f"{casedir}/main.F90", "w") as iofile:
         iofile.writelines(lines)
 
@@ -454,45 +546,122 @@ def prepare_main(
 
 
 def prepare_unit_test_files(
-    inst_list,
-    type_dict,
-    files,
-    case_dir,
-    global_vars,
-    subroutines,
-    instance_to_type,
+    type_dict: TypeDict,
+    case_dir:str,
+    global_vars: dict[str,Variable],
+    subroutines:SubDict,
+    instance_to_type: InstToDTypeMap,
 ):
     """
     This function will prepare the use headers of main, initializeParameters,
     and readConstants.  It will also clean the variable initializations and
     declarations in main and elm_instMod
     """
+    non_param_vars = {v.name : v for v in global_vars.values() if not v.parameter }
     prepare_main(subroutines, type_dict, instance_to_type, case_dir)
-    create_constants_io(mode="r", global_vars=global_vars, casedir=case_dir)
-    create_constants_io(mode="w", global_vars=global_vars, casedir=case_dir)
-    clean_use_statements(mod_list=files, file="initializeParameters", case_dir=case_dir)
-    clean_use_statements(mod_list=files, file="elm_initializeMod", case_dir=case_dir)
-    clean_use_statements(mod_list=files, file="update_accMod", case_dir=case_dir)
-    allocations_to_add = create_type_allocators(type_dict, case_dir)
+    # Write DeepCopyMod for UnitTest
+    create_deepcopy_module(type_dict, case_dir, "DeepCopyMod")
+    generate_elmtypes_io_netcdf(type_dict, instance_to_type, case_dir)
+    generate_constants_io_netcdf(vars=non_param_vars, casedir=case_dir)
 
-    ifile = open(f"{case_dir}/elm_initializeMod.F90", "r")
+    # generate_constants_io_hdf5(vars=non_param_vars,casedir=case_dir)
+    # generate_elmtypes_io_hdf5(type_dict, instance_to_type, case_dir)
+    create_update_mod(non_param_vars, case_dir)
+
+    # OLD WAY
+    # create_constants_io(mode="r", global_vars=global_vars, casedir=case_dir)
+    # create_constants_io(mode="w", global_vars=global_vars, casedir=case_dir)
+    # clean_use_statements(mod_list=mod_list, file="initializeParameters", case_dir=case_dir)
+    # clean_use_statements(mod_list=mod_list, file="update_accMod", case_dir=case_dir)
+    prep_elm_init(type_dict, case_dir)
+
+    # create list of variables that should be used for verification.
+    verify_set: set[str] = {
+        key
+        for sub in subroutines.values()
+        for key, val in sub.elmtype_access_sum.items()
+        if val in ["w", "rw"]
+    }
+    generate_verify(verify_set, type_dict)
+
+
+    return
+
+def prep_elm_init(type_dict: TypeDict,case_dir: str):
+    """
+    Modifies elm_initializeMod.
+    """
+    # allocations_to_add = create_type_allocators(type_dict,case_dir)
+
+    ifile = open(f"{spel_mods_dir}/elm_initializeMod.F90", "r")
     lines = ifile.readlines()
     ifile.close()
 
-    type_init_token = "!#VAR_INIT_START"
-    lines = insert_at_token(
-        lines=lines, token=type_init_token, lines_to_add=allocations_to_add
-    )
+    # type_init_token = "!#VAR_INIT_START"
+    # lines = insert_at_token(
+    #     lines=lines, token=type_init_token, lines_to_add=allocations_to_add,
+    # )
+
+    active_instances = {
+        inst_var.name: inst_var
+        for dtype in type_dict.values()
+        for inst_var in dtype.instances.values()
+        if inst_var.active
+    }
+
+    tabs = hio.indent(hio.Tab.reset)
+    use_statements: set[str] = set()
+    for inst_var in active_instances.values():
+        stmt = f"{tabs}use {inst_var.declaration}, only: {inst_var.name}\n"
+        use_statements.add(stmt)
+
+    lines = insert_at_token(lines=lines,
+                            token="!#USE_START",
+                            lines_to_add=use_statements,)
 
     # write adjusted main to file in case dir
     with open(f"{case_dir}/elm_initializeMod.F90", "w") as of:
         of.writelines(lines)
 
-    # Write DeepCopyMod for UnitTest
-    create_deepcopy_module(type_dict, case_dir, "DeepCopyMod")
-
     return
 
+
+def create_update_mod(vars: dict[str, Variable], casedir: str):
+    tabs = hio.indent(hio.Tab.reset)
+    mod_name = "UpdateParamsAccMod"
+    fn = f"{mod_name}.F90"
+
+    sub_name = "update_params_acc"
+
+    lines: list[str]=[f"module {mod_name}\n"]
+    for var in vars.values():
+        stmt = f"{tabs}use {var.declaration}, only : {var.name}\n"
+        lines.append(stmt)
+
+    lines.extend([
+        f"{tabs}implicit none\n",
+        f"{tabs}public :: update_params_acc\n",
+        "contains\n\n",
+    ])
+
+    lines.append(f"{tabs}subroutine {sub_name}()\n")
+    tabs = hio.indent(hio.Tab.shift)
+    lines.append(rf"{tabs}!$acc update device(&\n")
+
+    for var in vars.values():
+        dim_str = ','.join([":" for i in range(var.dim)])
+        dim_str = f"({dim_str})" if dim_str else ""
+        lines.append(rf"{tabs}!$acc&   {var.name}{dim_str},&\n")
+    lines.append(f"{tabs}!$acc&  )\n\n")
+
+    tabs = hio.indent(hio.Tab.unshift)
+    lines.append(f"{tabs}end subroutine {sub_name}\n")
+    lines.append(f"end module {mod_name}\n")
+
+    with open(f"{casedir}/{fn}",'w') as ofile:
+        ofile.writelines(lines)
+
+    return
 
 def duplicate_clumps(typedict: dict[str,DerivedType]):
     """
@@ -651,6 +820,43 @@ def duplicate_clumps(typedict: dict[str,DerivedType]):
     file.write("end module\n")
     file.close()
 
+def create_init_params(global_vars: dict[str,Variable], casedir:str):
+    """
+    Function to write "InitializeParametersMod" to contain 
+    subroutine to allocate global variables in the unit-test.
+    """
+    mod_name = "InitializeParametersMod"
+    lines: list[str] = []
+    lines.append(f"module {mod_name}\n")
+
+    tabs = hio.indent(hio.Tab.reset)
+    use_statements: set[str] = set()
+    for gv in global_vars.values():
+        stmt = f"{tabs}use {gv.declaration}, only: {gv.name}\n"
+        use_statements.add(stmt)
+    lines.extend(list(use_statements))
+    lines.append(f"{tabs}implicit none\n")
+
+    lines.append(f"{tabs}contains\n")
+    sub_name = "read_dims_and_alloc_params"
+    tabs = hio.indent(hio.Tab.shift)
+    lines.append(f"{tabs}subroutine {sub_name}()\n")
+
+    tabs = hio.indent(hio.Tab.shift)
+    lines.append(f"{tabs}character(len=256) :: in_file=spel_constants.txt\n")
+    alloc_arrays = [ v for v in global_vars.values() if v.allocatable]
+
+    # Declare local variables for dimensions
+    for var in alloc_arrays:
+        dims = [ f"{var.name}_lb{i+1}" for i in range(var.dim)]
+        dims.extend( [ f"{var.name}_ub{i+1}" for i in range(var.dim)])
+        stmt = f"{tabs}integer :: {','.join(dims)}\n"
+        lines.append(stmt)
+
+
+
+    return
+
 
 def create_constants_io(mode, global_vars, casedir):
     """
@@ -660,7 +866,7 @@ def create_constants_io(mode, global_vars, casedir):
 
     tab = " " * TAB_WIDTH
     indent = 1
-    lines = []
+    lines: list[str] = []
     mod_name = filename.replace(".F90", "")
     lines.append(f"module {mod_name}\n")
     lines.append("implicit None\n")
@@ -876,10 +1082,10 @@ def create_read_vars(typedict):
 
 
 def create_pointer_type_sub(lines, dtype, all_active=False):
-    tabs = set_indent("reset")
+    tabs = hio.indent(hio.Tab.reset)
 
     lines.append(f"{tabs}subroutine set_pointers_{dtype.type_name}(this_type)\n")
-    tabs = set_indent("shift")
+    tabs = hio.indent(hio.Tab.shift)
     inst_dim = max([inst.dim for inst in dtype.instances.values()])
     dim_string = ""
     if inst_dim == 1:
@@ -902,8 +1108,29 @@ def create_pointer_type_sub(lines, dtype, all_active=False):
             print(f"WARNING::{dtype} pointers with inconsistent targets")
             sys.exit(1)
 
+def find_global_vars(dtype: DerivedType)->set[str]:
 
-def create_type_sub(lines, dtype: DerivedType, all_active=False):
+    bounds_to_search =[var.bounds for var in dtype.components.values() if var.active]
+    if not dtype.init_sub_ptr:
+        return []
+    global_vars = dtype.init_sub_ptr.active_global_vars
+    gv_str = "|".join(global_vars.keys())
+    regex_gvs = re.compile(rf"\b({gv_str})\b")
+
+    used_matches = [dim for dim in filter(lambda x: regex_gvs.search(x), bounds_to_search)]
+    use_statements: set[str] = set()
+    for m in used_matches:
+        m_var_names = regex_gvs.findall(m)
+        for varname in m_var_names:
+            if not varname:
+                continue
+            var = global_vars[varname]
+            stmt = f"use {var.declaration}, only: {varname}"
+            use_statements.add(stmt)
+
+    return use_statements
+
+def create_type_sub(lines: list[str], dtype: DerivedType, all_active:bool=False,):
     """
     Functiion that creates a subroutine to allocate
     the active members of dtype
@@ -912,10 +1139,16 @@ def create_type_sub(lines, dtype: DerivedType, all_active=False):
         * dtype : DerivedType obj of type to allocate
         * all_active : Allocate all members regardless of use in UnitTest
     """
-    tabs = set_indent("reset")
+    tabs = hio.indent(hio.Tab.reset)
 
     lines.append(f"{tabs}subroutine allocate_{dtype.type_name}(bounds,this_type)\n")
-    tabs = set_indent("shift")
+    tabs = hio.indent(hio.Tab.shift)
+
+    use_stmts = find_global_vars(dtype)
+    if use_stmts:
+        for stmt in use_stmts:
+            lines.append(f"{tabs}{stmt}\n")
+
     lines.append(f"{tabs}type(bounds_type), intent(in) :: bounds\n")
     inst_dim = max([inst.dim for inst in dtype.instances.values()])
     if inst_dim == 0:
@@ -942,7 +1175,7 @@ def create_type_sub(lines, dtype: DerivedType, all_active=False):
     if inst_dim == 1:
         lines.append(f"{tabs}N=size(this_type)\n")
         lines.append(tabs + "do i = 1, N\n")
-        tabs = set_indent("shift")
+        tabs = hio.indent(hio.Tab.shift)
     inst_name = "this_type" if inst_dim == 0 else "this_type(i)"
     for member_var in dtype.components.values():
         active = member_var.active
@@ -953,7 +1186,7 @@ def create_type_sub(lines, dtype: DerivedType, all_active=False):
                 dim_li = [":" for i in range(0, member_var.dim)]
                 dim_string = ",".join(dim_li)
                 dim_string = f"({dim_string})"
-                bounds = member_var.bounds
+                bounds = adjust_bounds(member_var.bounds)
                 statement = f"{tabs}allocate({inst_name}%{field_name}{bounds});"
                 lines.append(statement)
             elif member_var.ptrscalar:
@@ -978,12 +1211,15 @@ def create_type_sub(lines, dtype: DerivedType, all_active=False):
             lines.append(init_statement)
 
     # End subroutine:
-    tabs = set_indent("unshift")
+    tabs = hio.indent(hio.Tab.unshift)
     lines.append(f"{tabs}end subroutine allocate_{dtype.type_name}\n\n")
     return lines
 
 
-def create_type_allocators(type_dict, casedir):
+def create_type_allocators(
+        type_dict: TypeDict,
+        casedir: str,
+)-> set[str]:
     """
     function to creates a fortran module to allocate the active
     members of derived types
@@ -998,11 +1234,11 @@ def create_type_allocators(type_dict, casedir):
 
     skip_types = [
         "clumpfilter",
-        "vegetation_physical_properties",
-        "column_physical_properties",
-        "landunit_physical_properties",
-        "gridcell_physical_properties_type",
-        "topounit_physical_properties",
+        # "vegetation_physical_properties",
+        # "column_physical_properties",
+        # "landunit_physical_properties",
+        # "gridcell_physical_properties_type",
+        # "topounit_physical_properties",
     ]
     lines.append(f"module {filename}\n")
     lines.append(f"{tabs}use elm_varcon\n")
@@ -1047,14 +1283,13 @@ def create_type_allocators(type_dict, casedir):
         ofile.writelines(lines)
 
     # Return list of subroutine calls to be inserted in elm_init
-    allocations = []
+    allocations: set[str] = set()
     tabs = " " * 6
     for inst in active_instances.values():
         if inst.type in skip_types or "c13" in inst.name or "c14" in inst.name:
             continue
         statement = f"{tabs}call allocate_{inst.type}(bounds_proc,{inst.name})\n"
-        if statement not in allocations:
-            allocations.append(statement)
+        allocations.add(statement)
 
     return allocations
 
@@ -1063,12 +1298,14 @@ def create_deepcopy_subroutine(lines, dtype: DerivedType, all_active=False):
     """
     Function to generate a subroutine for dtype that manually
     copies over the active members of dtype.
-        if all_active = True, all members are considered active
+        if all_active, all members are considered active
     """
-    tabs = set_indent("reset")
+    tabs = hio.indent(hio.Tab.reset)
     array1d = False
     scalar = False
     for inst in dtype.instances.values():
+        if not inst.active:
+            continue
         if inst.dim == 0:
             scalar = True
         elif inst.dim == 1:
@@ -1081,10 +1318,11 @@ def create_deepcopy_subroutine(lines, dtype: DerivedType, all_active=False):
         for field in dtype.components.values()
         if field.active or all_active
     ]
+
     if scalar:
         subname = f"deepcopy_{dtype.type_name}"
         lines.append(f"{tabs}subroutine {subname}(this_type)\n")
-        tabs = set_indent("shift")
+        tabs = hio.indent(hio.Tab.shift)
         lines.append(f"{tabs}type({dtype.type_name}), intent(inout) :: this_type\n")
         lines.append(f"{tabs}!$acc enter data copyin(this_type)\n")
         lines.append(f"{tabs}!$acc enter data copyin(&\n")
@@ -1103,19 +1341,19 @@ def create_deepcopy_subroutine(lines, dtype: DerivedType, all_active=False):
             else:
                 lines.append(")")
         lines.append("\n")
-        tabs = set_indent("unshift")
+        tabs = hio.indent(hio.Tab.unshift)
         lines.append(f"{tabs}end subroutine {subname}\n")
 
     if array1d:
         subname = f"deepcopy_{dtype.type_name}_array"
         lines.append(f"{tabs}subroutine {subname}(this_type)\n")
-        tabs = set_indent("shift")
+        tabs = hio.indent(hio.Tab.shift)
         lines.append(f"{tabs}type({dtype.type_name}), intent(inout) :: this_type(:)\n")
         lines.append(f"{tabs}integer :: i,N\n")
         lines.append(f"{tabs}N=size(this_type)\n")
         lines.append(f"{tabs}!$acc enter data copyin(this_type(:))\n")
         lines.append(tabs + "do i = 1, N\n")
-        tabs = set_indent("shift")
+        tabs = hio.indent(hio.Tab.shift)
 
         inst_name = "this_type(i)"
         lines.append(f"{tabs}!$acc enter data copyin(&\n")
@@ -1132,57 +1370,59 @@ def create_deepcopy_subroutine(lines, dtype: DerivedType, all_active=False):
             if not final_num:
                 lines.append(",&\n")
             else:
-                lines.append(")")
-        lines.append("\n")
-        tabs = set_indent("unshift")
+                lines.append(")\n")
+        tabs = hio.indent(hio.Tab.unshift)
         lines.append("end do\n")
-        tabs = set_indent("unshift")
+        tabs = hio.indent(hio.Tab.unshift)
         lines.append(f"{tabs}end subroutine {subname}\n")
 
     return lines
 
 
-def create_deepcopy_module(type_dict, casedir, modname, all_active=False):
+def create_deepcopy_module(
+    type_dict: dict[str, DerivedType],
+    casedir: str,
+    modname: str,
+    all_active=False,
+):
     """
     Function to create subroutine(s) for performing a manual deepcopy
     """
-    tabs = set_indent("reset")
+    tabs = hio.indent("reset")
     lines = []
+    interface_name = "deepcopy_type"
 
     lines.append(f"module {modname}\n")
 
-    active_instances = {
-        inst_var.name: inst_var
-        for dtype in type_dict.values()
-        for inst_var in dtype.instances.values()
-        if inst_var.active or all_active
-    }
-    active_types = {inst_var.type: True for inst_var in active_instances.values()}
-
-    for type_name in active_types:
-        dtype = type_dict[type_name]
-        statement = f"{tabs}use {dtype.declaration},only: {type_name}\n"
+    active_types = {dtype for dtype in type_dict.values() if dtype.active}
+    for dtype in active_types:
+        statement = f"{tabs}use {dtype.declaration},only: {dtype.type_name}\n"
         if statement not in lines:
             lines.append(statement)
     lines.append(f"{tabs}implicit none\n")
 
-    for type_name in active_types:
-        statement = f"{tabs}public :: deepcopy_{type_name}\n"
+    # Create interface:
+    lines.append(f"{tabs}interface {interface_name}\n")
+    tabs = hio.indent("shift")
+    for dtype in active_types:
+        statement = f"{tabs}module procedure :: deepcopy_{dtype.type_name}\n"
         lines.append(statement)
+    tabs = hio.indent("unshift")
+    lines.append(f"{tabs}end interface deepcopy_type\n")
     lines.append("contains\n\n")
 
-    for type_name in active_types:
-        dtype = type_dict[type_name]
-        lines = create_deepcopy_subroutine(
-            lines=lines, dtype=dtype, all_active=all_active
+    for dtype in active_types:
+        create_deepcopy_subroutine(
+            lines=lines,
+            dtype=dtype,
+            all_active=all_active,
         )
 
-    lines.append(f"end module {modname}")
+    lines.append(f"end module {modname}\n")
 
     with open(f"{casedir}/{modname}.F90", "w") as ofile:
         ofile.writelines(lines)
     return None
-
 
 def create_write_read_functions(dtype: DerivedType, rw, ofile, gpu=False):
     """

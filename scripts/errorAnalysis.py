@@ -1,75 +1,80 @@
 from collections import namedtuple
 
 import numpy as np
+import xarray as xr
 from tabulate import tabulate
 
 # namedtuple for summary of errors
 Tally = namedtuple("Tally", ["name", "total", "rmse", "max"])
 
 
-def loadData_input(file, verbose):
-    """
-    This function loads the data from a verfication
-    module generated file.
+def load_data_netcdf(file, verbose):
+    """ """
 
-    Data in the text files are assummed to have the format:
-       <variable name>  <shape(var)>
-    """
-    import re
 
-    dtype_name_regex = re.compile(r"^\w+(%)\w+")
-    var_name = re.compile(r"^\w+")
-    varnames = []
-    vardict = {}
-    var_dims = {}
-    # Go through data file by reading in variable name / dimension
-    # and filling then read the it's values
-    EOF = len(file)
-    ln = 0
-    while ln < EOF:
-        line = file[ln]
-        line = line.strip()
-        # match current variable name and shape
-        match_dtypename = dtype_name_regex.search(line)
-        match_varname = var_name.search(line)
-        var = ""
-        if match_dtypename:
-            var = match_dtypename.group()
-        elif match_varname:
-            var = match_varname.group()
-        varnames.append(var)
-        # substitute varname out of line, so only the shape remains
-        line = line.replace(var, "").strip()
-        dims = line.split()
-        dims = [int(d) for d in dims]
-        var_dims[var] = dims
-        # Get total number of elements to be read:
-        size = 1
-        for dim in dims:
-            size *= dim
-        # Now read in 'size' elements:
-        current_el = 0
-        while current_el < size:
-            ln += 1
-            line = file[ln].strip()
-            data = line.split()
-            # Temporarily store data as a list. Use var_dims to reshape to numpy array
-            for x in data:
-                if x == "T":
-                    x = 1
-                elif x == "F":
-                    x = 0
-                vardict.setdefault(var, []).append(float(x))
-                current_el += 1
-        ln += 1
-        if verbose and ln < EOF:
-            print(f"finished reading in data for {var} {dims}. next line:\n{file[ln]}")
-
-    # Go through each var in vardict and convert to numpy array.
-    for var, vals in vardict.items():
-        vardict[var] = np.reshape(vals, tuple(var_dims[var]))
-
-    return vardict
+# def loadData_input(file, verbose):
+#     """
+#     This function loads the data from a verfication
+#     module generated file.
+#
+#     Data in the text files are assummed to have the format:
+#        <variable name>  <shape(var)>
+#     """
+#     import re
+#
+#     dtype_name_regex = re.compile(r"^\w+(%)\w+")
+#     var_name = re.compile(r"^\w+")
+#     varnames = []
+#     vardict = {}
+#     var_dims = {}
+#     # Go through data file by reading in variable name / dimension
+#     # and filling then read the it's values
+#     EOF = len(file)
+#     ln = 0
+#     while ln < EOF:
+#         line = file[ln]
+#         line = line.strip()
+#         # match current variable name and shape
+#         match_dtypename = dtype_name_regex.search(line)
+#         match_varname = var_name.search(line)
+#         var = ""
+#         if match_dtypename:
+#             var = match_dtypename.group()
+#         elif match_varname:
+#             var = match_varname.group()
+#         varnames.append(var)
+#         # substitute varname out of line, so only the shape remains
+#         line = line.replace(var, "").strip()
+#         dims = line.split()
+#         dims = [int(d) for d in dims]
+#         var_dims[var] = dims
+#         # Get total number of elements to be read:
+#         size = 1
+#         for dim in dims:
+#             size *= dim
+#         # Now read in 'size' elements:
+#         current_el = 0
+#         while current_el < size:
+#             ln += 1
+#             line = file[ln].strip()
+#             data = line.split()
+#             # Temporarily store data as a list. Use var_dims to reshape to numpy array
+#             for x in data:
+#                 if x == "T":
+#                     x = 1
+#                 elif x == "F":
+#                     x = 0
+#                 vardict.setdefault(var, []).append(float(x))
+#                 current_el += 1
+#         ln += 1
+#         if verbose and ln < EOF:
+#             print(f"finished reading in data for {var} {dims}. next line:\n{file[ln]}")
+#
+#     # Go through each var in vardict and convert to numpy array.
+#     for var, vals in vardict.items():
+#         vardict[var] = np.reshape(vals, tuple(var_dims[var]))
+#
+#     return vardict
 
 
 def compute_error(var, refdata, testdata, diff_log, verbose=False):

@@ -9,8 +9,8 @@ unittests_dir = spel_dir + "unit-tests/"
 spel_mods_dir = spel_dir + "SourceFiles/"
 spel_output_dir = scripts_dir + "/script-output/"
 
-# E3SM root directory. Assume it's cloned in same directory as SPEL
-E3SM_SRCROOT = spel_dir + "../repo/E3SM"
+# E3SM root directory.
+E3SM_SRCROOT = spel_dir + "../test_E3SM/"
 # path for modules shared by components (eg, shr_kind_mod)
 SHR_SRC = E3SM_SRCROOT + "/share/util/"
 ELM_SRC = E3SM_SRCROOT + "/components/elm/src/"  # elm source directory
@@ -42,37 +42,21 @@ regex_skip_string = re.compile(f"({dont_adjust_string})", re.IGNORECASE)
 # NOTE: These hardcoded lists should be deprecated by now?
 default_mods = ["subgridmod", "filtermod"]
 
-preproc_list = [
-    "AllocationMod",
-    "dynSubgridControlMod",
-    "CH4Mod",
-    "GapMortalityMod",
-    "PhotosynthesisMod",
-    "SharedParamsMod" "PhenologyMod",
-    "SnowSnicarMod",
-    "NitrifDenitrifMod",
-    "SoilLittDecompMod",
-    "DecompCascadeBGCMod",
-    "DecompCascadeCNMod",
-    "SoilLittVertTranspMod",
-    "SurfaceAlbedoMod",
-    "MaintenanceRespMod",
-    "SoilWaterMovementMod",
-]
-
 # list of files neeeded for all unit-tests
 unit_test_files = [
+    "H5InterfaceMod.o",
     "decompInitMod.o",
     "elm_instMod.o",
-    "fileio_mod.o",
-    "ReadConstantsMod.o",
-    "update_accMod.o",
-    "readMod.o",
-    "initializeParameters.o",
-    "UnitTestAllocatorMod.o",
+    # "fileio_mod.o",
+    # "initializeParameters.o",
+    # "UnitTestAllocatorMod.o",
+    # "update_accMod.o",
+    "FUTConstantsMod.o",
+    "ReadWriteMod.o",
     "duplicateMod.o",
     "verificationMod.o",
     "elm_initializeMod.o",
+    "UpdateParamsAccMod.o",
     "main.o",
 ]
 
