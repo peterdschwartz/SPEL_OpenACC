@@ -397,12 +397,41 @@ class LogicalLineIterator:
     def __iter__(self):
         return self
 
+    def reset(self):
+        self.i = 0
+        self.start_index = 0
+
+    def strip_comment(self) -> str:
+        in_string = None  # None, "'", or '"'
+        line = self.lines[self.i].line
+        result = []
+        i = 0
+        while i < len(line):
+            c = line[i]
+            if c in ('"', "'"):
+                if in_string is None:
+                    in_string = c
+                elif in_string == c:
+                    # handle escaped quote inside string
+                    if i + 1 < len(line) and line[i + 1] == c:
+                        result.append(c)  # add one quote, skip next
+                        i += 1
+                    else:
+                        in_string = None  # close string
+                result.append(c)
+            elif c == "!" and in_string is None:
+                break  # comment starts here
+            else:
+                result.append(c)
+            i += 1
+        return "".join(result)
+
     def __next__(self):
         if self.i >= len(self.lines):
             raise StopIteration
         self.start_index = self.i
-        current = self.lines[self.i]
-        full_line = current.line.split("!")[0]  # ignore comments
+
+        full_line = self.strip_comment()
         full_line = full_line.rstrip("\n").strip()
         while full_line.rstrip().endswith("&"):
             full_line = full_line.rstrip()[:-1].strip()
@@ -441,6 +470,7 @@ class LogicalLineIterator:
 
     def comment_cont_block(self, index: Optional[int] = None):
         old_index = index if index else self.start_index
+        self.logger.debug(f"Commenting {old_index} -> {self.i}(excl)")
         for ln in range(old_index, self.i):
             self.lines[ln].commented = True
 
@@ -459,15 +489,14 @@ class LogicalLineIterator:
             full_line, ln = next(self)
             results.append(full_line)
             if start_pattern and start_pattern.match(full_line):
-                self.logger.debug(f"increase nesting: {full_line}")
                 nesting += 1
             if end_pattern.match(full_line):
                 if nesting == 0:
+                    self.logger.debug(f"(consume_until) final ln: {ln}, {full_line}")
                     break
                 else:
                     nesting -= 1
 
-        self.logger.debug(f"(consume_until) final ln: {ln}")
         return results, ln
 
 
@@ -505,7 +534,9 @@ class PassManager:
             # seems a little circuitous but makes state management easy
             start_index = state.line_it.start_index
             orig_ln = state.line_it.lines[start_index].ln
-            self.logger.debug(f"Checking {orig_ln}")
+            status = state.line_it.lines[start_index].commented
+            if not full_line or status:
+                continue
             state.curr_line = LineTuple(line=full_line, ln=orig_ln)
             for p in self.passes:
                 if p.pattern.search(full_line):

@@ -212,7 +212,7 @@ def test_sub_parse(subtests):
             )
 
         assert (
-            len(active_vars) == 6
+            len(active_vars) == 7
         ), f"Didn't correctly find the active global variables:\n{active_vars}"
 
         for subname in expected_arg_status:

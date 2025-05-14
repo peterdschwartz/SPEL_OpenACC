@@ -90,11 +90,7 @@ bad_subroutines = [
 ]
 
 remove_subs = [
-    "restartvar",
-    "hist_addfld1d",
-    "hist_addfld2d",
-    "init_accum_field",
-    "extract_accum_field",
+    "restart",
     "prepare_data_for_em_ptm_driver",
     "prepare_data_for_em_vsfm_driver",
     "decompinit_lnd_using_gp",
@@ -183,13 +179,16 @@ def set_in_subroutine(state: ParseState,logger: Logger):
     match_gsmap = regex_gsmap.search(subname)
 
     # Remove if it's an IO routine
-    test_nlgsmap = match_gsmap 
     test_decompinit = bool(subname.lower() == "decompinit_lnd_using_gp")
-    if (match_remove and test_init) or test_nlgsmap or test_decompinit:
-        _, _ = state.line_it.consume_until(regex_end_sub, None)
+    remove = bool((match_remove and test_init) or match_gsmap or test_decompinit)
+    logger.debug(f"Match gsmap {match_gsmap} with pattern: {regex_gsmap.pattern} on {subname}\n"
+        f"remove: {remove}"
+                    )
+    if remove:
+        _, _ = state.line_it.consume_until(end_pattern=regex_end_sub, start_pattern=None)
         state.removed_subs.append(subname)
         state.in_sub = False
-        state.line_it.comment_cont_block(index=start_ln)
+        state.line_it.comment_cont_block(index=ct)
         sub_start = None
     state.sub_start = sub_start
     state.func_init = None
@@ -270,7 +269,8 @@ def handle_bad_inst(state: ParseState, logger: Logger):
             _, _ = state.line_it.consume_until(regex_do_end, regex_do_start)
             state.line_it.comment_cont_block(index=start_index)
         else:
-            # simple line just remove
+            logger.info(f"Commenting: {state.curr_line}")
+            # simple statement just remove
             set_comment(state, logger)
     elif match_decl and not state.in_sub:
         # global variable, just remove
@@ -294,8 +294,8 @@ def apply_comments(lines: list[LineTuple]) -> list[LineTuple]:
     return [ commentize(lt) for lt in lines ]
 
 def parse_bad_modules(
-    file_desc: ParseState,
-    verbose: bool=False,
+    state: ParseState,
+    logger: Logger,
 ) :
     """
     Comments out `use <bad_module>: ...` lines, updates bad_subroutines list.
@@ -304,42 +304,37 @@ def parse_bad_modules(
     global bad_modules
     # Build bad_modules pattern dynamically
     bad_mod_string = "|".join(bad_modules)
-    module_pattern = re.compile(rf"\s*use\s+\b({bad_mod_string}\b)", re.IGNORECASE)
+    module_pattern = re.compile(rf"\s*use\s+\b({bad_mod_string})\b", re.IGNORECASE)
 
-    i = 0
-    while i < len(file_desc.work_lines):
-        lt = file_desc.work_lines[i]
-        line = lt.line
-        m = module_pattern.search(line)
-        lt.commented = bool(m)
-        if m and ':' in line:
+    logger.debug(f"Module pattern: {module_pattern.pattern}")
+    for full_line, _ in state.line_it:
+        start_index = state.line_it.start_index
+        orig_ln = state.line_it.lines[start_index].ln
+        m = module_pattern.search(full_line)
+        if not m:
+            continue
+        if ':' in full_line:
             # If there are explicit component lists after ':'
-            comps = line.split(':', 1)[1].rstrip("\n")
-            lt.commented = True
-
-            # process continuation lines
-            while line.rstrip().endswith("&"):
-                i += 1
-                lt = file_desc.work_lines[i]
-                line = lt.line
-                comps += line.rstrip("\n")  # append continuation text
-                lt.commented = True
-
+            logger.debug(f"removing dep:\n{full_line}")
+            comps = full_line.split(':', 1)[1].rstrip("\n")
             # remove Fortran assignment(=) syntax
             comps = re.sub(r"\bassignment\(=\)\b", "", comps, flags=re.IGNORECASE)
-            cont = line.rstrip("\n").endswith("&")
             for el in comps.split(','):
                 el = el.strip()
                 # handle => renaming
                 if '=>' in el:
+                    # think this is backwards... 
                     name, alias = [x.strip() for x in el.split('=>',1)]
                     el = name if name.lower() == 'nan' else f"{name}|{alias}"
                 el = el.lower()
                 if el and el not in bad_subroutines:
                     bad_subroutines.append(el)
-            if not cont:
-                break
-        i+=1
+            # comment out matched statement
+            state.line_it.comment_cont_block(index=start_index)
+        else:
+            set_comment(state,logger)
+
+    state.line_it.reset()
 
     return
 
@@ -573,7 +568,8 @@ def remove_cpp_directives(cpp_lines: list[str], fn: str, logger: Logger) -> list
 
     orig_ln: Optional[int] = None
     target = os.path.abspath(fn)
-
+    remove_include = "shr_assert.h"
+    match_assert = False
     for i, line in enumerate(cpp_lines):
         # Match GCC line directive: # lineno "filename" flags
         m = re.match(r"#\s*(\d+)\s+\"(.*)\"", line)
@@ -581,10 +577,11 @@ def remove_cpp_directives(cpp_lines: list[str], fn: str, logger: Logger) -> list
             lineno = int(m.group(1)) - 1
             fname = m.group(2)
             # Normalize path
-            abs = os.path.abspath(fname)
             # Only map when returning to lines in our source file
             # Only treat fname as file if it exists on disk
             abs = os.path.abspath(fname) if os.path.exists(fname) else None
+            if abs and os.path.basename(abs) == remove_include:
+                match_assert = True
             orig_ln = lineno if abs == target else None
 
             continue
@@ -592,10 +589,13 @@ def remove_cpp_directives(cpp_lines: list[str], fn: str, logger: Logger) -> list
         # If current_orig set, map this preprocessed line to that orig line
         if orig_ln is not None:
             # capture the first encountered preprocessed text for that orig line
+            if match_assert:
+                work_lines.append(LineTuple(line=f"#include '{remove_include}'", ln=orig_ln-1, commented=True))
+                match_assert = False
             mapping[orig_ln] = i
-            work_lines.append(LineTuple(line=cpp_lines[i],ln=orig_ln))
+            work_lines.append(LineTuple(line=cpp_lines[i],ln=orig_ln,commented=False))
             orig_ln += 1
-    
+
     return work_lines
 
 
@@ -610,12 +610,15 @@ def modify_file(
     """
     Function that modifies the source code of the file
     Occurs after parsing the file for subroutines and modules
-    that need to be removed.
     """
     func_name = "( modify_file )"
     iter_logger = get_logger("LineIter")
     set_logger_level(logger=iter_logger, level=logging.INFO)
     set_logger_level(logger=pass_manager.logger, level=logging.INFO)
+    mod_debug = "???"
+    if mod_name == mod_debug:
+        set_logger_level(logger=pass_manager.logger, level=logging.DEBUG)
+        set_logger_level(logger=iter_logger, level=logging.DEBUG)
 
     logger = pass_manager.logger
     # Test if the file in question contains any ifdef statements:
@@ -647,7 +650,7 @@ def modify_file(
         ### SANITY CHECK ####
         for lt in work_lines:
             if lt.line.rstrip("\n").strip():
-                if not re.search(r'(__FILE__|__LINE__)', lines[lt.ln]):
+                if not re.search(r'(__FILE__|__LINE__|include)', lines[lt.ln]):
                     assert lt.line == lines[lt.ln], f"Couldn't map cpp lines for {base_fn}\n{lt.line} /= {lines[lt.ln]}"
     else:
         work_lines = orig_lines
@@ -667,7 +670,7 @@ def modify_file(
         sub_start=None,
         func_init=None,
     )
-    parse_bad_modules(state)
+    parse_bad_modules(state, logger)
 
     # Join bad subroutines into single string with logical OR for regex. Commented out if matched.
     # these two likely don't need to be separate regexes
@@ -683,6 +686,12 @@ def modify_file(
     pass_manager.add_pass(pattern=regex_call,fn=set_comment,name=parse_sub_call)
     pass_manager.add_pass(pattern=regex_bad_inst,fn=handle_bad_inst,name=parse_bad_inst)
     pass_manager.run(state)
+
+    if mod_name == mod_debug:
+        pass_manager.logger.info("Commented out the following lines: ")
+        for lt in state.work_lines:
+            if lt.commented:
+                pass_manager.logger.info(f"{lt}")
 
     if cpp_file:
         # take the commented work_lines and comment corresponding orig_lines
