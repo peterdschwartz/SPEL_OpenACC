@@ -90,7 +90,6 @@ bad_subroutines = [
 ]
 
 remove_subs = [
-    "restart",
     "prepare_data_for_em_ptm_driver",
     "prepare_data_for_em_vsfm_driver",
     "decompinit_lnd_using_gp",

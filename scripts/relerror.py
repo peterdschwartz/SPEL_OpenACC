@@ -115,7 +115,9 @@ def rel_error(refdata, compdata, var, error_log):
     return error_log, summary
 
 
-def is_numeric(dtype: str):
+def is_numeric(dtype):
+    if np.issubdtype(dtype, np.datetime64) or np.issubdtype(dtype, np.timedelta64):
+        return False
     return np.issubdtype(dtype, np.number)
 
 
@@ -136,7 +138,7 @@ def find_diffs(refn: str, compfn: str, var: str = "", ostream=sys.stdout):
         current_var = var_names[0]
         error_log = []
         for var in progressbar(var_names, "VAR:", 40):
-            dtype: str = refdata[var].dtype
+            dtype = refdata[var].dtype
             if is_numeric(dtype):
                 error_log, summary = rel_error(refdata, compdata, var, error_log)
     else:
