@@ -106,8 +106,6 @@ contains
       call check(nf90_inquire_dimension(ncid, dimid, len=strlen))
       allocate(character(strlen) :: buf); 
       call check(nf90_get_var(ncid, var_id, buf))
-      print *, "buf :: ", buf, " \\ str len: ",strlen, len(buf)
-      print *, "len(var): ",len(var)
       var = ""
       do i=1, strlen 
          var(i:i) = buf(i:i)
@@ -275,7 +273,7 @@ contains
 
       integer :: var_id, i
       call check(nf90_inq_varid(ncid, trim(varname), var_id))
-      call check(nf90_put_var(ncid, var_id, var))
+      call check(nf90_put_var(ncid, var_id, trim(var)))
 
    end subroutine
 

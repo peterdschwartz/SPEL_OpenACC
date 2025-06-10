@@ -6,9 +6,12 @@ that is used to parse subroutines
 import re
 import sys
 
+from scripts.analyze_subroutines import Subroutine
 from scripts.mod_config import _bc
 from scripts.utilityFunctions import lineContinuationAdjustment
 
+regex_do_start = re.compile(r"^\s*(\w+:)?\s*do\b", re.IGNORECASE)
+regex_do_end = re.compile(r"^\s*(end\s*do(\s+\w+)?)", re.IGNORECASE)
 
 def exportVariableDependency(
     subname, var_list, global_vars, local_vars, DoLoops, mode="LaTex"
@@ -233,6 +236,12 @@ def create_latex_table(header, varsForAllLoops, doloops, subname):
     ofile.write(r"\hline\n")
     ofile.write(r"\end{tabular}\n\end{table*}\n")
     ofile.close()
+
+
+def get_loops(sub: Subroutine):
+    lines = sub.sub_lines
+    do_lines = [ lpair for lpair in filter(lambda x: regex_do_start.search(x.line),lines) ]
+    end_do_lines = [lpair for lpair in filter(lambda x: regex_do_end.search(x.line), lines) ]
 
 
 class Loop(object):

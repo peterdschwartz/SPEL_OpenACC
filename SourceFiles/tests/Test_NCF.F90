@@ -3,21 +3,21 @@ program test_nc_io
    use nc_allocMod
    implicit none
 
-   integer :: ncid, varid
+   integer :: ncid, varid, t_dimid
    integer , parameter :: N=11
    real(8), allocatable,dimension(:, :) :: var_data, read_data
    real(8), dimension(10) :: press
    real(8) :: const
    character(len=256) :: filename
    character(len=256) :: varname
-   character(len=256) :: dim_names(2)
+   character(len=256) :: dim_names(3)
    integer :: i, dims(4)
    character(len=10) :: nu_com = "RD", read_str
 
    ! Initialize data and variables
    filename = "test.nc"
    varname = "temperature"
-   dim_names = ["latitude", "longitude"]
+   dim_names = ["latitude", "longitude", "time"]
 
    allocate(var_data(N,N))
    ! Fill var_data with sample values (e.g., temperature)
@@ -32,17 +32,23 @@ program test_nc_io
 
    ! Write the data to the NetCDF file
    print*, "Defining"
-   call nc_define_var(ncid, rank(var_data), shape(var_data), dim_names, varname, NF90_DOUBLE, varid)
+   call check(nf90_def_dim(ncid, "time", NF90_UNLIMITED, t_dimid))
+
+   call nc_define_var(ncid, rank(var_data), shape(var_data), dim_names, varname, NF90_DOUBLE, varid, .true.)
+
    call check(nf90_put_att(ncid, varid, "lbounds", lbound(var_data))); call check(nf90_put_att(ncid, varid, "ubounds", ubound(var_data))); 
-   call nc_define_var(ncid, rank(press), shape(press), ["bars"],"pressure",NF90_DOUBLE, varid)
+   call nc_define_var(ncid, rank(press), shape(press), ["bars"],"pressure",NF90_DOUBLE, varid, .false.)
    call check(nf90_put_att(ncid, varid, "lbounds", lbound(var_data))); call check(nf90_put_att(ncid, varid, "ubounds", ubound(var_data))); 
-   call nc_define_var(ncid, rank(const), shape(const), ["scalar"],"const",NF90_DOUBLE, varid)
-   call nc_define_var(ncid, 1,[len(nu_com)], ["nu_com"//"_str"], "nu_com",NF90_char, varid)
+   call nc_define_var(ncid, rank(const), shape(const), ["scalar"],"const",NF90_DOUBLE, varid, .false.)
+   call nc_define_var(ncid, 1,[len(nu_com)], ["nu_com"//"_str"], "nu_com",NF90_char, varid, .false.)
 
    call check(nf90_enddef(ncid))
 
    print *, "Writing"
-   call nc_write_var_array(ncid, 2, shape(var_data), dim_names, reshape(var_data, [product(shape(var_data))]), varname)
+   do i = 1, 3
+      var_data(i,1) = -1.d0
+      call nc_write_var_array(ncid, 2, shape(var_data), dim_names, reshape(var_data, [product(shape(var_data))]), varname, i)
+   end do
    call nc_write_var_array(ncid, 1,shape(press), ["bars"],press,"pressure")
    call nc_write_var_scalar(ncid, const, "const")
    call nc_write_var_array(ncid, nu_com, "nu_com")
@@ -56,10 +62,10 @@ program test_nc_io
    print *, "~~~~ Reading phase ~~~~~"
    ncid = nc_create_or_open_file(filename, open_file)
    call nc_alloc(ncid, trim(varname), rank(read_data),read_data)
-   call nc_read_var(ncid,trim(varname), rank(var_data), read_data)
-   if (any(read_data .ne. var_data)) then 
-      print *, "Error- read data not the same"
-   end if 
+
+   call nc_read_var(ncid, trim(varname), rank(var_data), read_data, timestep=2)
+   print *, "read data:"
+   print *, read_data(:,:)
    call nc_read_var(ncid, "nu_com", "nu_com"//"_str", read_str)
    print *, "read_str: ",read_str
    call check(nf90_close(ncid))

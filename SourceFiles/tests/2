@@ -139,47 +139,24 @@ contains
       integer, optional, intent(in) :: timestep
       !
       integer :: var_id
-      integer, allocatable :: start(:), count(:)
+      integer, allocatable :: start, count
 
       if (present(timestep)) then
-         allocate(start(ndim+1), count(ndim+1))
-         start(1:ndim) = 1
-         start(ndim+1) = timestep
-         count(1:ndim) = shape(var)
-         count(ndim+1) = 1
-      else
-         allocate(start(ndim), count(ndim))
-         start(1:ndim) = 1
-         count(1:ndim) = shape(var)
       end if
 
       call check(nf90_inq_varid(ncid, trim(varname), var_id))
-      call check(nf90_get_var(ncid, var_id, var,start=start, count=count))
+      call check(nf90_get_var(ncid, var_id, var))
    end subroutine
-
-   subroutine nc_read_double_2(ncid, varname, ndim, var, timestep)
+   
+   subroutine nc_read_double_2(ncid, varname, ndim, var)
       integer, intent(in) :: ncid
       character(len=*), intent(in) :: varname
       integer, intent(in) :: ndim
       real(8), intent(out) :: var(:,:)
-      integer, optional, intent(in) :: timestep
       integer :: var_id
-      integer, allocatable :: start(:), count(:)
-
-      if (present(timestep)) then
-         allocate(start(ndim+1), count(ndim+1))
-         start(1:ndim) = 1
-         start(ndim+1) = timestep
-         count(1:ndim) = shape(var)
-         count(ndim+1) = 1
-      else
-         allocate(start(ndim), count(ndim))
-         start(1:ndim) = 1
-         count(1:ndim) = shape(var)
-      end if
 
       call check(nf90_inq_varid(ncid, trim(varname), var_id))
-      call check(nf90_get_var(ncid, var_id, var,start=start, count=count))
+      call check(nf90_get_var(ncid, var_id, var))
    end subroutine
 
    subroutine nc_read_double_3(ncid, varname, ndim, var)
@@ -378,6 +355,8 @@ contains
       if (unlim) then 
          start(ndim+1) = timestep
          count(ndim+1) = 1
+         print *, "start:", start(:)
+         print *, "count:", count(:)
       endif
 
       buffer = var

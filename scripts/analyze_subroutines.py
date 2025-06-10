@@ -896,11 +896,6 @@ class Subroutine(object):
                     #
                     # Examine Do loops in child subs
                     #
-                    if verbose:
-                        print(
-                            f"Instantiated new Subroutine {child_sub_name}\n in file {file} L{startline}-{endline}"
-                        )
-
                     childloops = childsub.examineLoops(
                         global_vars=global_vars,
                         varlist=varlist,
