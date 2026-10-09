@@ -1,7 +1,7 @@
 module nc_allocMod
 
    use netcdf
-   use nc_io, only: check
+   use nc_io, only: check, nc_file_subgrid, spel_nsets
    use iso_fortran_env
    use iso_c_binding
    implicit none
@@ -18,6 +18,16 @@ module nc_allocMod
    end interface
 
 contains
+
+   subroutine scale_subgrid_bounds(ncid, varid, ndim, lbs, ubs)
+      ! Enlarge the subgrid dimension to hold spel_nsets copies of the file data
+      integer, intent(in) :: ncid, varid, ndim
+      integer, intent(in) :: lbs(ndim)
+      integer, intent(inout) :: ubs(ndim)
+      integer :: sd, nfile
+      call nc_file_subgrid(ncid, varid, ndim, sd, nfile)
+      if (sd > 0) ubs(sd) = lbs(sd) - 1 + spel_nsets*(ubs(sd) - lbs(sd) + 1)
+   end subroutine scale_subgrid_bounds
 
 
    subroutine nc_alloc_double_1(ncid, varname, ndim, var)
@@ -41,6 +51,7 @@ contains
          print *, "Error - couldn't find l/ubounds"
          stop
       end if
+      call scale_subgrid_bounds(ncid, varid, ndim, lbs, ubs)
       allocate (var(lbs(1):ubs(1)))
 
    end subroutine nc_alloc_double_1
@@ -67,6 +78,7 @@ contains
          print *, "Error - couldn't find l/ubounds"
          stop
       end if
+      call scale_subgrid_bounds(ncid, varid, ndim, lbs, ubs)
       allocate (var(lbs(1):ubs(1), lbs(2):ubs(2)))
 
    end subroutine nc_alloc_double_2
@@ -93,6 +105,7 @@ contains
          print *, "Error - couldn't find l/ubounds"
          stop
       end if
+      call scale_subgrid_bounds(ncid, varid, ndim, lbs, ubs)
       allocate (var(lbs(1):ubs(1), lbs(2):ubs(2), lbs(3):ubs(3)))
 
    end subroutine nc_alloc_double_3
@@ -119,6 +132,7 @@ contains
          print *, "Error - couldn't find l/ubounds"
          stop
       end if
+      call scale_subgrid_bounds(ncid, varid, ndim, lbs, ubs)
       allocate (var(lbs(1):ubs(1)))
 
    end subroutine nc_alloc_integer_1
@@ -145,6 +159,7 @@ contains
          print *, "Error - couldn't find l/ubounds"
          stop
       end if
+      call scale_subgrid_bounds(ncid, varid, ndim, lbs, ubs)
       allocate (var(lbs(1):ubs(1), lbs(2):ubs(2)))
 
    end subroutine nc_alloc_integer_2
@@ -171,6 +186,7 @@ contains
          print *, "Error - couldn't find l/ubounds"
          stop
       end if
+      call scale_subgrid_bounds(ncid, varid, ndim, lbs, ubs)
       allocate (var(lbs(1):ubs(1), lbs(2):ubs(2), lbs(3):ubs(3)))
 
    end subroutine nc_alloc_integer_3
@@ -197,6 +213,7 @@ contains
          print *, "Error - couldn't find l/ubounds"
          stop
       end if
+      call scale_subgrid_bounds(ncid, varid, ndim, lbs, ubs)
       allocate (var(lbs(1):ubs(1)))
 
    end subroutine nc_alloc_logical_1
@@ -223,6 +240,7 @@ contains
          print *, "Error - couldn't find l/ubounds"
          stop
       end if
+      call scale_subgrid_bounds(ncid, varid, ndim, lbs, ubs)
       allocate (var(lbs(1):ubs(1), lbs(2):ubs(2)))
 
    end subroutine nc_alloc_logical_2
@@ -249,6 +267,7 @@ contains
          print *, "Error - couldn't find l/ubounds"
          stop
       end if
+      call scale_subgrid_bounds(ncid, varid, ndim, lbs, ubs)
       allocate (var(lbs(1):ubs(1), lbs(2):ubs(2), lbs(3):ubs(3)))
 
    end subroutine nc_alloc_logical_3
@@ -275,6 +294,7 @@ contains
          print *, "Error - couldn't find l/ubounds"
          stop
       end if
+      call scale_subgrid_bounds(ncid, varid, ndim, lbs, ubs)
       allocate (var(lbs(1):ubs(1)))
 
    end subroutine nc_ptr_double_1
@@ -301,6 +321,7 @@ contains
          print *, "Error - couldn't find l/ubounds"
          stop
       end if
+      call scale_subgrid_bounds(ncid, varid, ndim, lbs, ubs)
       allocate (var(lbs(1):ubs(1), lbs(2):ubs(2)))
 
    end subroutine nc_ptr_double_2
@@ -327,6 +348,7 @@ contains
          print *, "Error - couldn't find l/ubounds"
          stop
       end if
+      call scale_subgrid_bounds(ncid, varid, ndim, lbs, ubs)
       allocate (var(lbs(1):ubs(1), lbs(2):ubs(2), lbs(3):ubs(3)))
 
    end subroutine nc_ptr_double_3
@@ -353,6 +375,7 @@ contains
          print *, "Error - couldn't find l/ubounds"
          stop
       end if
+      call scale_subgrid_bounds(ncid, varid, ndim, lbs, ubs)
       allocate (var(lbs(1):ubs(1)))
 
    end subroutine nc_ptr_integer_1
@@ -379,6 +402,7 @@ contains
          print *, "Error - couldn't find l/ubounds"
          stop
       end if
+      call scale_subgrid_bounds(ncid, varid, ndim, lbs, ubs)
       allocate (var(lbs(1):ubs(1), lbs(2):ubs(2)))
 
    end subroutine nc_ptr_integer_2
@@ -405,6 +429,7 @@ contains
          print *, "Error - couldn't find l/ubounds"
          stop
       end if
+      call scale_subgrid_bounds(ncid, varid, ndim, lbs, ubs)
       allocate (var(lbs(1):ubs(1), lbs(2):ubs(2), lbs(3):ubs(3)))
 
    end subroutine nc_ptr_integer_3
@@ -431,6 +456,7 @@ contains
          print *, "Error - couldn't find l/ubounds"
          stop
       end if
+      call scale_subgrid_bounds(ncid, varid, ndim, lbs, ubs)
       allocate (var(lbs(1):ubs(1)))
 
    end subroutine nc_ptr_logical_1
@@ -457,6 +483,7 @@ contains
          print *, "Error - couldn't find l/ubounds"
          stop
       end if
+      call scale_subgrid_bounds(ncid, varid, ndim, lbs, ubs)
       allocate (var(lbs(1):ubs(1), lbs(2):ubs(2)))
 
    end subroutine nc_ptr_logical_2
@@ -483,6 +510,7 @@ contains
          print *, "Error - couldn't find l/ubounds"
          stop
       end if
+      call scale_subgrid_bounds(ncid, varid, ndim, lbs, ubs)
       allocate (var(lbs(1):ubs(1), lbs(2):ubs(2), lbs(3):ubs(3)))
 
    end subroutine nc_ptr_logical_3

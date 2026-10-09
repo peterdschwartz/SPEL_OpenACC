@@ -40,17 +40,42 @@ This installs the `spel` console script (`[project.scripts]` → `spel.cli:main`
 
 ### Pointing SPEL at E3SM
 
-SPEL needs to know where your E3SM clone lives. Edit `spel/scripts/config.py`:
+SPEL needs to know where your E3SM clone lives. The default comes from `SPEL_E3SM_SRCROOT`
+(environment or the untracked `.spel.env`), falling back to a `dev_E3SM` checkout next to the
+SPEL repo. Set it with:
 
-```python
-E3SM_SRCROOT = spel_dir / "../E3SM"   # relative to the SPEL repo root
+```bash
+spel config --set-srcroot /path/to/E3SM
 ```
 
-Everything else (`ELM_SRC`, `SHR_SRC`) is derived from it. Verify with:
+Every command also takes `--srcroot DIR`, which overrides it for that one command (child processes
+such as `spel validate`'s `spel create`s inherit it). Everything else (`ELM_SRC`, `SHR_SRC`, the
+analysis cache) is derived from it. Verify with:
 
 ```bash
 spel config
 ```
+
+### Comparing a development branch against a reference branch
+
+Each E3SM checkout gets its own `elm_drv` analysis cache, so two checkouts can be used side by
+side without `--reanalyze`. Use the same case name (`-c`) for both:
+
+```bash
+# 1. reference data from the reference checkout (instruments it, runs ELM, then runs/validates the test)
+spel create -s canopyfluxes -c canflux --run-case --srcroot ~/E3SM
+# 2. the same unit test generated from the development checkout
+spel create -s canopyfluxes -c canflux --srcroot ~/dev_E3SM
+# 3. build/run it on the reference data and diff against the reference outputs
+spel run canflux
+```
+
+Step 2 regenerates `unit-tests/canflux/` but leaves `unit-tests/input-data/canflux/` (the
+reference data) alone. `spel run` prints which checkout generated the unit test and which one
+produced the data (recorded in `input-data/<case>/spel_reference.json`), and notes when they
+differ. Then the diffs are the answer differences between the branches. The access check uses the
+development branch's analysis. The development unit test can only read the reference data if both
+branches use the same variables (derived-type components) as inputs.
 
 ### Directory layout
 
@@ -92,7 +117,8 @@ All commands are subcommands of `spel`. Run `spel <command> --help` for the auth
 ### `spel analyze`
 
 Parses and analyzes the whole call tree under `elm_driver::elm_drv` once, and caches it in
-`unit-tests/.spel-cache/elm_drv/`:
+`unit-tests/.spel-cache/<srcroot name>-<hash>/elm_drv/` (one cache per E3SM checkout; `spel config`
+lists them):
 
 - `analysis.pkl` — the pickled analysis (every module, subroutine, type, access map, call tree)
 - `src/` — the edited ELM sources
@@ -137,6 +163,7 @@ spel create -s <subroutine> [<subroutine> ...] [-c <casename>] [-u] [--db]
 | `-u` | no | off | Re-use the existing case directory instead of wiping and re-preprocessing it |
 | `--db` | no | off | Database mode: run the analysis and pickle it, but **do not** emit Fortran unit-test files |
 | `--reanalyze` | no | off | Rebuild the cached `elm_drv` analysis first (same as `spel analyze`) |
+| `--srcroot DIR` | no | `SPEL_E3SM_SRCROOT` | E3SM checkout to analyze/generate from (and to instrument/run with `--run-case`); any command accepts it |
 | `--instrument` | no | off | Afterwards run [`spel instrument`](#spel-instrument) for the case |
 | `--run-case` | no | off | Also create/build/run the CIME case, collect its `spel-*.nc`, then [`spel run`](#spel-run) the unit test (implies `--instrument`) |
 | `--freq`, `--case-args` | no | `9`, `""` | See [`spel instrument`](#spel-instrument) |
@@ -178,6 +205,10 @@ several cases can be instrumented for one build (see [`spel validate`](#spel-val
 3. Makes the module variables/types the IO modules use public and drops `protected`, editing only
    the declaration and `private`/`protected` statement lines recorded during `create`. `spel create`
    makes the same edit in the unit-test copies of those modules, so ELM needs no hand edits.
+   The original lines are recorded in `components/elm/src/main/.spel-access-edits.json` and
+   `--undo` (also run by `spel validate`) puts them back. A line you've changed since
+   `instrument` is left alone and reported. Edits made before this ledger existed must be
+   reverted with git.
 4. Copies `nc_io` and `nc_allocMod`, the case's `ReadWriteMod` and `FUTConstantsMod` renamed
    `ReadWriteMod_<tag>`/`FUTConstantsMod_<tag>`, and `SpelCapture_<tag>` to
    `components/elm/src/main`. IO modules from earlier instrumentations are deleted first.
@@ -190,7 +221,7 @@ spel instrument --undo
 ```
 
 `--run-case` calls the casegen script (`$SPEL_CASEGEN`, default
-`<E3SM_SRCROOT>/../e3sm-scripts/uELM_casegen.sh`) with `--case <case> --srcroot ... --build --submit`
+`e3sm_casegen.sh` in the SPEL repo) with `--case <case> --srcroot ... --build --submit`
 plus `--case-args`. The script must print `CASEDIR=<path>`. The `<tag>.spel-*.nc` files in the case's
 RUNDIR are then copied to `unit-tests/input-data/<case>` as `spel-*.nc`. **This overwrites any existing reference data there.**
 Finally the unit test is built, run, and validated as by [`spel run`](#spel-run); a failed validation
@@ -253,21 +284,46 @@ spel run [--no-diff] [<casename>] [-- <args passed to elmtest>]
 If `<casename>` is omitted, the **current working directory** is treated as the case directory —
 convenient when you're already inside `unit-tests/<casename>`.
 
-The test executable accepts up to two positional arguments:
+The test executable accepts one optional positional argument:
 
 | Arg | Meaning | Default |
 |-----|---------|---------|
-| 1 | number of clump sets (`nsets`) | 1 |
-| 2 | sites per clump (`pproc_input`) | 1 |
+| 1 | copies of the input sites (`nsets`) | 1 |
+
+The unit test always runs a single clump spanning the whole process, so filters and loops cover
+every site at once. With `nsets > 1`, the netCDF reads replicate each subgrid-dimensioned input
+`nsets` times and the generated `duplicateMod` offsets the subgrid index fields
+(`veg_pp%column`, `col_pp%landunit`, ...) of each copy. Outputs are written for the first copy
+only, so `fut-outputs*.nc` stay comparable with `spel-outputs*.nc`. A
+`WARNING (spel_nsets)` line means a copy produced results that differ from the first copy.
 
 ```bash
-spel run canflux            # defaults
-spel run canflux 4 2        # 4 clump sets, 2 sites per clump
+spel run canflux            # one copy of the sites
+spel run canflux 8          # 8 copies of the sites, all in one clump
 cd unit-tests/canflux && spel run
 ```
 
-Compiler, debug, and GPU settings live in the case's `check_config.sh`; it detects a mismatch
-with the existing `CMakeCache.txt` and offers to reconfigure.
+Compiler, debug, and OpenACC settings live in the case's `check_config.sh` (`compiler`, `debug`,
+`acc`); it detects a mismatch with the existing `CMakeCache.txt` and offers to reconfigure. The
+environment variables `SPEL_FC`, `SPEL_DBG` and `SPEL_ACC` override them without editing the script.
+
+`acc` sets the generated CMake's `ACC` cache option:
+
+| `ACC` | Flags | Notes |
+|-------|-------|-------|
+| `OFF` (default) | none | `!$acc` directives are comments |
+| `MULTICORE` | nvfortran: `-acc=multicore -Minfo=accel` | compute regions run on host threads; set the count with `ACC_NUM_CORES` (default: all cores). gfortran only gets `-fopenacc -foffload=disable` and a warning: GCC has no multicore target, so regions run on one thread |
+| `GPU` | nvfortran: `-acc=gpu -gpu=deepcopy -Minfo=accel -cuda` | needs nvfortran (`-DGPU=ON` still works as an alias) |
+
+```bash
+# nvfortran needs its own netcdf-fortran build (.mod files are compiler specific) on
+# PKG_CONFIG_PATH and ahead of any gfortran build on LD_LIBRARY_PATH
+SPEL_FC=nvfortran SPEL_ACC=MULTICORE SPEL_DBG=OFF spel run canflux
+ACC_NUM_CORES=4 ./build/elmtest   # rerun with 4 threads
+```
+
+Comparing `ACC=OFF` and `ACC=MULTICORE` outputs (including `ACC_NUM_CORES=1` vs all cores) catches
+missing `private`/`reduction` clauses and races without a GPU.
 
 ### `spel diff`
 
@@ -305,13 +361,18 @@ call bindings, and propagated access.
 
 ### `spel config`
 
-Prints the resolved source roots so you can confirm your `config.py` edit took effect.
+Prints the resolved source roots and analysis cache, and lists the cache of every checkout.
 
 ```bash
-spel config
+spel config                      # or: spel config --srcroot /other/E3SM
 # E3SM SRCROOT: /path/to/E3SM
 # ELM SRC     : /path/to/E3SM/components/elm/src
 # SHR SRC     : /path/to/E3SM/share/util
+# Cache       : .../unit-tests/.spel-cache/E3SM-2e665a5f/elm_drv
+# ...
+# elm_drv analysis caches:
+#   /path/to/E3SM  master@34d78535b7  built 2026-10-10T17:40:12  -> E3SM-2e665a5f
+spel config --set-srcroot /path/to/E3SM   # persist the default in .spel.env
 ```
 
 ### `spel upload`
@@ -421,5 +482,8 @@ are contributing new analysis data.
 pytest
 ```
 
-Test suites live in `spel/scripts/tests/` and `spel/scripts/fortran_parser/tests/`. Some tests
-depend on a pre-existing pickle and a configured `E3SM_SRCROOT`.
+Test suites live in `spel/scripts/tests/` and `spel/scripts/fortran_parser/tests/`. Tests that need
+a whole-ELM analysis use the `elm_drv_analysis` fixture (`conftest.py`). It loads a frozen copy at
+`.pytest-fixtures/elm_drv_analysis.pkl`, which is seeded once from the `E3SM_SRCROOT` analysis
+cache. Delete that file to refresh it, or point `SPEL_TEST_ANALYSIS` at another `analysis.pkl`. If
+neither the copy nor the cache exists, these tests are skipped.

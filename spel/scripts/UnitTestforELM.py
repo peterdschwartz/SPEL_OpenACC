@@ -276,7 +276,7 @@ def finalize_unit_test(unit_test: FunctionalUnitTest, db_mode: bool) -> None:
         # elm_instMod.F90
         unit_test.write_elminst_mod()
         # duplicateMod.F90
-        unit_test.duplicate_clumps()
+        unit_test.duplicate_sets()
         unit_test.create_fortls()
 
         from spel.scripts.instrument_elm import make_case_sources_accessible

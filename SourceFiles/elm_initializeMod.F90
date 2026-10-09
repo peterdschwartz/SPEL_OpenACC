@@ -6,19 +6,21 @@ module elm_initializeMod
    implicit None
 
    public :: elm_init
-   public :: correct_physical_properties
 
 contains
 
-   subroutine elm_init(nsets, pproc_input, dt, yr, bounds)
-
-      use duplicateMod, only: duplicate_clumps, duplicate_weights
+   subroutine elm_init(nsets, dt, yr, bounds)
+      ! Read the input sites and, for nsets > 1, duplicate them nsets times.
+      ! There is always a single clump spanning the whole process, so the
+      ! filters (and the parallelism inside each routine) cover every set.
+      use duplicateMod, only: duplicate_sets, scale_bounds
       use ReadWriteMod, only: read_elmtypes
       use FUTConstantsMod, only: read_constants
+      use nc_io, only: spel_nsets
       use elm_varctl
       use filterMod
       use decompMod, only: get_proc_bounds, get_clump_bounds, procinfo, clumps
-      use decompMod, only: bounds_type, clump_pproc, nclumps
+      use decompMod, only: bounds_type
       use timeInfoMod
       use pftvarcon
       use decompInitMod
@@ -26,31 +28,29 @@ contains
 
       implicit none
 
-      integer, intent(in)  :: nsets, pproc_input
+      integer, intent(in)  :: nsets
       real*8, intent(in) :: dt
       integer, intent(in) :: yr
       type(bounds_type), intent(out) :: bounds
-      integer :: errc
-      integer :: nc
       integer :: begp, endp, begc, endc, begg, endg, begl, endl, begt, endt
-      integer :: i, j
-      integer, parameter :: number_of_sites = 42
-      integer :: ni, nj = 1
-      integer :: c, l, g, t
-      integer, allocatable :: amask(:)
       real*8, allocatable  :: icemask_grc(:)
-      real(r8), allocatable :: h2osno_col(:)
-      real(r8), allocatable :: snow_depth_col(:)
-      real(r8), allocatable :: dummy_2d_arr(:, :)
       type(bounds_type) :: bounds_clump
 
-      ! convert number use input of sets of sites to total number of sites
-      ni = nsets*number_of_sites
-      clump_pproc = pproc_input
+      if (nsets < 1) stop "(elm_init) nsets must be >= 1"
+      ! nc_io allocates subgrid arrays nsets times larger and replicates
+      ! the file data into every set when reading
+      spel_nsets = nsets
 
       call read_constants(io_constants)
       !#SPEL_IO
 
+      ! bounds now hold one set (the input file); offset the subgrid indices
+      ! of the copies and extend the bounds over all sets
+      if (nsets > 1) then
+         print *, "Duplicating input sites", nsets, "times"
+         call duplicate_sets(nsets, bounds)
+         call scale_bounds(nsets, bounds)
+      end if
 
       begp = bounds%begp; endp = bounds%endp
       begc = bounds%begc; endc = bounds%endc
@@ -64,144 +64,22 @@ contains
       print *, "begt, endt", begt, endt
 
       allocate (icemask_grc(begg:endg)); icemask_grc(:) = 0.d0
-      call init_clumps(clump_pproc, bounds)
+      call init_clumps(bounds)
       call get_clump_bounds(1, bounds_clump)
       call allocFilters()
       call setFilters(bounds_clump, icemask_grc)
 
       !#LAKECON
 
-      !allocate (amask(ni*nj)); amask(:) = 1
-      !call decompInit_lnd_simple(ni, nj, amask)
-
-      ! Allocate surface grid dynamic memory (just gridcell bounds dependent)
-      !NOTE: wt_lunit, urban_valid need to be updated to support
-      !  multiple topounits if desired
-      call get_proc_bounds(begg=begg, endg=endg)
-
-      if (nsets > 1) then
-         print *, nsets, "sets requested, making a total # of gridcells of ", ni
-         call duplicate_weights(number_of_sites, ni)
-      end if
-
-      !print *, "calling decompinit_clumps"
-      !call decompInit_clumps()
-
       !#VAR_INIT_START
-
-      if (nsets > 1) then
-         print *, "Duplicating physical properties"
-         call duplicate_clumps(mode=0, unique_sites=number_of_sites, num_sites=ni)
-         call correct_physical_properties(number_of_sites, ni)
-      end if
-    !!read for first clumps only
-
-      call get_clump_bounds(1, bounds_clump)
-
-      ! Only duplicate if desired simulation is greater than
-      ! number of gridcells in input data file
-      if (nsets > 1) then
-         print *, "Duplicating the remaining variables"
-         call duplicate_clumps(mode=1, unique_sites=number_of_sites, num_sites=ni)
-      end if
-
 
    end subroutine elm_init
 
-   subroutine correct_physical_properties(unique_sites, num_sites)
-      use landunit_varcon, only: max_lunit
-      use GridcellType, only: grc_pp
-      use VegetationType, only: veg_pp
-      use ColumnType, only: col_pp
-      use LandunitType, only: lun_pp
-      use TopounitType, only: top_pp
-      use landunit_varcon, only: max_lunit
-      use elm_varcon, only: ispval
-      use decompMod, only: bounds_type, procinfo, nclumps, get_clump_bounds
-      implicit none
-      integer, intent(in) :: num_sites, unique_sites
-      integer :: nc, nc_copy, i, stride, j
-      type(bounds_type)  :: bounds
-      integer :: begt, endt, begl, endl, begc, endc, begp, endp
-      integer :: total_landunit_indices, total_columns
-      integer :: total_lu, total_pft
-      integer :: l, c, p, l_copy, c_copy, p_copy
-
-      total_landunit_indices = 0
-      !get total_landunit_indices for the set of unique sites
-      nc = unique_sites
-      do j = 1, max_lunit
-         i = top_pp%landunit_indices(j, nc)
-         if (i /= ispval) then
-            total_landunit_indices = max(total_landunit_indices, i)
-         end if
-      end do
-
-      do nc = unique_sites + 1, num_sites
-         nc_copy = mod(nc - 1, unique_sites) + 1
-         call get_clump_bounds(nc, bounds)
-         begt = bounds%begt; endt = bounds%endt
-         begl = bounds%begl; endl = bounds%endl
-
-         grc_pp%gindex(nc) = nc
-         grc_pp%topi(nc) = begt
-         grc_pp%topf(nc) = endt
-         grc_pp%ntopounits(nc) = grc_pp%ntopounits(nc_copy) !endt-begt+1
-
-         lun_pp%gridcell(begl:endl) = nc
-         !NOTE: this won't work for multiple Topounits
-         lun_pp%topounit(begl:endl) = nc
-
-         do j = 1, max_lunit
-            if (top_pp%landunit_indices(j, 1) == ispval) cycle
-            top_pp%landunit_indices(j, nc) = top_pp%landunit_indices(j, nc_copy) + total_landunit_indices
-         end do
-      end do
-
-      ! get total number of cols and landunits for the set
-      call get_clump_bounds(unique_sites, bounds)
-      total_columns = bounds%endc
-      total_lu = bounds%endl
-      total_pft = bounds%endp
-
-      do nc = unique_sites + 1, num_sites
-         nc_copy = mod(nc - 1, unique_sites) + 1
-         call get_clump_bounds(nc, bounds)
-         begl = bounds%begl; endl = bounds%endl
-         begc = bounds%begc; endc = bounds%endc
-         begp = bounds%begp; endp = bounds%endp
-
-         do l = begl, endl
-            l_copy = l - total_lu
-            lun_pp%coli(l) = lun_pp%coli(l_copy) + total_columns
-            lun_pp%colf(l) = lun_pp%colf(l_copy) + total_columns
-            lun_pp%pfti(l) = lun_pp%pfti(l_copy) + total_pft
-            lun_pp%pftf(l) = lun_pp%pftf(l_copy) + total_pft
-         end do
-         col_pp%gridcell(begc:endc) = nc
-         col_pp%topounit(begc:endc) = nc !Need To change to allow multi topo
-
-         do c = begc, endc
-            c_copy = c - total_columns
-            col_pp%landunit(c) = col_pp%landunit(c_copy) + total_lu
-            col_pp%pfti(c) = col_pp%pfti(c_copy) + total_pft
-            col_pp%pftf(c) = col_pp%pftf(c_copy) + total_pft
-         end do
-         veg_pp%gridcell(begp:endp) = nc
-         veg_pp%topounit(begp:endp) = nc !Need to change
-         do p = begp, endp
-            p_copy = p - total_pft
-            veg_pp%landunit(p) = veg_pp%landunit(p_copy) + total_lu
-            veg_pp%column(p) = veg_pp%column(p_copy) + total_columns
-         end do
-      end do
-
-   end subroutine
-
-   subroutine init_clumps(clump_pproc, bounds_proc)
+   subroutine init_clumps(bounds_proc)
+      ! A single clump spanning the process bounds
       use decompMod, only: bounds_type, clumps, procinfo, get_clump_bounds
+      use decompMod, only: clump_pproc
       use filterMod, only: filter, filter_inactive_and_active
-      integer, intent(in) :: clump_pproc
       type(bounds_type), intent(in) :: bounds_proc
       !! Locals
       type(bounds_type) :: bounds_clump
@@ -214,11 +92,8 @@ contains
       num_t = bounds_proc%endt - bounds_proc%begt + 1
       num_c = bounds_proc%endc - bounds_proc%begc + 1
       num_p = bounds_proc%endp - bounds_proc%begp + 1
-      nclumps = clump_pproc
-      print *, "(init_clumps) Using nclumps ", nclumps
-      if (nclumps > 1) then
-         stop "Need to verify clumps > 1"
-      end if
+      nclumps = 1
+      clump_pproc = nclumps
 
       allocate (clumps(nclumps), procinfo%cid(clump_pproc))
       allocate (filter(nclumps), filter_inactive_and_active(nclumps))
