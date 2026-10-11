@@ -34,6 +34,7 @@ from spel.scripts.fortran_modules import (
     imported_from,
 )
 from spel.scripts.fortran_parser.boolen_expression import AnyOf, ConditionExpectation
+from spel.scripts.io.acc_data import generate_acc_data_module
 from spel.scripts.io.netcdf_io import (
     SUBGRID_INDEX_FIELDS,
     generate_constants_io_netcdf,
@@ -42,7 +43,7 @@ from spel.scripts.io.netcdf_io import (
 )
 from spel.scripts.logging_configs import get_logger
 from spel.scripts.types import LineTuple, SubInit
-from spel.scripts.write_routines import acc_clause_lines, acc_update_device_lines
+from spel.scripts.write_routines import acc_update_device_lines
 from spel.scripts.utilityFunctions import (
     Variable,
     find_file_for_subroutine,
@@ -262,6 +263,7 @@ class FunctionalUnitTest:
 
         generate_elmtypes_io_netcdf(self)
         generate_constants_io_netcdf(self)
+        generate_acc_data_module(self)
 
         self.create_update_mod()
         self.prep_elm_init()
@@ -538,11 +540,20 @@ class FunctionalUnitTest:
         modules_to_add.extend(additions.modules)
 
         builder_calls, builder_mods = self._filter_builder_calls(instance_to_type)
+        # Filters are built on the host each step; refresh their device copies.
+        acc_filter_update = (
+            ["call spel_acc_update_filters()\n"] if builder_calls else []
+        )
         # insert_at_token(reversed(...)) below emits the calls last-to-first,
         # so the builders, which must run first, go at the end
         adjusted_calls = [
-            c if c.endswith("\n") else f"{c}\n" for c in list(adjusted_calls) + builder_calls
+            c if c.endswith("\n") else f"{c}\n"
+            for c in list(adjusted_calls) + acc_filter_update + builder_calls
         ]
+        modules_to_add.append(
+            "use SpelAccDataMod, only: spel_acc_enter_data, spel_acc_update_device, "
+            "spel_acc_update_host, spel_acc_update_filters\n"
+        )
         modules_to_add.extend(m for m in builder_mods if m not in modules_to_add)
 
         lines = insert_at_token(lines, "!#USE_START", modules_to_add)
@@ -578,11 +589,13 @@ class FunctionalUnitTest:
             [f"{tabs}call write_elmtypes({out_arg_str})\n"],
         )
 
-        copyin_lines = acc_clause_lines(
-            "enter data copyin",
-            sorted(n for n, v in active_instances.items() if v.type != "bounds_type"),
+        lines = insert_at_token(lines, "!#ACC_COPYIN", ["   call spel_acc_enter_data()\n"])
+        lines = insert_at_token(
+            lines, "!#ACC_UPDATE_DEVICE", ["             call spel_acc_update_device()\n"]
         )
-        lines = insert_at_token(lines, "!#ACC_COPYIN", copyin_lines)
+        lines = insert_at_token(
+            lines, "!#ACC_UPDATE_HOST", ["       call spel_acc_update_host()\n"]
+        )
 
         with open(self.case_dir / "main.F90", "w") as ofile:
             ofile.writelines(lines)
@@ -677,8 +690,22 @@ class FunctionalUnitTest:
             ]
         )
 
+        pointer_vars = ensure_acc_declares(variables.values(), self.case_dir)
         body_tabs = hio.indent(hio.Tab.shift)
-        lines.extend(acc_update_device_lines(variables.values(), body_tabs))
+        lines.extend(
+            acc_update_device_lines(
+                [v for v in variables.values() if v.name not in pointer_vars], body_tabs
+            )
+        )
+        # Module pointers can't be in a declare directive: copy them in instead.
+        for name in sorted(pointer_vars):
+            lines.extend(
+                [
+                    f"{body_tabs}if (associated({name})) then\n",
+                    f"{body_tabs}   !$acc enter data copyin({name})\n",
+                    f"{body_tabs}end if\n",
+                ]
+            )
         lines.append(f"{tabs}end subroutine {sub_name}\n")
         lines.append(f"end module {mod_name}\n")
 
@@ -862,7 +889,7 @@ def generate_cmake(files: list[str], case_dir: Path):
             set(OPENACC_FLAGS "-acc=multicore -Minfo=accel")
         elseif (ACC_MODE STREQUAL "GPU")
             message(STATUS "Enabling OpenACC GPU support")
-            set(OPENACC_FLAGS "-acc=gpu -gpu=deepcopy -Minfo=accel -cuda")
+            set(OPENACC_FLAGS "-acc=gpu -Minfo=accel")
         endif()
         if (DEFINED OPENACC_FLAGS)
             set(CMAKE_Fortran_FLAGS "${{CMAKE_Fortran_FLAGS}} ${{OPENACC_FLAGS}}" CACHE STRING "Fortran Compiler Flags" FORCE)
@@ -2089,3 +2116,66 @@ def create_fortls(case_dir: Path):
     with open(f"{case_dir}/.fortls.json", "w") as ofile:
         ofile.writelines(lines)
     return
+
+
+def ensure_acc_declares(variables, case_dir: Path) -> set[str]:
+    """
+    Add ``!$acc declare create`` to the case copies of the modules declaring
+    ``variables`` so that ``update device`` and ``acc routine`` references work.
+    Returns the names of module pointer variables, which cannot be declared.
+    """
+    mod_files: dict[str, Path] = {}
+    for path in Path(case_dir).glob("*.F90"):
+        with open(path) as ifile:
+            for line in ifile:
+                m = re.match(r"\s*module\s+(\w+)\s*(!.*)?$", line, re.IGNORECASE)
+                if m and m.group(1).lower() != "procedure":
+                    mod_files[m.group(1).lower()] = path
+                    break
+
+    to_declare: dict[Path, list[str]] = {}
+    pointer_vars: set[str] = set()
+    for var in variables:
+        path = mod_files.get(var.declaration.lower())
+        if path is None:
+            continue
+        text = path.read_text()
+        name = re.escape(var.name)
+        declared = re.search(
+            rf"^\s*!\$acc\s+declare\s+\w+\s*\([^)]*\b{name}\b",
+            text,
+            re.IGNORECASE | re.MULTILINE,
+        )
+        if declared:
+            continue
+        decl = re.search(
+            rf"^\s*(?!.*\bparameter\b)([^!\n]*)::[^!\n]*\b{name}\b",
+            text,
+            re.IGNORECASE | re.MULTILINE,
+        )
+        if decl and re.search(r"\bpointer\b", decl.group(1), re.IGNORECASE):
+            pointer_vars.add(var.name)
+        else:
+            to_declare.setdefault(path, []).append(var.name)
+
+    for path, names in to_declare.items():
+        lines = path.read_text().splitlines(keepends=True)
+        # The first module-level contains/end module ends the specification
+        # part; skip the contains of type-bound procedures.
+        in_type = False
+        idx = len(lines)
+        for i, line in enumerate(lines):
+            if re.match(r"\s*end\s*type\b", line, re.IGNORECASE):
+                in_type = False
+            elif re.match(r"\s*type\s*(,[^:]*)?(::)?\s*\w+\s*(!.*)?$", line, re.IGNORECASE):
+                in_type = True
+            elif not in_type and re.match(
+                r"\s*(contains|end\s+module)\b", line, re.IGNORECASE
+            ):
+                idx = i
+                break
+        new = ["  ! Added by SPEL for OpenACC update_params_acc\n"]
+        new.extend(f"  !$acc declare create({n})\n" for n in sorted(names))
+        lines[idx:idx] = new
+        path.write_text("".join(lines))
+    return pointer_vars

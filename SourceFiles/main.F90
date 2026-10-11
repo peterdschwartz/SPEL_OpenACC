@@ -63,8 +63,7 @@ declin = -0.4030289369547867
 #ifdef _OPENACC
    call update_params_acc()
 
-   !Note: copy/paste enter data directives here for FUT.
-   !      Will make this automatic in the future
+   ! Manual deep copy of the unit-test data (SpelAccDataMod)
    !#ACC_COPYIN
 
    call get_proc_bounds(bounds_proc)
@@ -96,6 +95,9 @@ block
 
           ! read_elmtypes leaves bounds_clump at one set's bounds
           if (.not. io_inputs%end_run) call duplicate_sets(nsets, bounds_clump)
+          if (.not. io_inputs%end_run) then
+             !#ACC_UPDATE_DEVICE
+          end if
        end if
        if (io_inputs%end_run .or. step > max_step) exit
 
@@ -103,6 +105,7 @@ block
 
       !#CALL_SUB
 
+       !#ACC_UPDATE_HOST
 
        !#IO_WRITE
 
