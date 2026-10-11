@@ -35,12 +35,14 @@ from spel.scripts.fortran_modules import (
 )
 from spel.scripts.fortran_parser.boolen_expression import AnyOf, ConditionExpectation
 from spel.scripts.io.netcdf_io import (
+    SUBGRID_INDEX_FIELDS,
     generate_constants_io_netcdf,
     generate_elmtypes_io_netcdf,
     generate_verify,
 )
 from spel.scripts.logging_configs import get_logger
 from spel.scripts.types import LineTuple, SubInit
+from spel.scripts.write_routines import acc_clause_lines, acc_update_device_lines
 from spel.scripts.utilityFunctions import (
     Variable,
     find_file_for_subroutine,
@@ -98,6 +100,7 @@ class FunctionalUnitTest:
         self.driver_sites: Optional[DriverSites] = None
         # elm_drv's actual -> dummy bindings at the roots' call sites
         self.driver_bindings: list[ArgBinding] = []
+        self.filter_builder_calls: list[str] = []
         # modules of the unit test, in dependency (compile) order
         self.ordered_mods: list[str] = []
         # roots whose call tree failed to analyze -> error (cached elm_drv analysis)
@@ -483,6 +486,28 @@ class FunctionalUnitTest:
             calls.append(f"call {sub.name}({', '.join(args)})\n")
         return MainAdditions(calls=calls, modules=mods, variables=decls)
 
+    def _filter_builder_calls(
+        self, instance_to_type: InstToDTypeMap
+    ) -> tuple[list[str], list[str]]:
+        """
+        elm_drv's calls to the filterMod routines that set filter members the
+        selected routines use (see analysis_cache.filter_builders), verbatim:
+        main.F90 also names its clump bounds `bounds_clump` and the filters
+        `filter`. Returns the calls and their use statements.
+        """
+        calls: list[str] = []
+        mods: list[str] = []
+        for text in getattr(self, "filter_builder_calls", []):
+            name = re.match(r"\s*call\s+(\w+)", text, re.IGNORECASE).group(1)
+            calls.append(f"{text}\n")
+            mods.append(f"use filterMod, only : {name}\n")
+            for base in dict.fromkeys(re.findall(r"\b(\w+)\s*%", text)):
+                if base in instance_to_type:
+                    inst = self.type_dict[instance_to_type[base]].instances[base]
+                    inst.active = True
+                    mods.append(f"use {inst.declaration}, only : {base}\n")
+        return calls, mods
+
     def prepare_main(
         self,
         instance_to_type: InstToDTypeMap | None = None,
@@ -511,6 +536,14 @@ class FunctionalUnitTest:
                 num_filters,
             )
         modules_to_add.extend(additions.modules)
+
+        builder_calls, builder_mods = self._filter_builder_calls(instance_to_type)
+        # insert_at_token(reversed(...)) below emits the calls last-to-first,
+        # so the builders, which must run first, go at the end
+        adjusted_calls = [
+            c if c.endswith("\n") else f"{c}\n" for c in list(adjusted_calls) + builder_calls
+        ]
+        modules_to_add.extend(m for m in builder_mods if m not in modules_to_add)
 
         lines = insert_at_token(lines, "!#USE_START", modules_to_add)
         lines = insert_at_token(lines, "!#VAR_DECL", adjusted_vars)
@@ -545,9 +578,10 @@ class FunctionalUnitTest:
             [f"{tabs}call write_elmtypes({out_arg_str})\n"],
         )
 
-        copyin_lines = ["!$acc enter data copyin(& \n"]
-        copyin_lines.extend(f"!$acc& {name},&\n" for name in sorted(active_instances))
-        copyin_lines.append("!$acc& )\n")
+        copyin_lines = acc_clause_lines(
+            "enter data copyin",
+            sorted(n for n, v in active_instances.items() if v.type != "bounds_type"),
+        )
         lines = insert_at_token(lines, "!#ACC_COPYIN", copyin_lines)
 
         with open(self.case_dir / "main.F90", "w") as ofile:
@@ -644,12 +678,7 @@ class FunctionalUnitTest:
         )
 
         body_tabs = hio.indent(hio.Tab.shift)
-        lines.append(f"{body_tabs}!$acc update device(&\n")
-        for var in variables.values():
-            dim_str = ",".join(":" for _ in range(var.dim))
-            dim_str = f"({dim_str})" if dim_str else ""
-            lines.append(f"{body_tabs}!$acc&   {var.name}{dim_str},&\n")
-        lines.append(f"{body_tabs}!$acc&  )\n\n")
+        lines.extend(acc_update_device_lines(variables.values(), body_tabs))
         lines.append(f"{tabs}end subroutine {sub_name}\n")
         lines.append(f"end module {mod_name}\n")
 
@@ -672,8 +701,8 @@ class FunctionalUnitTest:
     def generate_makefile(self, files: list[str]) -> None:
         generate_makefile(files, self.case_dir)
 
-    def duplicate_clumps(self) -> None:
-        duplicate_clumps(self.type_dict)
+    def duplicate_sets(self) -> None:
+        duplicate_sets(self.type_dict)
 
     def create_init_params(self) -> None:
         create_init_params(self.active_global_vars, self.case_dir)
@@ -784,7 +813,19 @@ def generate_cmake(files: list[str], case_dir: Path):
     project(ELM-UnitTest LANGUAGES Fortran)
 
     option(DBG "Enable Debug mode" OFF)
-    option(GPU "Enable OpenACC (GPU) support" OFF)
+    set(ACC "OFF" CACHE STRING "OpenACC target: OFF, MULTICORE (host threads) or GPU")
+    set_property(CACHE ACC PROPERTY STRINGS OFF MULTICORE GPU)
+    option(GPU "Same as -DACC=GPU (kept for old check_config.sh scripts)" OFF)
+    string(TOUPPER "${{ACC}}" ACC_MODE)
+    if (GPU)
+        if (ACC_MODE STREQUAL "MULTICORE")
+            message(FATAL_ERROR "GPU=ON conflicts with ACC=MULTICORE")
+        endif()
+        set(ACC_MODE "GPU")
+    endif()
+    if (NOT ACC_MODE MATCHES "^(OFF|MULTICORE|GPU)$")
+        message(FATAL_ERROR "ACC must be OFF, MULTICORE or GPU (got '${{ACC}}')")
+    endif()
 
     enable_testing()
     set(CMAKE_VERBOSE_MAKEFILE ON)
@@ -799,6 +840,13 @@ def generate_cmake(files: list[str], case_dir: Path):
             message(STATUS "Debug + Coverage build enabled")
             string(APPEND CMAKE_Fortran_FLAGS " -g -O0 -fprofile-arcs -ftest-coverage")
         endif()
+        if (ACC_MODE STREQUAL "MULTICORE")
+            message(WARNING "gfortran has no OpenACC multicore target: ACC=MULTICORE compiles with "
+                            "-fopenacc but compute regions run on one host thread. Use nvfortran for threads.")
+            string(APPEND CMAKE_Fortran_FLAGS " -fopenacc -foffload=disable")
+        elseif (ACC_MODE STREQUAL "GPU")
+            message(FATAL_ERROR "ACC=GPU needs nvfortran")
+        endif()
     else()
         if (DBG)
             set(CMAKE_Fortran_FLAGS "${{CMAKE_Fortran_FLAGS}} -g -O0 -Mchkptr -Mchkstk" CACHE STRING "Fortran Compiler Flags" FORCE)
@@ -806,10 +854,17 @@ def generate_cmake(files: list[str], case_dir: Path):
             set(CMAKE_Fortran_FLAGS "${{CMAKE_Fortran_FLAGS}} -fast")
         endif()
 
-        if (GPU)
+        if (NOT ACC_MODE STREQUAL "OFF" AND NOT CMAKE_Fortran_COMPILER_ID MATCHES "^(NVHPC|PGI)$")
+            message(FATAL_ERROR "ACC=${{ACC_MODE}} needs nvfortran (compiler is ${{CMAKE_Fortran_COMPILER_ID}})")
+        endif()
+        if (ACC_MODE STREQUAL "MULTICORE")
+            message(STATUS "Enabling OpenACC multicore (threads set by ACC_NUM_CORES)")
+            set(OPENACC_FLAGS "-acc=multicore -Minfo=accel")
+        elseif (ACC_MODE STREQUAL "GPU")
             message(STATUS "Enabling OpenACC GPU support")
-            set(OPENACC_FLAGS "-gpu -Minfo=accel -cuda")
-            # Append to existing flags for each build type
+            set(OPENACC_FLAGS "-acc=gpu -gpu=deepcopy -Minfo=accel -cuda")
+        endif()
+        if (DEFINED OPENACC_FLAGS)
             set(CMAKE_Fortran_FLAGS "${{CMAKE_Fortran_FLAGS}} ${{OPENACC_FLAGS}}" CACHE STRING "Fortran Compiler Flags" FORCE)
         endif()
     endif()
@@ -1054,8 +1109,10 @@ def insert_at_token(lines: list[str], token: str, lines_to_add: Iterable[str]):
         print(f"Error: could find {token} in main.F90")
         sys.exit(1)
 
-    def add_line_continuations(x: str)->str:
-        return line_add.replace(',',',&\n       ')
+    def add_line_continuations(x: str) -> str:
+        if x.lstrip().startswith("!$"):
+            return x  # directives carry their own `!$acc&` continuations
+        return x.replace(",", ",&\n       ")
 
     for i, line_add in enumerate(lines_to_add):
         lines.insert(token_line + 1 + i, add_line_continuations(line_add))
@@ -1202,13 +1259,7 @@ def create_update_mod(vars: dict[str, Variable], casedir: Path):
 
     lines.append(f"{tabs}subroutine {sub_name}()\n")
     tabs = hio.indent(hio.Tab.shift)
-    lines.append(rf"{tabs}!$acc update device(&\n")
-
-    for var in vars.values():
-        dim_str = ",".join([":" for i in range(var.dim)])
-        dim_str = f"({dim_str})" if dim_str else ""
-        lines.append(rf"{tabs}!$acc&   {var.name}{dim_str},&\n")
-    lines.append(f"{tabs}!$acc&  )\n\n")
+    lines.extend(acc_update_device_lines(vars.values(), tabs))
 
     tabs = hio.indent(hio.Tab.unshift)
     lines.append(f"{tabs}end subroutine {sub_name}\n")
@@ -1220,168 +1271,102 @@ def create_update_mod(vars: dict[str, Variable], casedir: Path):
     return
 
 
-def duplicate_clumps(type_dict: dict[str, DerivedType]):
+# Integer fields of the subgrid physical-property types that hold indices into
+# another subgrid level: field -> subgrid level the index points into.
+def duplicate_sets(type_dict: dict[str, DerivedType]) -> None:
     """
-    Function that writes a Fortran module containing
-    subroutines needed to duplicate the input data
-    to an arbirtary number of gridcells
+    Write duplicateMod.F90 for running nsets copies of the input sites in a
+    single clump (nclumps = 1, so filters span the whole process).
+
+    nc_io replicates every array with a subgrid dimension into the nsets
+    copies when reading (spel_nsets), so this module only has to shift the
+    subgrid indices of copy k by (k-1) * <size of one set>, and to enlarge
+    the bounds read from the input file.
     """
-    file = open(f"{spel_output_dir}/duplicateMod.F90", "w")
-    spaces = hio.indent(hio.Tab.reset)
-    file.write("module duplicateMod\n")
+    tabs = hio.indent(hio.Tab.reset)
+    t2 = tabs * 2
+    uses: list[str] = []
+    calls: list[str] = []
+    for type_name, fields in SUBGRID_INDEX_FIELDS.items():
+        dtype = type_dict.get(type_name)
+        if dtype is None:
+            continue
+        for inst in dtype.instances.values():
+            if not inst.active:
+                continue
+            inst_calls: list[str] = []
+            for name, level in fields.items():
+                field = dtype.components.get(name)
+                if field is None or not field.active:
+                    continue
+                ref = f"{inst.name}%{name}"
+                inst_calls.append(
+                    f"{t2}if (associated({ref})) call offset_sets({ref}, nsets, n{level})\n"
+                )
+            if inst_calls:
+                uses.append(f"{tabs}use {inst.declaration}, only : {inst.name}\n")
+                calls.extend(inst_calls)
 
-    active_instances, use_statements, elminst_vars = (
-        hio.get_var_usage_and_elm_inst_vars(type_dict)
+    lines = [
+        "module duplicateMod\n",
+        f"{tabs}!! Auto-generated by SPEL: duplicate the input sites nsets times\n",
+        f"{tabs}use decompMod, only : bounds_type\n",
+        *uses,
+        f"{tabs}implicit none\n",
+        f"{tabs}private\n",
+        f"{tabs}public :: duplicate_sets, scale_bounds\n",
+        f"{tabs}interface offset_sets\n",
+        f"{t2}module procedure offset_sets_1d, offset_sets_2d\n",
+        f"{tabs}end interface\n",
+        "contains\n\n",
+        f"{tabs}subroutine duplicate_sets(nsets, bset)\n",
+        f"{t2}! Offset the subgrid indices of sets 2..nsets; bset is one set's bounds\n",
+        f"{t2}integer, intent(in) :: nsets\n",
+        f"{t2}type(bounds_type), intent(in) :: bset\n",
+        f"{t2}integer :: ng, nt, nl, nc, np\n",
+        f"{t2}if (nsets <= 1) return\n",
+        f"{t2}ng = bset%endg - bset%begg + 1\n",
+        f"{t2}nt = bset%endt - bset%begt + 1\n",
+        f"{t2}nl = bset%endl - bset%begl + 1\n",
+        f"{t2}nc = bset%endc - bset%begc + 1\n",
+        f"{t2}np = bset%endp - bset%begp + 1\n",
+        *calls,
+        f"{tabs}end subroutine duplicate_sets\n\n",
+        f"{tabs}subroutine scale_bounds(nsets, bounds)\n",
+        f"{t2}! Bounds of one set -> bounds spanning all nsets sets\n",
+        f"{t2}integer, intent(in) :: nsets\n",
+        f"{t2}type(bounds_type), intent(inout) :: bounds\n",
+    ]
+    for lvl in "gtlcp":
+        lines.append(
+            f"{t2}bounds%end{lvl} = bounds%beg{lvl} - 1 + "
+            f"nsets*(bounds%end{lvl} - bounds%beg{lvl} + 1)\n"
+        )
+    lines.append(f"{tabs}end subroutine scale_bounds\n\n")
+    lines.append(
+        f"{tabs}! Add (k-1)*delta to the valid (>=1) indices of set k. The subgrid\n"
+        f"{tabs}! dimension is the last one (e.g. landunit_indices(max_lunit, t)).\n"
     )
-    for stmt in use_statements:
-        file.write(stmt)
-    file.write(f"\n{spaces}use elm_instMod\n")
-    file.write("contains\n")
+    for rank, sect, size in (("1d", "lo:hi", "size(arr)"), ("2d", ":, lo:hi", "size(arr, 2)")):
+        decl = "arr(:)" if rank == "1d" else "arr(:, :)"
+        lines.extend(
+            [
+                f"{tabs}subroutine offset_sets_{rank}(arr, nsets, delta)\n",
+                f"{t2}integer, intent(inout) :: {decl}\n",
+                f"{t2}integer, intent(in) :: nsets, delta\n",
+                f"{t2}integer :: k, n, lo, hi\n",
+                f"{t2}n = {size}/nsets\n",
+                f"{t2}do k = 2, nsets\n",
+                f"{t2}{tabs}lo = (k-1)*n + 1; hi = k*n\n",
+                f"{t2}{tabs}where (arr({sect}) >= 1) arr({sect}) = arr({sect}) + (k-1)*delta\n",
+                f"{t2}end do\n",
+                f"{tabs}end subroutine offset_sets_{rank}\n\n",
+            ]
+        )
+    lines.append("end module duplicateMod\n")
 
-    file.write("subroutine duplicate_weights(unique_sites,total_gridcells)\n")
-    file.write(spaces + "use elm_varsur, only : wt_lunit, urban_valid\n")
-    file.write(spaces + "implicit none\n")
-    file.write(spaces + "integer, intent(in) :: unique_sites\n")
-    file.write(spaces + "integer, intent(in) :: total_gridcells\n")
-    file.write(spaces + "integer :: g, dim3, l, gcopy\n")
-    file.write(spaces + "dim3 = size(wt_lunit,3)\n")
-    file.write(spaces + "print *, 'dim3 = ',dim3\n")
-    file.write(spaces + "do g = unique_sites+1, total_gridcells\n")
-    file.write(spaces + spaces + "gcopy = mod(g-1,unique_sites)+1\n")
-    file.write(spaces + spaces + "do l=1,dim3\n")
-    file.write(spaces * 3 + "wt_lunit(g,1,l) = wt_lunit(gcopy,1,l)\n")
-    file.write(spaces * 2 + "end do\n")
-    file.write(spaces * 2 + "urban_valid(g,1) = urban_valid(gcopy,1)\n")
-    file.write(spaces + "end do\n")
-    file.write("end subroutine duplicate_weights\n")
-
-    file.write("subroutine duplicate_clumps(mode,unique_sites,num_sites)\n")
-
-    # Use statements
-
-    file.write(
-        spaces + "use decompMod, only : bounds_type, get_clump_bounds, procinfo\n"
-    )
-    file.write(spaces + "use elm_varcon\n")
-    file.write(spaces + "use elm_varpar\n")
-    file.write(spaces + "use elm_varctl\n")
-    file.write(spaces + "use landunit_varcon\n")
-    file.write(spaces + "implicit none\n")
-    file.write(spaces + "integer, intent(in) :: mode, unique_sites, num_sites\n")
-    file.write(spaces + "type(bounds_type)  :: bounds_copy, bounds\n")
-    file.write(spaces + "integer :: errcode, nc,nc_copy, nclumps\n")
-    file.write(spaces + "integer :: begp_copy, endp_copy, begp, endp\n")
-    file.write(spaces + "integer :: begc_copy, endc_copy, begc, endc\n")
-    file.write(spaces + "integer :: begg_copy, endg_copy, begg, endg\n")
-    file.write(spaces + "integer :: begt_copy, endt_copy, begt, endt\n")
-    file.write(spaces + "integer :: begl_copy, endl_copy, begl, endl\n")
-    file.write(spaces + "nclumps = num_sites\n")
-    #
-    file.write(spaces + "if(mode == 0) then\n")
-    file.write(spaces * 2 + "do nc=unique_sites+1, num_sites\n")
-    file.write(spaces * 3 + "nc_copy = mod(nc-1,unique_sites)+1\n")
-    file.write(spaces * 3 + "call get_clump_bounds(nc,bounds)\n")
-    file.write(spaces * 3 + "call get_clump_bounds(nc_copy,bounds_copy)\n")
-
-    file.write(spaces * 3 + "begg_copy=bounds_copy%begg; endg_copy=bounds_copy%endg\n")
-    file.write(spaces * 3 + "begt_copy=bounds_copy%begt; endt_copy=bounds_copy%endt\n")
-    file.write(spaces * 3 + "begl_copy=bounds_copy%begl; endl_copy=bounds_copy%endl\n")
-    file.write(spaces * 3 + "begc_copy=bounds_copy%begc; endc_copy=bounds_copy%endc\n")
-    file.write(spaces * 3 + "begp_copy=bounds_copy%begp; endp_copy=bounds_copy%endp\n")
-
-    file.write(spaces * 3 + "begg=bounds%begg; endg=bounds%endg\n")
-    file.write(spaces * 3 + "begt=bounds%begt; endt=bounds%endt\n")
-    file.write(spaces * 3 + "begl=bounds%begl; endl=bounds%endl\n")
-    file.write(spaces * 3 + "begc=bounds%begc; endc=bounds%endc\n")
-    file.write(spaces * 3 + "begp=bounds%begp; endp=bounds%endp\n")
-
-    # First create mode for duplicating decomp related data.
-    ignore_list = ["is_veg", "is_bareground", "wt_ed"]
-    for var in active_instances.values():
-        type_name = var.type
-        if type_name in PHYSICAL_PROP_TYPE_LIST:
-            dtype = type_dict[type_name]
-            for field_var in dtype.components.values():
-                if field_var.pointer:
-                    continue
-                active = field_var.active
-                bounds = field_var.bounds
-                if not active:
-                    continue
-                if "%" not in field_var.name:
-                    fname = var.name + "%" + field_var.name
-                    comp_name = field_var.name
-                else:
-                    fname = field_var.name
-                    comp_name = field_var.name.split("%")[1]
-                if comp_name in ignore_list:
-                    continue
-
-                dim = bounds
-                newdim = get_delta_from_dim(dim, "y")
-                dim1 = get_delta_from_dim(dim, "n")
-                dim1 = dim1.replace("_all", "")
-                if newdim == "(:)" or newdim == "":
-                    continue
-                file.write(spaces * 3 + fname + newdim + " &" + "\n")
-                file.write(spaces * 4 + "= " + fname + dim1 + "\n")
-
-    file.write(spaces * 2 + "end do\n")
-
-    file.write(spaces + "else\n")
-    file.write(spaces * 2 + "do nc=unique_sites+1, num_sites\n")
-    file.write(spaces * 3 + "nc_copy = mod(nc-1,unique_sites)+1\n")
-    file.write(spaces * 3 + "call get_clump_bounds(nc,bounds)\n")
-    file.write(spaces * 3 + "call get_clump_bounds(nc_copy,bounds_copy)\n")
-
-    file.write(spaces * 3 + "begg_copy=bounds_copy%begg; endg_copy=bounds_copy%endg\n")
-    file.write(spaces * 3 + "begt_copy=bounds_copy%begt; endt_copy=bounds_copy%endt\n")
-    file.write(spaces * 3 + "begl_copy=bounds_copy%begl; endl_copy=bounds_copy%endl\n")
-    file.write(spaces * 3 + "begc_copy=bounds_copy%begc; endc_copy=bounds_copy%endc\n")
-    file.write(spaces * 3 + "begp_copy=bounds_copy%begp; endp_copy=bounds_copy%endp\n")
-
-    file.write(spaces * 3 + "begg=bounds%begg; endg=bounds%endg\n")
-    file.write(spaces * 3 + "begt=bounds%begt; endt=bounds%endt\n")
-    file.write(spaces * 3 + "begl=bounds%begl; endl=bounds%endl\n")
-    file.write(spaces * 3 + "begc=bounds%begc; endc=bounds%endc\n")
-    file.write(spaces * 3 + "begp=bounds%begp; endp=bounds%endp\n")
-
-    # Duplicate statements for unit test variables
-    for var in active_instances.values():
-        type_name = var.type
-        if type_name not in PHYSICAL_PROP_TYPE_LIST:
-            dtype = type_dict[type_name]
-            for field_var in dtype.components.values():
-                if not var.active:
-                    continue
-                for field_var in dtype.components.values():
-                    if field_var.pointer:
-                        continue
-                    active = field_var.active
-                    bounds = field_var.bounds
-                    if not active:
-                        continue
-                    if "%" not in field_var.name:
-                        fname = var.name + "%" + field_var.name
-                        comp_name = field_var.name
-                    else:
-                        fname = field_var.name
-                        comp_name = field_var.name.split("%")[1]
-                    dim = bounds
-                    newdim = get_delta_from_dim(dim, "y")
-                    dim1 = get_delta_from_dim(dim, "n")
-                    dim1 = dim1.replace("_all", "")
-                    if newdim == "(:)" or newdim == "":
-                        continue
-                    file.write(spaces * 3 + fname + newdim + " &" + "\n")
-                    file.write(spaces * 4 + "= " + fname + dim1 + "\n")
-
-    file.write(spaces + "end do\n")
-    file.write(spaces + "end if\n")
-
-    file.write("end subroutine duplicate_clumps\n")
-    file.write("end module\n")
-    file.close()
+    with open(f"{spel_output_dir}/duplicateMod.F90", "w") as ofile:
+        ofile.writelines(lines)
 
 
 def create_init_params(global_vars: dict[str, Variable], casedir: Path):

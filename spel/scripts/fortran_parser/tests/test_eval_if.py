@@ -1,7 +1,6 @@
 from pprint import pprint
 
 from spel.scripts.analyze_subroutines import Subroutine
-from spel.scripts.export_objects import unpickle_unit_test
 from spel.scripts.fortran_parser import lexer
 from spel.scripts.fortran_parser.evaluate_ifs import eval_if_condition
 from spel.scripts.fortran_parser.spel_ast import (
@@ -14,8 +13,8 @@ from spel.scripts.fortran_parser.spel_parser import Parser
 from spel.scripts.types import LineTuple, LogicalLineIterator
 
 
-def test_ifs():
-    fut = unpickle_unit_test("fut")
+def test_ifs(elm_drv_analysis):
+    fut = elm_drv_analysis
     env_strings: dict[str, str] = {
         "use_lch4": ".false.",
         "no_frozen_nitrif_denitrif": ".true.",

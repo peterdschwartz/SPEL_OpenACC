@@ -27,6 +27,10 @@ module nc_io
     procedure, private :: need_new_file
   end type spel_io_type
   type(spel_io_type), public :: io_constants, io_inputs, io_outputs
+  ! Number of copies of the input sites (unit tests only). Arrays with a
+  ! subgrid dimension are allocated nsets times larger along it, reads
+  ! replicate the file data into every set and writes emit set 1 only.
+  integer, public :: spel_nsets = 1
   interface nc_write_var_array
     module procedure nc_write_double
     module procedure nc_write_integer
@@ -53,6 +57,9 @@ module nc_io
     module procedure nc_read_logical_3
     module procedure nc_read_string
   end interface
+  interface nc_select_set1
+    module procedure nc_select_set1_r8, nc_select_set1_int
+  end interface
   public :: nc_read_timeslices
 contains
 
@@ -63,6 +70,155 @@ subroutine check(status)
       stop 2
    end if
 end subroutine check
+
+logical function nc_is_index_field(varname)
+   ! Subgrid index fields (<inst>_pp__<field>) are offset per set by duplicateMod
+   character(len=*), intent(in) :: varname
+   integer :: i
+   nc_is_index_field = .false.
+   i = index(varname, '_pp__', back=.true.)
+   if (i == 0) return
+   select case (trim(varname(i+5:)))
+   case ('colf', 'coli', 'column', 'downhill_ti', 'gindex', 'gridcell', 'landunit', 'landunit_indices', 'lndf', 'lndi', 'pftf', 'pfti', 'topf', 'topi', 'topounit')
+      nc_is_index_field = .true.
+   end select
+end function nc_is_index_field
+
+logical function nc_is_subgrid(name)
+   character(len=*), intent(in) :: name
+   select case (trim(name))
+   case ('gridcell', 'topo', 'landunit', 'column', 'patch')
+      nc_is_subgrid = .true.
+   case default
+      nc_is_subgrid = .false.
+   end select
+end function nc_is_subgrid
+
+integer function nc_subgrid_dim(ndim, dim_names) result(sd)
+   ! First subgrid dimension of a variable, or 0 when not duplicating.
+   integer, intent(in) :: ndim
+   character(len=*), dimension(:), intent(in) :: dim_names
+   integer :: i
+   sd = 0
+   if (spel_nsets <= 1) return
+   do i = 1, min(ndim, size(dim_names))
+      if (nc_is_subgrid(dim_names(i))) then
+         sd = i
+         return
+      end if
+   end do
+end function nc_subgrid_dim
+
+subroutine nc_file_subgrid(ncid, var_id, ndim, sd, nfile)
+   ! First subgrid dimension (sd) of a file variable and its length in
+   ! the file (nfile); sd = 0 when not duplicating.
+   integer, intent(in) :: ncid, var_id, ndim
+   integer, intent(out) :: sd, nfile
+   integer :: nd, i
+   integer, allocatable :: dimids(:)
+   character(len=nf90_max_name) :: dname
+   sd = 0; nfile = 0
+   if (spel_nsets <= 1) return
+   call check(nf90_inquire_variable(ncid, var_id, ndims=nd))
+   allocate (dimids(nd))
+   call check(nf90_inquire_variable(ncid, var_id, dimids=dimids))
+   do i = 1, min(ndim, nd)
+      call check(nf90_inquire_dimension(ncid, dimids(i), name=dname, len=nfile))
+      if (nc_is_subgrid(dname)) then
+         sd = i
+         return
+      end if
+   end do
+   nfile = 0
+end subroutine nc_file_subgrid
+
+integer function nc_set_ub(lb, ub) result(ub1)
+   ! Upper bound of set 1 for a range duplicated spel_nsets times.
+   integer, intent(in) :: lb, ub
+   ub1 = ub
+   if (spel_nsets <= 1) return
+   if (mod(ub - lb + 1, spel_nsets) /= 0) return
+   ub1 = lb - 1 + (ub - lb + 1)/spel_nsets
+end function nc_set_ub
+
+subroutine nc_put_bounds_att(ncid, varid, ndim, dim_names, lbs, ubs)
+   ! Write l/ubounds attributes, as set 1's bounds when duplicating.
+   integer, intent(in) :: ncid, varid, ndim
+   character(len=*), dimension(:), intent(in) :: dim_names
+   integer, intent(in) :: lbs(ndim), ubs(ndim)
+   integer :: ub1(ndim), sd
+   ub1 = ubs
+   sd = nc_subgrid_dim(ndim, dim_names)
+   if (sd > 0) ub1(sd) = nc_set_ub(lbs(sd), ubs(sd))
+   call check(nf90_put_att(ncid, varid, 'lbounds', lbs))
+   call check(nf90_put_att(ncid, varid, 'ubounds', ub1))
+end subroutine nc_put_bounds_att
+
+subroutine nc_select_set1_r8(ndim, dims, dim_names, buffer, varname)
+   ! Reduce a flattened write buffer to set 1 along its subgrid dimension
+   ! and report values in the other sets that differ from set 1.
+   use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
+   integer, intent(in) :: ndim
+   integer, intent(inout) :: dims(ndim)
+   character(len=*), dimension(:), intent(in) :: dim_names
+   real(8), allocatable, intent(inout) :: buffer(:)
+   character(len=*), intent(in) :: varname
+   real(8), allocatable :: b3(:,:,:)
+   integer :: sd, n1, pre, post, k, nbad
+   sd = nc_subgrid_dim(ndim, dim_names)
+   if (sd == 0) return
+   if (mod(dims(sd), spel_nsets) /= 0) return
+   n1 = dims(sd)/spel_nsets
+   pre = product(dims(1:sd-1))
+   post = product(dims(sd+1:ndim))
+   b3 = reshape(buffer, [pre, dims(sd), post])
+   nbad = 0
+   do k = 2, spel_nsets
+      nbad = nbad + count(differs(b3(:, (k-1)*n1+1:k*n1, :), b3(:, 1:n1, :)))
+   end do
+   if (nbad > 0 .and. .not. nc_is_index_field(varname)) print *, 'WARNING (spel_nsets): ', trim(varname), nbad, &
+      ' values in sets 2..nsets differ from set 1'
+   buffer = reshape(b3(:, 1:n1, :), [pre*n1*post])
+   dims(sd) = n1
+contains
+   elemental logical function differs(a, b)
+      real(8), intent(in) :: a, b
+      differs = a /= b .and. .not. (ieee_is_nan(a) .and. ieee_is_nan(b))
+   end function differs
+end subroutine nc_select_set1_r8
+
+subroutine nc_select_set1_int(ndim, dims, dim_names, buffer, varname)
+   ! Reduce a flattened write buffer to set 1 along its subgrid dimension
+   ! and report values in the other sets that differ from set 1.
+   use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
+   integer, intent(in) :: ndim
+   integer, intent(inout) :: dims(ndim)
+   character(len=*), dimension(:), intent(in) :: dim_names
+   integer, allocatable, intent(inout) :: buffer(:)
+   character(len=*), intent(in) :: varname
+   integer, allocatable :: b3(:,:,:)
+   integer :: sd, n1, pre, post, k, nbad
+   sd = nc_subgrid_dim(ndim, dim_names)
+   if (sd == 0) return
+   if (mod(dims(sd), spel_nsets) /= 0) return
+   n1 = dims(sd)/spel_nsets
+   pre = product(dims(1:sd-1))
+   post = product(dims(sd+1:ndim))
+   b3 = reshape(buffer, [pre, dims(sd), post])
+   nbad = 0
+   do k = 2, spel_nsets
+      nbad = nbad + count(differs(b3(:, (k-1)*n1+1:k*n1, :), b3(:, 1:n1, :)))
+   end do
+   if (nbad > 0 .and. .not. nc_is_index_field(varname)) print *, 'WARNING (spel_nsets): ', trim(varname), nbad, &
+      ' values in sets 2..nsets differ from set 1'
+   buffer = reshape(b3(:, 1:n1, :), [pre*n1*post])
+   dims(sd) = n1
+contains
+   elemental logical function differs(a, b)
+      integer, intent(in) :: a, b
+      differs = a /= b
+   end function differs
+end subroutine nc_select_set1_int
 
 integer function nc_create_or_open_file(fn, mode) result(ncid)
    character(len=*), intent(in) :: fn
@@ -159,12 +315,19 @@ subroutine nc_define_var(ncid, ndim, dims, dim_list, varname, xtype, var_id, tim
    integer, intent(out) :: var_id
    logical, intent(in) :: time
    ! Locals
-   integer :: i, status, total_dims
+   integer :: i, status, total_dims, sd
+   integer :: ldims(ndim+1)
    integer, allocatable :: dim_ids(:)
    character(len=32), allocatable :: dim_names(:)
 
    allocate(dim_names(ndim))
    dim_names(:) = dim_list(:)
+   ldims(1:ndim) = dims
+   ldims(ndim+1) = 0
+   sd = nc_subgrid_dim(ndim, dim_names)
+   if (sd > 0) then
+      if (mod(ldims(sd), spel_nsets) == 0) ldims(sd) = ldims(sd)/spel_nsets
+   end if
 
    total_dims = ndim
    if (time) then 
@@ -176,7 +339,7 @@ subroutine nc_define_var(ncid, ndim, dims, dim_list, varname, xtype, var_id, tim
    do i = 1, total_dims
       status = nf90_inq_dimid(ncid, trim(dim_names(i)), dim_ids(i))
       if(status .ne. nf90_noerr) then
-         call check(nf90_def_dim(ncid, trim(dim_names(i)), dims(i), dim_ids(i)))
+         call check(nf90_def_dim(ncid, trim(dim_names(i)), ldims(i), dim_ids(i)))
       end if
    end do
 
@@ -216,82 +379,148 @@ subroutine nc_read_double_0(ncid, varname, var, timestep)
 end subroutine nc_read_double_0
 
 
-subroutine nc_read_double_1(ncid, varname, ndim, var, timestep)
-   integer, intent(in) :: ncid
-   character(len=*), intent(in) :: varname
-   integer, intent(in) :: ndim 
-   real(8), intent(out) :: var(:)
-   integer, intent(in) :: timestep
-   integer :: var_id
-   integer, allocatable :: start(:), count(:)
+  subroutine nc_read_double_1(ncid, varname, ndim, var, timestep)
+     integer, intent(in) :: ncid
+     character(len=*), intent(in) :: varname
+     integer, intent(in) :: ndim 
+     real(8), intent(out) :: var(:)
+     integer, intent(in) :: timestep
+     integer :: var_id
+     integer, allocatable :: start(:), count(:)
+     real(8), allocatable :: tmp(:)
+     integer :: sd, nfile, k, lo, hi
 
-   if (timestep > 0) then
-     allocate(start(ndim+1), count(ndim+1))
-     start(1:ndim) = 1
-     start(ndim+1) = timestep
-     count(1:ndim) = shape(var)
-     count(ndim+1) = 1
-  else
-     allocate(start(ndim), count(ndim))
-     start(1:ndim) = 1
-     count(1:ndim) = shape(var)
-  end if
+     if (timestep > 0) then
+       allocate(start(ndim+1), count(ndim+1))
+       start(1:ndim) = 1
+       start(ndim+1) = timestep
+       count(1:ndim) = shape(var)
+       count(ndim+1) = 1
+    else
+       allocate(start(ndim), count(ndim))
+       start(1:ndim) = 1
+       count(1:ndim) = shape(var)
+    end if
 
-   call check(nf90_inq_varid(ncid, trim(varname), var_id))
-   call check(nf90_get_var(ncid, var_id, var,start=start, count=count))
-end subroutine nc_read_double_1
-
-
-subroutine nc_read_double_2(ncid, varname, ndim, var, timestep)
-   integer, intent(in) :: ncid
-   character(len=*), intent(in) :: varname
-   integer, intent(in) :: ndim 
-   real(8), intent(out) :: var(:,:)
-   integer, intent(in) :: timestep
-   integer :: var_id
-   integer, allocatable :: start(:), count(:)
-
-   if (timestep > 0) then
-     allocate(start(ndim+1), count(ndim+1))
-     start(1:ndim) = 1
-     start(ndim+1) = timestep
-     count(1:ndim) = shape(var)
-     count(ndim+1) = 1
-  else
-     allocate(start(ndim), count(ndim))
-     start(1:ndim) = 1
-     count(1:ndim) = shape(var)
-  end if
-
-   call check(nf90_inq_varid(ncid, trim(varname), var_id))
-   call check(nf90_get_var(ncid, var_id, var,start=start, count=count))
-end subroutine nc_read_double_2
+     call check(nf90_inq_varid(ncid, trim(varname), var_id))
+     call nc_file_subgrid(ncid, var_id, ndim, sd, nfile)
+     if (sd > 0) then
+        if (size(var, sd) /= spel_nsets*nfile) sd = 0
+     end if
+     if (sd == 0) then
+        call check(nf90_get_var(ncid, var_id, var,start=start, count=count))
+     else
+        ! read set 1 from the file and replicate it into every set
+        count(sd) = nfile
+        allocate(tmp(count(1)))
+        call check(nf90_get_var(ncid, var_id, tmp,start=start, count=count))
+        do k = 1, spel_nsets
+           lo = (k-1)*nfile + 1; hi = k*nfile
+           select case (sd)
+           case (1)
+              var(lo:hi) = tmp
+           end select
+        end do
+     end if
+  end subroutine nc_read_double_1
 
 
-subroutine nc_read_double_3(ncid, varname, ndim, var, timestep)
-   integer, intent(in) :: ncid
-   character(len=*), intent(in) :: varname
-   integer, intent(in) :: ndim 
-   real(8), intent(out) :: var(:,:,:)
-   integer, intent(in) :: timestep
-   integer :: var_id
-   integer, allocatable :: start(:), count(:)
+  subroutine nc_read_double_2(ncid, varname, ndim, var, timestep)
+     integer, intent(in) :: ncid
+     character(len=*), intent(in) :: varname
+     integer, intent(in) :: ndim 
+     real(8), intent(out) :: var(:,:)
+     integer, intent(in) :: timestep
+     integer :: var_id
+     integer, allocatable :: start(:), count(:)
+     real(8), allocatable :: tmp(:,:)
+     integer :: sd, nfile, k, lo, hi
 
-   if (timestep > 0) then
-     allocate(start(ndim+1), count(ndim+1))
-     start(1:ndim) = 1
-     start(ndim+1) = timestep
-     count(1:ndim) = shape(var)
-     count(ndim+1) = 1
-  else
-     allocate(start(ndim), count(ndim))
-     start(1:ndim) = 1
-     count(1:ndim) = shape(var)
-  end if
+     if (timestep > 0) then
+       allocate(start(ndim+1), count(ndim+1))
+       start(1:ndim) = 1
+       start(ndim+1) = timestep
+       count(1:ndim) = shape(var)
+       count(ndim+1) = 1
+    else
+       allocate(start(ndim), count(ndim))
+       start(1:ndim) = 1
+       count(1:ndim) = shape(var)
+    end if
 
-   call check(nf90_inq_varid(ncid, trim(varname), var_id))
-   call check(nf90_get_var(ncid, var_id, var,start=start, count=count))
-end subroutine nc_read_double_3
+     call check(nf90_inq_varid(ncid, trim(varname), var_id))
+     call nc_file_subgrid(ncid, var_id, ndim, sd, nfile)
+     if (sd > 0) then
+        if (size(var, sd) /= spel_nsets*nfile) sd = 0
+     end if
+     if (sd == 0) then
+        call check(nf90_get_var(ncid, var_id, var,start=start, count=count))
+     else
+        ! read set 1 from the file and replicate it into every set
+        count(sd) = nfile
+        allocate(tmp(count(1),count(2)))
+        call check(nf90_get_var(ncid, var_id, tmp,start=start, count=count))
+        do k = 1, spel_nsets
+           lo = (k-1)*nfile + 1; hi = k*nfile
+           select case (sd)
+           case (1)
+              var(lo:hi,:) = tmp
+           case (2)
+              var(:,lo:hi) = tmp
+           end select
+        end do
+     end if
+  end subroutine nc_read_double_2
+
+
+  subroutine nc_read_double_3(ncid, varname, ndim, var, timestep)
+     integer, intent(in) :: ncid
+     character(len=*), intent(in) :: varname
+     integer, intent(in) :: ndim 
+     real(8), intent(out) :: var(:,:,:)
+     integer, intent(in) :: timestep
+     integer :: var_id
+     integer, allocatable :: start(:), count(:)
+     real(8), allocatable :: tmp(:,:,:)
+     integer :: sd, nfile, k, lo, hi
+
+     if (timestep > 0) then
+       allocate(start(ndim+1), count(ndim+1))
+       start(1:ndim) = 1
+       start(ndim+1) = timestep
+       count(1:ndim) = shape(var)
+       count(ndim+1) = 1
+    else
+       allocate(start(ndim), count(ndim))
+       start(1:ndim) = 1
+       count(1:ndim) = shape(var)
+    end if
+
+     call check(nf90_inq_varid(ncid, trim(varname), var_id))
+     call nc_file_subgrid(ncid, var_id, ndim, sd, nfile)
+     if (sd > 0) then
+        if (size(var, sd) /= spel_nsets*nfile) sd = 0
+     end if
+     if (sd == 0) then
+        call check(nf90_get_var(ncid, var_id, var,start=start, count=count))
+     else
+        ! read set 1 from the file and replicate it into every set
+        count(sd) = nfile
+        allocate(tmp(count(1),count(2),count(3)))
+        call check(nf90_get_var(ncid, var_id, tmp,start=start, count=count))
+        do k = 1, spel_nsets
+           lo = (k-1)*nfile + 1; hi = k*nfile
+           select case (sd)
+           case (1)
+              var(lo:hi,:,:) = tmp
+           case (2)
+              var(:,lo:hi,:) = tmp
+           case (3)
+              var(:,:,lo:hi) = tmp
+           end select
+        end do
+     end if
+  end subroutine nc_read_double_3
 
 
 subroutine nc_read_integer_0(ncid, varname, var, timestep)
@@ -313,82 +542,148 @@ subroutine nc_read_integer_0(ncid, varname, var, timestep)
 end subroutine nc_read_integer_0
 
 
-subroutine nc_read_integer_1(ncid, varname, ndim, var, timestep)
-   integer, intent(in) :: ncid
-   character(len=*), intent(in) :: varname
-   integer, intent(in) :: ndim 
-   integer, intent(out) :: var(:)
-   integer, intent(in) :: timestep
-   integer :: var_id
-   integer, allocatable :: start(:), count(:)
+  subroutine nc_read_integer_1(ncid, varname, ndim, var, timestep)
+     integer, intent(in) :: ncid
+     character(len=*), intent(in) :: varname
+     integer, intent(in) :: ndim 
+     integer, intent(out) :: var(:)
+     integer, intent(in) :: timestep
+     integer :: var_id
+     integer, allocatable :: start(:), count(:)
+     integer, allocatable :: tmp(:)
+     integer :: sd, nfile, k, lo, hi
 
-   if (timestep > 0) then
-     allocate(start(ndim+1), count(ndim+1))
-     start(1:ndim) = 1
-     start(ndim+1) = timestep
-     count(1:ndim) = shape(var)
-     count(ndim+1) = 1
-  else
-     allocate(start(ndim), count(ndim))
-     start(1:ndim) = 1
-     count(1:ndim) = shape(var)
-  end if
+     if (timestep > 0) then
+       allocate(start(ndim+1), count(ndim+1))
+       start(1:ndim) = 1
+       start(ndim+1) = timestep
+       count(1:ndim) = shape(var)
+       count(ndim+1) = 1
+    else
+       allocate(start(ndim), count(ndim))
+       start(1:ndim) = 1
+       count(1:ndim) = shape(var)
+    end if
 
-   call check(nf90_inq_varid(ncid, trim(varname), var_id))
-   call check(nf90_get_var(ncid, var_id, var,start=start, count=count))
-end subroutine nc_read_integer_1
-
-
-subroutine nc_read_integer_2(ncid, varname, ndim, var, timestep)
-   integer, intent(in) :: ncid
-   character(len=*), intent(in) :: varname
-   integer, intent(in) :: ndim 
-   integer, intent(out) :: var(:,:)
-   integer, intent(in) :: timestep
-   integer :: var_id
-   integer, allocatable :: start(:), count(:)
-
-   if (timestep > 0) then
-     allocate(start(ndim+1), count(ndim+1))
-     start(1:ndim) = 1
-     start(ndim+1) = timestep
-     count(1:ndim) = shape(var)
-     count(ndim+1) = 1
-  else
-     allocate(start(ndim), count(ndim))
-     start(1:ndim) = 1
-     count(1:ndim) = shape(var)
-  end if
-
-   call check(nf90_inq_varid(ncid, trim(varname), var_id))
-   call check(nf90_get_var(ncid, var_id, var,start=start, count=count))
-end subroutine nc_read_integer_2
+     call check(nf90_inq_varid(ncid, trim(varname), var_id))
+     call nc_file_subgrid(ncid, var_id, ndim, sd, nfile)
+     if (sd > 0) then
+        if (size(var, sd) /= spel_nsets*nfile) sd = 0
+     end if
+     if (sd == 0) then
+        call check(nf90_get_var(ncid, var_id, var,start=start, count=count))
+     else
+        ! read set 1 from the file and replicate it into every set
+        count(sd) = nfile
+        allocate(tmp(count(1)))
+        call check(nf90_get_var(ncid, var_id, tmp,start=start, count=count))
+        do k = 1, spel_nsets
+           lo = (k-1)*nfile + 1; hi = k*nfile
+           select case (sd)
+           case (1)
+              var(lo:hi) = tmp
+           end select
+        end do
+     end if
+  end subroutine nc_read_integer_1
 
 
-subroutine nc_read_integer_3(ncid, varname, ndim, var, timestep)
-   integer, intent(in) :: ncid
-   character(len=*), intent(in) :: varname
-   integer, intent(in) :: ndim 
-   integer, intent(out) :: var(:,:,:)
-   integer, intent(in) :: timestep
-   integer :: var_id
-   integer, allocatable :: start(:), count(:)
+  subroutine nc_read_integer_2(ncid, varname, ndim, var, timestep)
+     integer, intent(in) :: ncid
+     character(len=*), intent(in) :: varname
+     integer, intent(in) :: ndim 
+     integer, intent(out) :: var(:,:)
+     integer, intent(in) :: timestep
+     integer :: var_id
+     integer, allocatable :: start(:), count(:)
+     integer, allocatable :: tmp(:,:)
+     integer :: sd, nfile, k, lo, hi
 
-   if (timestep > 0) then
-     allocate(start(ndim+1), count(ndim+1))
-     start(1:ndim) = 1
-     start(ndim+1) = timestep
-     count(1:ndim) = shape(var)
-     count(ndim+1) = 1
-  else
-     allocate(start(ndim), count(ndim))
-     start(1:ndim) = 1
-     count(1:ndim) = shape(var)
-  end if
+     if (timestep > 0) then
+       allocate(start(ndim+1), count(ndim+1))
+       start(1:ndim) = 1
+       start(ndim+1) = timestep
+       count(1:ndim) = shape(var)
+       count(ndim+1) = 1
+    else
+       allocate(start(ndim), count(ndim))
+       start(1:ndim) = 1
+       count(1:ndim) = shape(var)
+    end if
 
-   call check(nf90_inq_varid(ncid, trim(varname), var_id))
-   call check(nf90_get_var(ncid, var_id, var,start=start, count=count))
-end subroutine nc_read_integer_3
+     call check(nf90_inq_varid(ncid, trim(varname), var_id))
+     call nc_file_subgrid(ncid, var_id, ndim, sd, nfile)
+     if (sd > 0) then
+        if (size(var, sd) /= spel_nsets*nfile) sd = 0
+     end if
+     if (sd == 0) then
+        call check(nf90_get_var(ncid, var_id, var,start=start, count=count))
+     else
+        ! read set 1 from the file and replicate it into every set
+        count(sd) = nfile
+        allocate(tmp(count(1),count(2)))
+        call check(nf90_get_var(ncid, var_id, tmp,start=start, count=count))
+        do k = 1, spel_nsets
+           lo = (k-1)*nfile + 1; hi = k*nfile
+           select case (sd)
+           case (1)
+              var(lo:hi,:) = tmp
+           case (2)
+              var(:,lo:hi) = tmp
+           end select
+        end do
+     end if
+  end subroutine nc_read_integer_2
+
+
+  subroutine nc_read_integer_3(ncid, varname, ndim, var, timestep)
+     integer, intent(in) :: ncid
+     character(len=*), intent(in) :: varname
+     integer, intent(in) :: ndim 
+     integer, intent(out) :: var(:,:,:)
+     integer, intent(in) :: timestep
+     integer :: var_id
+     integer, allocatable :: start(:), count(:)
+     integer, allocatable :: tmp(:,:,:)
+     integer :: sd, nfile, k, lo, hi
+
+     if (timestep > 0) then
+       allocate(start(ndim+1), count(ndim+1))
+       start(1:ndim) = 1
+       start(ndim+1) = timestep
+       count(1:ndim) = shape(var)
+       count(ndim+1) = 1
+    else
+       allocate(start(ndim), count(ndim))
+       start(1:ndim) = 1
+       count(1:ndim) = shape(var)
+    end if
+
+     call check(nf90_inq_varid(ncid, trim(varname), var_id))
+     call nc_file_subgrid(ncid, var_id, ndim, sd, nfile)
+     if (sd > 0) then
+        if (size(var, sd) /= spel_nsets*nfile) sd = 0
+     end if
+     if (sd == 0) then
+        call check(nf90_get_var(ncid, var_id, var,start=start, count=count))
+     else
+        ! read set 1 from the file and replicate it into every set
+        count(sd) = nfile
+        allocate(tmp(count(1),count(2),count(3)))
+        call check(nf90_get_var(ncid, var_id, tmp,start=start, count=count))
+        do k = 1, spel_nsets
+           lo = (k-1)*nfile + 1; hi = k*nfile
+           select case (sd)
+           case (1)
+              var(lo:hi,:,:) = tmp
+           case (2)
+              var(:,lo:hi,:) = tmp
+           case (3)
+              var(:,:,lo:hi) = tmp
+           end select
+        end do
+     end if
+  end subroutine nc_read_integer_3
 
 
 subroutine nc_read_logical_0(ncid, varname, var, timestep)
@@ -501,9 +796,12 @@ subroutine nc_write_integer(ncid, ndim, dims, dim_names, var, varname, timestep)
    real(8), allocatable :: data_1d(:), data_2d(:, :), data_3d(:, :, :)
    real(8), allocatable :: buffer(:)
    integer, allocatable :: start(:), count(:)
+   integer :: ldims(ndim)
 
    allocate (buffer(product(dims)))
    buffer = var
+   ldims = dims
+   if (spel_nsets > 1) call nc_select_set1(ndim, ldims, dim_names, buffer, varname)
    if(timestep > 0) then 
       unlim = .true.
       allocate(start(ndim+1), count(ndim+1))
@@ -514,7 +812,7 @@ subroutine nc_write_integer(ncid, ndim, dims, dim_names, var, varname, timestep)
 
    do i = 1, ndim
       start(i) = 1
-      count(i) = dims(i)
+      count(i) = ldims(i)
    end do
 
    if (unlim) then 
@@ -525,13 +823,13 @@ subroutine nc_write_integer(ncid, ndim, dims, dim_names, var, varname, timestep)
    call check(nf90_inq_varid(ncid, trim(varname), var_id))
    select case (ndim)
    case (1)
-      allocate (data_1d(dims(1))); data_1d = reshape(buffer, [dims(1)])
+      allocate (data_1d(ldims(1))); data_1d = reshape(buffer, [ldims(1)])
       call check(nf90_put_var(ncid, var_id, data_1d,start=start,count=count))
    case (2)
-      allocate (data_2d(dims(1), dims(2))); data_2d = reshape(buffer, [dims(1), dims(2)])
+      allocate (data_2d(ldims(1), ldims(2))); data_2d = reshape(buffer, [ldims(1), ldims(2)])
       call check(nf90_put_var(ncid, var_id, data_2d,start=start,count=count))
    case (3)
-      allocate (data_3d(dims(1), dims(2), dims(3))); data_3d = reshape(buffer, [dims(1), dims(2), dims(3)])
+      allocate (data_3d(ldims(1), ldims(2), ldims(3))); data_3d = reshape(buffer, [ldims(1), ldims(2), ldims(3)])
       call check(nf90_put_var(ncid, var_id, data_3d,start=start,count=count))
    case default
       stop "(nc_write_integer) doesn't support >3D doubles"
@@ -553,9 +851,12 @@ subroutine nc_write_double(ncid, ndim, dims, dim_names, var, varname, timestep)
    real(8), allocatable :: data_1d(:), data_2d(:, :), data_3d(:, :, :)
    real(8), allocatable :: buffer(:)
    integer, allocatable :: start(:), count(:)
+   integer :: ldims(ndim)
 
    allocate (buffer(product(dims)))
    buffer = var
+   ldims = dims
+   if (spel_nsets > 1) call nc_select_set1(ndim, ldims, dim_names, buffer, varname)
    if(timestep > 0) then 
       unlim = .true.
       allocate(start(ndim+1), count(ndim+1))
@@ -566,7 +867,7 @@ subroutine nc_write_double(ncid, ndim, dims, dim_names, var, varname, timestep)
 
    do i = 1, ndim
       start(i) = 1
-      count(i) = dims(i)
+      count(i) = ldims(i)
    end do
 
    if (unlim) then 
@@ -577,13 +878,13 @@ subroutine nc_write_double(ncid, ndim, dims, dim_names, var, varname, timestep)
    call check(nf90_inq_varid(ncid, trim(varname), var_id))
    select case (ndim)
    case (1)
-      allocate (data_1d(dims(1))); data_1d = reshape(buffer, [dims(1)])
+      allocate (data_1d(ldims(1))); data_1d = reshape(buffer, [ldims(1)])
       call check(nf90_put_var(ncid, var_id, data_1d,start=start,count=count))
    case (2)
-      allocate (data_2d(dims(1), dims(2))); data_2d = reshape(buffer, [dims(1), dims(2)])
+      allocate (data_2d(ldims(1), ldims(2))); data_2d = reshape(buffer, [ldims(1), ldims(2)])
       call check(nf90_put_var(ncid, var_id, data_2d,start=start,count=count))
    case (3)
-      allocate (data_3d(dims(1), dims(2), dims(3))); data_3d = reshape(buffer, [dims(1), dims(2), dims(3)])
+      allocate (data_3d(ldims(1), ldims(2), ldims(3))); data_3d = reshape(buffer, [ldims(1), ldims(2), ldims(3)])
       call check(nf90_put_var(ncid, var_id, data_3d,start=start,count=count))
    case default
       stop "(nc_write_double) doesn't support >3D doubles"
@@ -637,8 +938,12 @@ subroutine nc_write_logical(ncid, ndim, dims, dim_names, var, varname, timestep)
    logical :: unlim
    integer, allocatable :: start(:), count(:)
 
+   integer :: ldims(ndim)
+
    allocate (int_buf(product(dims)))
    int_buf = merge(1, 0, var)  ! logical → int (1=true, 0=false)
+   ldims = dims
+   if (spel_nsets > 1) call nc_select_set1(ndim, ldims, dim_names, int_buf, varname)
    if(timestep > 0) then 
       unlim = .true.
       allocate(start(ndim+1), count(ndim+1))
@@ -649,7 +954,7 @@ subroutine nc_write_logical(ncid, ndim, dims, dim_names, var, varname, timestep)
 
    do i = 1, ndim
       start(i) = 1
-      count(i) = dims(i)
+      count(i) = ldims(i)
    end do
 
    if (unlim) then 
@@ -660,13 +965,13 @@ subroutine nc_write_logical(ncid, ndim, dims, dim_names, var, varname, timestep)
    call check(nf90_inq_varid(ncid, trim(varname), var_id))
    select case (ndim)
    case (1)
-      allocate (data_1d(dims(1))); data_1d = reshape(int_buf, [dims(1)])
+      allocate (data_1d(ldims(1))); data_1d = reshape(int_buf, [ldims(1)])
       call check(nf90_put_var(ncid, var_id, data_1d,start=start,count=count))
    case (2)
-      allocate (data_2d(dims(1), dims(2))); data_2d = reshape(int_buf, [dims(1), dims(2)])
+      allocate (data_2d(ldims(1), ldims(2))); data_2d = reshape(int_buf, [ldims(1), ldims(2)])
       call check(nf90_put_var(ncid, var_id, data_2d,start=start,count=count))
    case (3)
-      allocate (data_3d(dims(1), dims(2), dims(3))); data_3d = reshape(int_buf, [dims(1), dims(2), dims(3)])
+      allocate (data_3d(ldims(1), ldims(2), ldims(3))); data_3d = reshape(int_buf, [ldims(1), ldims(2), ldims(3)])
       call check(nf90_put_var(ncid, var_id, data_3d,start=start,count=count))
    case default
       stop "(nc_write_logical) doesn't support >3D vars"

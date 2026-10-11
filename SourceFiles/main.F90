@@ -4,7 +4,6 @@ use shr_kind_mod, only: r8 => shr_kind_r8
 use UpdateParamsAccMod, only: update_params_acc
 use elm_varctl
 use filterMod
-!!use decompMod, only: get_clump_bounds_gpu, gpu_clumps, gpu_procinfo, init_proc_clump_info
 use decompMod, only: get_proc_bounds, get_clump_bounds, procinfo, clumps
 use ReadWriteMod, only : write_elmtypes, read_elmtypes
 use decompMod, only: bounds_type
@@ -13,6 +12,7 @@ use cudafor
 #endif
 use timeInfoMod
 use elm_initializeMod
+use duplicateMod, only: duplicate_sets
 use nc_io, only: nc_read_timeslices, spel_io_init, io_constants, io_inputs, io_outputs
 !#USE_START
 
@@ -25,8 +25,8 @@ integer :: err
 integer(kind=cuda_count_kind) :: heapsize, free1, free2, total
 integer  :: istat, val
 #endif
-character(len=50) :: clump_input_char, pproc_input_char
-integer :: nsets, pproc_input, fc, c, l, fp, g, j
+character(len=50) :: nsets_char
+integer :: nsets, fc, c, l, fp, g, j
 integer :: begg, endg
 integer :: time_len
 real(r8) :: declin, declinp1
@@ -37,38 +37,30 @@ real(r8), allocatable :: icemask_dummy_arr(:)
 !========================== Initialize/Allocate variables =======================!
 !First, make sure the right number of inputs have been provided
 
-IF (COMMAND_ARGUMENT_COUNT() == 0) THEN
-   WRITE (*, *) 'ONE COMMAND-LINE ARGUMENT DETECTED, Defaulting to 1 site per clump'
-   nsets = 1
-   pproc_input = 1 !1 site per clump
-
-elseIF (COMMAND_ARGUMENT_COUNT() == 1) THEN
-   WRITE (*, *) 'ONE COMMAND-LINE ARGUMENT DETECTED, Defaulting to 1 site per clump'
-   call get_command_argument(1, clump_input_char)
-   READ (clump_input_char, *) nsets
-   pproc_input = 1 !1 site per clump
-
-ELSEIF (COMMAND_ARGUMENT_COUNT() == 2) THEN
-   call get_command_argument(1, clump_input_char)
-   call get_command_argument(2, pproc_input_char)
-   READ (clump_input_char, *) nsets
-   READ (pproc_input_char, *) pproc_input
-     !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+! Optional argument: number of copies (sets) of the input sites.
+! All sets live in a single clump (nclumps = 1).
+nsets = 1
+IF (COMMAND_ARGUMENT_COUNT() >= 1) THEN
+   call get_command_argument(1, nsets_char)
+   READ (nsets_char, *) nsets
 END IF
+IF (COMMAND_ARGUMENT_COUNT() > 1) THEN
+   WRITE (*, *) 'WARNING: extra command-line arguments ignored (only nsets is used)'
+END IF
+WRITE (*, *) 'nsets = ', nsets
 
 block 
    !#INPUT_PATH
    call spel_io_init(input_path, read_io=.true.)
 end block
 
-call elm_init(nsets, pproc_input, dtime_mod, year_curr, bounds_proc)
+call elm_init(nsets, dtime_mod, year_curr, bounds_proc)
 
 !#INIT
 
 declin = -0.4030289369547867
 
 #ifdef _OPENACC
-   call init_proc_clump_info()
    call update_params_acc()
 
    !Note: copy/paste enter data directives here for FUT.
@@ -91,6 +83,8 @@ declin = -0.4030289369547867
 #endif
 
 nclumps = procinfo%nclumps
+if (nclumps /= 1) stop "SPEL unit tests use a single clump"
+nc = 1
 
 block
     integer :: step = 0
@@ -100,15 +94,15 @@ block
        if (step .ne. 0) then
           !#IO_READ
 
+          ! read_elmtypes leaves bounds_clump at one set's bounds
+          if (.not. io_inputs%end_run) call duplicate_sets(nsets, bounds_clump)
        end if
        if (io_inputs%end_run .or. step > max_step) exit
 
-      do nc=1,nclumps
-        call get_clump_bounds(nc,bounds_clump)
+       call get_clump_bounds(nc,bounds_clump)
 
       !#CALL_SUB
 
-      end do
 
        !#IO_WRITE
 

@@ -478,12 +478,8 @@ def create_nc_def(
 
         if var.dim > 0:
             var_lines.append(
-                f"{tabs}call check("
-                f"nf90_put_att(ncid, varid, 'lbounds', "
-                f"lbound({var.name}))); "
-                f"call check("
-                f"nf90_put_att(ncid, varid, 'ubounds', "
-                f"ubound({var.name})))\n"
+                f"{tabs}call nc_put_bounds_att(ncid, varid, {var.dim}, "
+                f"dim_names(1:{var.dim}), lbound({var.name}), ubound({var.name}))\n"
             )
 
         condition = guards.get(var.name)
@@ -524,10 +520,15 @@ def create_nc_write(
     for var in scalars:
         varname = var.name.replace("%", "__")
 
+        value = var.name
+        if m := re.fullmatch(r"(bounds)%end([gtlcp])", var.name):
+            # duplicated sets are written as set 1, which starts at beg
+            value = f"nc_set_ub({m.group(1)}%beg{m.group(2)}, {var.name})"
+
         if var.type == "character":
             stmt = f"call nc_write_var_array(" f"ncid, {var.name}, '{varname}')\n"
         else:
-            stmt = f"call nc_write_var_scalar(" f"ncid, {var.name}, '{varname}')\n"
+            stmt = f"call nc_write_var_scalar(" f"ncid, {value}, '{varname}')\n"
 
         var_lines = [
             f"{tabs}if(verbose) print *, '{varname}'\n",
@@ -739,6 +740,10 @@ def generate_nc_io():
     {tabs}{tabs}procedure, private :: need_new_file
     {tabs}end type spel_io_type
     {tabs}type(spel_io_type), public :: io_constants, io_inputs, io_outputs
+    {tabs}! Number of copies of the input sites (unit tests only). Arrays with a
+    {tabs}! subgrid dimension are allocated nsets times larger along it, reads
+    {tabs}! replicate the file data into every set and writes emit set 1 only.
+    {tabs}integer, public :: spel_nsets = 1
     """)
     lines.append(header)
     lines.append(f"{tabs}interface nc_write_var_array\n")
@@ -774,12 +779,18 @@ def generate_nc_io():
                 lines.append(f"{tabs}module procedure {name}\n")
     tabs = hio.indent(hio.Tab.unshift)
     lines.append(f"{tabs}end interface\n")
+    lines.append(f"{tabs}interface nc_select_set1\n")
+    tabs = hio.indent(hio.Tab.shift)
+    lines.append(f"{tabs}module procedure nc_select_set1_r8, nc_select_set1_int\n")
+    tabs = hio.indent(hio.Tab.unshift)
+    lines.append(f"{tabs}end interface\n")
     lines.append(f"{tabs}public :: nc_read_timeslices\n")
 
     lines.append("contains\n")
 
     nc_check = gen_check()
     lines.append(nc_check)
+    lines.append(gen_nsets_helpers())
     # nc_create_or_open_file
     nc_file = gen_nc_file()
     lines.append(nc_file)
@@ -895,6 +906,165 @@ def gen_nc_read_type(dim: int, t: str) -> str:
         return gen_read_numeric(dim, t)
 
 
+# Subgrid index fields of the ELM physical-property types and the subgrid level
+# each one indexes. duplicateMod offsets them per set; set checks skip them.
+SUBGRID_INDEX_FIELDS: dict[str, dict[str, str]] = {
+    "gridcell_physical_properties_type": {
+        "gindex": "g", "topi": "t", "topf": "t", "lndi": "l", "lndf": "l",
+        "coli": "c", "colf": "c", "pfti": "p", "pftf": "p",
+    },
+    "topounit_physical_properties": {
+        "gridcell": "g", "downhill_ti": "t", "lndi": "l", "lndf": "l",
+        "coli": "c", "colf": "c", "pfti": "p", "pftf": "p", "landunit_indices": "l",
+    },
+    "landunit_physical_properties": {
+        "gridcell": "g", "topounit": "t", "coli": "c", "colf": "c", "pfti": "p", "pftf": "p",
+    },
+    "column_physical_properties": {
+        "gridcell": "g", "topounit": "t", "landunit": "l", "pfti": "p", "pftf": "p",
+    },
+    "vegetation_physical_properties": {
+        "gridcell": "g", "topounit": "t", "landunit": "l", "column": "c",
+    },
+}
+
+
+def gen_nsets_helpers() -> str:
+    """Fortran helpers for spel_nsets (duplicated input sites in one clump)."""
+    select_set1 = ""
+    for suffix, ftype, differs in (
+        ("r8", "real(8)", "a /= b .and. .not. (ieee_is_nan(a) .and. ieee_is_nan(b))"),
+        ("int", "integer", "a /= b"),
+    ):
+        select_set1 += textwrap.dedent(f"""
+        subroutine nc_select_set1_{suffix}(ndim, dims, dim_names, buffer, varname)
+           ! Reduce a flattened write buffer to set 1 along its subgrid dimension
+           ! and report values in the other sets that differ from set 1.
+           use, intrinsic :: ieee_arithmetic, only: ieee_is_nan
+           integer, intent(in) :: ndim
+           integer, intent(inout) :: dims(ndim)
+           character(len=*), dimension(:), intent(in) :: dim_names
+           {ftype}, allocatable, intent(inout) :: buffer(:)
+           character(len=*), intent(in) :: varname
+           {ftype}, allocatable :: b3(:,:,:)
+           integer :: sd, n1, pre, post, k, nbad
+           sd = nc_subgrid_dim(ndim, dim_names)
+           if (sd == 0) return
+           if (mod(dims(sd), spel_nsets) /= 0) return
+           n1 = dims(sd)/spel_nsets
+           pre = product(dims(1:sd-1))
+           post = product(dims(sd+1:ndim))
+           b3 = reshape(buffer, [pre, dims(sd), post])
+           nbad = 0
+           do k = 2, spel_nsets
+              nbad = nbad + count(differs(b3(:, (k-1)*n1+1:k*n1, :), b3(:, 1:n1, :)))
+           end do
+           if (nbad > 0 .and. .not. nc_is_index_field(varname)) print *, 'WARNING (spel_nsets): ', trim(varname), nbad, &
+              ' values in sets 2..nsets differ from set 1'
+           buffer = reshape(b3(:, 1:n1, :), [pre*n1*post])
+           dims(sd) = n1
+        contains
+           elemental logical function differs(a, b)
+              {ftype}, intent(in) :: a, b
+              differs = {differs}
+           end function differs
+        end subroutine nc_select_set1_{suffix}
+        """)
+
+    index_fields = sorted({f for fields in SUBGRID_INDEX_FIELDS.values() for f in fields})
+    index_cases = ", ".join(f"'{f}'" for f in index_fields)
+    is_index_field = textwrap.dedent(f"""
+    logical function nc_is_index_field(varname)
+       ! Subgrid index fields (<inst>_pp__<field>) are offset per set by duplicateMod
+       character(len=*), intent(in) :: varname
+       integer :: i
+       nc_is_index_field = .false.
+       i = index(varname, '_pp__', back=.true.)
+       if (i == 0) return
+       select case (trim(varname(i+5:)))
+       case ({index_cases})
+          nc_is_index_field = .true.
+       end select
+    end function nc_is_index_field
+    """)
+
+    return (
+        is_index_field
+        + textwrap.dedent("""
+    logical function nc_is_subgrid(name)
+       character(len=*), intent(in) :: name
+       select case (trim(name))
+       case ('gridcell', 'topo', 'landunit', 'column', 'patch')
+          nc_is_subgrid = .true.
+       case default
+          nc_is_subgrid = .false.
+       end select
+    end function nc_is_subgrid
+
+    integer function nc_subgrid_dim(ndim, dim_names) result(sd)
+       ! First subgrid dimension of a variable, or 0 when not duplicating.
+       integer, intent(in) :: ndim
+       character(len=*), dimension(:), intent(in) :: dim_names
+       integer :: i
+       sd = 0
+       if (spel_nsets <= 1) return
+       do i = 1, min(ndim, size(dim_names))
+          if (nc_is_subgrid(dim_names(i))) then
+             sd = i
+             return
+          end if
+       end do
+    end function nc_subgrid_dim
+
+    subroutine nc_file_subgrid(ncid, var_id, ndim, sd, nfile)
+       ! First subgrid dimension (sd) of a file variable and its length in
+       ! the file (nfile); sd = 0 when not duplicating.
+       integer, intent(in) :: ncid, var_id, ndim
+       integer, intent(out) :: sd, nfile
+       integer :: nd, i
+       integer, allocatable :: dimids(:)
+       character(len=nf90_max_name) :: dname
+       sd = 0; nfile = 0
+       if (spel_nsets <= 1) return
+       call check(nf90_inquire_variable(ncid, var_id, ndims=nd))
+       allocate (dimids(nd))
+       call check(nf90_inquire_variable(ncid, var_id, dimids=dimids))
+       do i = 1, min(ndim, nd)
+          call check(nf90_inquire_dimension(ncid, dimids(i), name=dname, len=nfile))
+          if (nc_is_subgrid(dname)) then
+             sd = i
+             return
+          end if
+       end do
+       nfile = 0
+    end subroutine nc_file_subgrid
+
+    integer function nc_set_ub(lb, ub) result(ub1)
+       ! Upper bound of set 1 for a range duplicated spel_nsets times.
+       integer, intent(in) :: lb, ub
+       ub1 = ub
+       if (spel_nsets <= 1) return
+       if (mod(ub - lb + 1, spel_nsets) /= 0) return
+       ub1 = lb - 1 + (ub - lb + 1)/spel_nsets
+    end function nc_set_ub
+
+    subroutine nc_put_bounds_att(ncid, varid, ndim, dim_names, lbs, ubs)
+       ! Write l/ubounds attributes, as set 1's bounds when duplicating.
+       integer, intent(in) :: ncid, varid, ndim
+       character(len=*), dimension(:), intent(in) :: dim_names
+       integer, intent(in) :: lbs(ndim), ubs(ndim)
+       integer :: ub1(ndim), sd
+       ub1 = ubs
+       sd = nc_subgrid_dim(ndim, dim_names)
+       if (sd > 0) ub1(sd) = nc_set_ub(lbs(sd), ubs(sd))
+       call check(nf90_put_att(ncid, varid, 'lbounds', lbs))
+       call check(nf90_put_att(ncid, varid, 'ubounds', ub1))
+    end subroutine nc_put_bounds_att
+    """)
+        + select_set1
+    )
+
+
 def gen_read_numeric(dim: int, t: str) -> str:
     tabs = hio.indent(Tab.reset)
     if t == "double":
@@ -904,34 +1074,58 @@ def gen_read_numeric(dim: int, t: str) -> str:
     subname = f"nc_read_{t}_{dim}"
     if dim > 0:
         dim_str = make_dim_str(dim, lambda i: ":")
+        set_cases = "".join(
+            f"{tabs}         case ({sd})\n"
+            f"{tabs}            var({make_dim_str(dim, lambda i: 'lo:hi' if i == sd - 1 else ':')}) = tmp\n"
+            for sd in range(1, dim + 1)
+        )
+        tmp_shape = make_dim_str(dim, lambda i: f"count({i+1})")
 
-        return textwrap.dedent(f"""
-    {tabs}subroutine {subname}(ncid, varname, ndim, var, timestep)
-    {tabs}   integer, intent(in) :: ncid
-    {tabs}   character(len=*), intent(in) :: varname
-    {tabs}   integer, intent(in) :: ndim 
-    {tabs}   {t_str}, intent(out) :: var({dim_str})
-    {tabs}   integer, intent(in) :: timestep
-    {tabs}   integer :: var_id
-    {tabs}   integer, allocatable :: start(:), count(:)
+        return f"""
+{tabs}subroutine {subname}(ncid, varname, ndim, var, timestep)
+{tabs}   integer, intent(in) :: ncid
+{tabs}   character(len=*), intent(in) :: varname
+{tabs}   integer, intent(in) :: ndim 
+{tabs}   {t_str}, intent(out) :: var({dim_str})
+{tabs}   integer, intent(in) :: timestep
+{tabs}   integer :: var_id
+{tabs}   integer, allocatable :: start(:), count(:)
+{tabs}   {t_str}, allocatable :: tmp({dim_str})
+{tabs}   integer :: sd, nfile, k, lo, hi
 
-    {tabs}   if (timestep > 0) then
-    {tabs}     allocate(start(ndim+1), count(ndim+1))
-    {tabs}     start(1:ndim) = 1
-    {tabs}     start(ndim+1) = timestep
-    {tabs}     count(1:ndim) = shape(var)
-    {tabs}     count(ndim+1) = 1
-    {tabs}  else
-    {tabs}     allocate(start(ndim), count(ndim))
-    {tabs}     start(1:ndim) = 1
-    {tabs}     count(1:ndim) = shape(var)
-    {tabs}  end if
+{tabs}   if (timestep > 0) then
+{tabs}     allocate(start(ndim+1), count(ndim+1))
+{tabs}     start(1:ndim) = 1
+{tabs}     start(ndim+1) = timestep
+{tabs}     count(1:ndim) = shape(var)
+{tabs}     count(ndim+1) = 1
+{tabs}  else
+{tabs}     allocate(start(ndim), count(ndim))
+{tabs}     start(1:ndim) = 1
+{tabs}     count(1:ndim) = shape(var)
+{tabs}  end if
 
-    {tabs}   call check(nf90_inq_varid(ncid, trim(varname), var_id))
-    {tabs}   call check(nf90_get_var(ncid, var_id, var,start=start, count=count))
-    {tabs}end subroutine {subname}
+{tabs}   call check(nf90_inq_varid(ncid, trim(varname), var_id))
+{tabs}   call nc_file_subgrid(ncid, var_id, ndim, sd, nfile)
+{tabs}   if (sd > 0) then
+{tabs}      if (size(var, sd) /= spel_nsets*nfile) sd = 0
+{tabs}   end if
+{tabs}   if (sd == 0) then
+{tabs}      call check(nf90_get_var(ncid, var_id, var,start=start, count=count))
+{tabs}   else
+{tabs}      ! read set 1 from the file and replicate it into every set
+{tabs}      count(sd) = nfile
+{tabs}      allocate(tmp({tmp_shape}))
+{tabs}      call check(nf90_get_var(ncid, var_id, tmp,start=start, count=count))
+{tabs}      do k = 1, spel_nsets
+{tabs}         lo = (k-1)*nfile + 1; hi = k*nfile
+{tabs}         select case (sd)
+{set_cases}{tabs}         end select
+{tabs}      end do
+{tabs}   end if
+{tabs}end subroutine {subname}
 
-        """)
+"""
     else:  # dim == 0
         return textwrap.dedent(f"""
     {tabs}subroutine {subname}(ncid, varname, var, timestep)
@@ -1084,12 +1278,19 @@ def gen_nc_define_var() -> str:
     {tabs}   integer, intent(out) :: var_id
     {tabs}   logical, intent(in) :: time
     {tabs}   ! Locals
-    {tabs}   integer :: i, status, total_dims
+    {tabs}   integer :: i, status, total_dims, sd
+    {tabs}   integer :: ldims(ndim+1)
     {tabs}   integer, allocatable :: dim_ids(:)
     {tabs}   character(len=32), allocatable :: dim_names(:)
 
     {tabs}   allocate(dim_names(ndim))
     {tabs}   dim_names(:) = dim_list(:)
+    {tabs}   ldims(1:ndim) = dims
+    {tabs}   ldims(ndim+1) = 0
+    {tabs}   sd = nc_subgrid_dim(ndim, dim_names)
+    {tabs}   if (sd > 0) then
+    {tabs}      if (mod(ldims(sd), spel_nsets) == 0) ldims(sd) = ldims(sd)/spel_nsets
+    {tabs}   end if
 
     {tabs}   total_dims = ndim
     {tabs}   if (time) then 
@@ -1101,7 +1302,7 @@ def gen_nc_define_var() -> str:
     {tabs}   do i = 1, total_dims
     {tabs}      status = nf90_inq_dimid(ncid, trim(dim_names(i)), dim_ids(i))
     {tabs}      if(status .ne. nf90_noerr) then
-    {tabs}         call check(nf90_def_dim(ncid, trim(dim_names(i)), dims(i), dim_ids(i)))
+    {tabs}         call check(nf90_def_dim(ncid, trim(dim_names(i)), ldims(i), dim_ids(i)))
     {tabs}      end if
     {tabs}   end do
 
@@ -1171,9 +1372,12 @@ def gen_nc_write_numeric_array() -> list[str]:
     {tabs}   real(8), allocatable :: data_1d(:), data_2d(:, :), data_3d(:, :, :)
     {tabs}   real(8), allocatable :: buffer(:)
     {tabs}   integer, allocatable :: start(:), count(:)
+    {tabs}   integer :: ldims(ndim)
 
     {tabs}   allocate (buffer(product(dims)))
     {tabs}   buffer = var
+    {tabs}   ldims = dims
+    {tabs}   if (spel_nsets > 1) call nc_select_set1(ndim, ldims, dim_names, buffer, varname)
     {tabs}   if(timestep > 0) then 
     {tabs}      unlim = .true.
     {tabs}      allocate(start(ndim+1), count(ndim+1))
@@ -1184,7 +1388,7 @@ def gen_nc_write_numeric_array() -> list[str]:
 
     {tabs}   do i = 1, ndim
     {tabs}      start(i) = 1
-    {tabs}      count(i) = dims(i)
+    {tabs}      count(i) = ldims(i)
     {tabs}   end do
 
     {tabs}   if (unlim) then 
@@ -1195,13 +1399,13 @@ def gen_nc_write_numeric_array() -> list[str]:
     {tabs}   call check(nf90_inq_varid(ncid, trim(varname), var_id))
     {tabs}   select case (ndim)
     {tabs}   case (1)
-    {tabs}      allocate (data_1d(dims(1))); data_1d = reshape(buffer, [dims(1)])
+    {tabs}      allocate (data_1d(ldims(1))); data_1d = reshape(buffer, [ldims(1)])
     {tabs}      call check(nf90_put_var(ncid, var_id, data_1d,start=start,count=count))
     {tabs}   case (2)
-    {tabs}      allocate (data_2d(dims(1), dims(2))); data_2d = reshape(buffer, [dims(1), dims(2)])
+    {tabs}      allocate (data_2d(ldims(1), ldims(2))); data_2d = reshape(buffer, [ldims(1), ldims(2)])
     {tabs}      call check(nf90_put_var(ncid, var_id, data_2d,start=start,count=count))
     {tabs}   case (3)
-    {tabs}      allocate (data_3d(dims(1), dims(2), dims(3))); data_3d = reshape(buffer, [dims(1), dims(2), dims(3)])
+    {tabs}      allocate (data_3d(ldims(1), ldims(2), ldims(3))); data_3d = reshape(buffer, [ldims(1), ldims(2), ldims(3)])
     {tabs}      call check(nf90_put_var(ncid, var_id, data_3d,start=start,count=count))
     {tabs}   case default
     {tabs}      stop "(nc_write_{t}) doesn't support >3D doubles"
@@ -1243,8 +1447,12 @@ def gen_nc_write_logical() -> str:
     {tabs}   logical :: unlim
     {tabs}   integer, allocatable :: start(:), count(:)
 
+    {tabs}   integer :: ldims(ndim)
+
     {tabs}   allocate (int_buf(product(dims)))
     {tabs}   int_buf = merge(1, 0, var)  ! logical → int (1=true, 0=false)
+    {tabs}   ldims = dims
+    {tabs}   if (spel_nsets > 1) call nc_select_set1(ndim, ldims, dim_names, int_buf, varname)
     {tabs}   if(timestep > 0) then 
     {tabs}      unlim = .true.
     {tabs}      allocate(start(ndim+1), count(ndim+1))
@@ -1255,7 +1463,7 @@ def gen_nc_write_logical() -> str:
 
     {tabs}   do i = 1, ndim
     {tabs}      start(i) = 1
-    {tabs}      count(i) = dims(i)
+    {tabs}      count(i) = ldims(i)
     {tabs}   end do
 
     {tabs}   if (unlim) then 
@@ -1266,13 +1474,13 @@ def gen_nc_write_logical() -> str:
     {tabs}   call check(nf90_inq_varid(ncid, trim(varname), var_id))
     {tabs}   select case (ndim)
     {tabs}   case (1)
-    {tabs}      allocate (data_1d(dims(1))); data_1d = reshape(int_buf, [dims(1)])
+    {tabs}      allocate (data_1d(ldims(1))); data_1d = reshape(int_buf, [ldims(1)])
     {tabs}      call check(nf90_put_var(ncid, var_id, data_1d,start=start,count=count))
     {tabs}   case (2)
-    {tabs}      allocate (data_2d(dims(1), dims(2))); data_2d = reshape(int_buf, [dims(1), dims(2)])
+    {tabs}      allocate (data_2d(ldims(1), ldims(2))); data_2d = reshape(int_buf, [ldims(1), ldims(2)])
     {tabs}      call check(nf90_put_var(ncid, var_id, data_2d,start=start,count=count))
     {tabs}   case (3)
-    {tabs}      allocate (data_3d(dims(1), dims(2), dims(3))); data_3d = reshape(int_buf, [dims(1), dims(2), dims(3)])
+    {tabs}      allocate (data_3d(ldims(1), ldims(2), ldims(3))); data_3d = reshape(int_buf, [ldims(1), ldims(2), ldims(3)])
     {tabs}      call check(nf90_put_var(ncid, var_id, data_3d,start=start,count=count))
     {tabs}   case default
     {tabs}      stop "(nc_write_logical) doesn't support >3D vars"

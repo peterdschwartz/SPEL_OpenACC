@@ -10,7 +10,10 @@ the requested routines and redoes the root-dependent steps (bindings to
 elm_drv's actuals, active variables, generated files), unless the user asks
 for a re-analysis (e.g. after switching E3SM or SPEL branches).
 
-    <unittests_dir>/.spel-cache/elm_drv/
+Each E3SM checkout (E3SM_SRCROOT, `--srcroot`) has its own cache, so a
+reference checkout and a development checkout can be used side by side:
+
+    <unittests_dir>/.spel-cache/<srcroot name>-<hash of its path>/elm_drv/
         analysis.pkl   FunctionalUnitTest of the whole elm_drv analysis
         meta.json      SPEL / E3SM commits it was built from
         src/           edited module sources
@@ -18,6 +21,7 @@ for a re-analysis (e.g. after switching E3SM or SPEL branches).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import shutil
@@ -37,6 +41,7 @@ from spel.scripts.driver_callsites import (
     DriverSites,
     caller_sites,
     call_path,
+    call_statement,
     callers_of,
     compose_bindings,
     load_module,
@@ -62,8 +67,54 @@ DRIVER_ID = f"{DRIVER_MODULE}::{DRIVER_ROUTINE}"
 SPEL_ROOT = Path(__file__).resolve().parents[2]
 
 
-def cache_dir() -> Path:
-    return Path(unittests_dir) / ".spel-cache" / DRIVER_ROUTINE
+def cache_root() -> Path:
+    return Path(unittests_dir) / ".spel-cache"
+
+
+def cache_key(srcroot: Path) -> str:
+    """Readable and unique per checkout: <dir name>-<8 hex digits of its path>."""
+    root = Path(srcroot).expanduser().resolve()
+    return f"{root.name}-{hashlib.sha1(str(root).encode()).hexdigest()[:8]}"
+
+
+def cache_dir(srcroot: Optional[Path] = None) -> Path:
+    return cache_root() / cache_key(srcroot or E3SM_SRCROOT) / DRIVER_ROUTINE
+
+
+def legacy_cache_dir() -> Path:
+    """Where the single, srcroot-independent cache used to live."""
+    return cache_root() / DRIVER_ROUTINE
+
+
+def migrate_legacy_cache(logger: Optional[logging.Logger] = None) -> bool:
+    """Move a pre-per-srcroot cache to cache_dir() if it was built from E3SM_SRCROOT."""
+    old, new = legacy_cache_dir(), cache_dir()
+    meta_path = old / META_FILE
+    if new.exists() or not meta_path.is_file():
+        return False
+    try:
+        saved = json.loads(meta_path.read_text()).get("e3sm_srcroot")
+    except (OSError, ValueError):
+        return False
+    if saved is None or Path(saved).resolve() != Path(E3SM_SRCROOT).resolve():
+        return False
+    new.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(old), str(new))
+    if logger:
+        logger.info(f"Moved the elm_drv analysis cache of {E3SM_SRCROOT} to {new}")
+    return True
+
+
+def list_caches() -> list[tuple[Path, dict]]:
+    """(cache dir, meta.json contents) of every per-srcroot cache."""
+    out = []
+    for meta_path in sorted(cache_root().glob(f"*/{DRIVER_ROUTINE}/{META_FILE}")):
+        try:
+            meta = json.loads(meta_path.read_text())
+        except (OSError, ValueError):
+            meta = {}
+        out.append((meta_path.parent, meta))
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -86,10 +137,23 @@ def git_state(repo: Path) -> dict[str, Optional[str]]:
     }
 
 
+def worktree_hash(repo: Path, pathspec: str) -> Optional[str]:
+    """Fingerprint of uncommitted changes under pathspec (None if git fails)."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(repo), "diff", "HEAD", "--", pathspec],
+            capture_output=True, check=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return hashlib.sha1(out.stdout).hexdigest() if out.stdout else ""
+
+
 def current_meta() -> dict:
+    e3sm = Path(E3SM_SRCROOT)
     return {
         "e3sm_srcroot": str(E3SM_SRCROOT),
-        "e3sm": git_state(Path(E3SM_SRCROOT)),
+        "e3sm": git_state(e3sm) | {"elm_diff": worktree_hash(e3sm, "components/elm")},
         "spel": git_state(SPEL_ROOT),
     }
 
@@ -106,6 +170,9 @@ def stale_reasons(saved: dict, now: dict) -> list[str]:
                 f"{repo.upper()} {old.get('branch')}@{(old.get('commit') or '?')[:10]}"
                 f" -> {new['branch']}@{(new['commit'] or '?')[:10]}"
             )
+    old_diff, new_diff = saved.get("e3sm", {}).get("elm_diff"), now["e3sm"].get("elm_diff")
+    if new_diff is not None and (old_diff or "") != new_diff:
+        reasons.append("uncommitted changes under components/elm differ")
     return reasons
 
 
@@ -173,7 +240,7 @@ def build_analysis(logger: Optional[logging.Logger] = None) -> Path:
     src = out / SRC_DIR
     src.mkdir(parents=True)
 
-    logger.info(f"Analyzing {DRIVER_ID} (cache: {out})")
+    logger.info(f"Analyzing {DRIVER_ID} in {E3SM_SRCROOT} (cache: {out})")
     unit_test = FunctionalUnitTest(casedir=src, cfg=cfg.options, logger=logger)
     analyze_unit_test(unit_test, [DRIVER_ID], roots_from=driver_roots)
     if unit_test.subroutine_dict[DRIVER_ID].record_access is None:
@@ -206,6 +273,7 @@ def load_analysis(
     from spel.scripts.export_objects import _load_pickle
 
     logger = logger or get_logger("SPEL", level=logging.INFO)
+    migrate_legacy_cache(logger)
     path = cache_dir() / ANALYSIS_PICKLE
     if reanalyze or not path.is_file():
         build_analysis(logger)
@@ -311,6 +379,65 @@ def call_sites(
     return nested_sites, bindings
 
 
+FILTER_MODULE = "filtermod"
+
+
+def filter_builders(
+    fut: FunctionalUnitTest,
+    selected: dict,
+    bindings: list[ArgBinding],
+    logger: logging.Logger,
+) -> list[tuple[str, str]]:
+    """
+    (id, call statement) of the filterMod routines other than setFilters that
+    elm_drv calls before the selected routines and that set filter members
+    the selected routines use (e.g. filters that depend on the time step's
+    state, rebuilt each step). main.F90 must call them before the selected
+    routines, since setFilters (elm_initialize) doesn't set those members.
+    """
+    sites, sub_dict = fut.driver_sites, fut.subroutine_dict
+    direct = sites.calls
+    entry_lns = []
+    for s in selected:
+        entry = s if s in direct else (call_path(sub_dict, direct, s) or [None])[0]
+        if entry in direct:
+            entry_lns.extend(c.ln for c in direct[entry])
+    if not entry_lns:
+        return []
+    first_ln = min(entry_lns)
+
+    def filter_members(sub, statuses: set[str]) -> set[str]:
+        return {
+            k
+            for k, a in sub.elmtype_access_summary.items()
+            if k.startswith("filter%") and a.status in statuses
+        }
+
+    used = {b.actual for b in bindings if b.actual.startswith("filter%")}
+    for s in selected:
+        used |= filter_members(sub_dict[s], {"r", "rw"})
+
+    out: list[tuple[int, str, str]] = []
+    for callee, calls in direct.items():
+        sub = sub_dict.get(callee)
+        if sub is None or callee in selected:
+            continue
+        if sub.module != FILTER_MODULE or sub.name == "setfilters":
+            continue
+        before = [c for c in calls if c.ln < first_ln]
+        sets = filter_members(sub, {"w", "rw"}) & used
+        if not before or not sets:
+            continue
+        call = max(before, key=lambda c: c.ln)
+        try:
+            text = call_statement(sites, call)
+        except SemanticError as err:
+            sys.exit(f"Error- {err}")
+        logger.info(f"main.F90 calls {callee} before the unit test: it sets {sorted(sets)}")
+        out.append((call.ln, callee, text))
+    return [(callee, text) for _, callee, text in sorted(out)]
+
+
 def extract_unit_test(
     analysis: FunctionalUnitTest,
     sub_name_list: list[str],
@@ -341,6 +468,9 @@ def extract_unit_test(
     if unreached:
         sys.exit(f"Error- not reached from {DRIVER_ROUTINE} in the cached analysis: {unreached}")
     sites, bindings = call_sites(fut, selected, logger)
+    builders = filter_builders(fut, selected, bindings, logger)
+    builder_ids = {b for b, _ in builders}
+    builder_bindings = [b for b in fut.driver_bindings if b.callee in builder_ids]
 
     mods = module_closure(
         fut.module_dict,
@@ -362,6 +492,10 @@ def extract_unit_test(
     fut.primary_subroutines = selected
     setfilters = fut.subroutine_dict["filtermod::setfilters"]
     setfilters.unit_test_function = True
+    # filter builders are roots so that what they read is captured and read
+    for b in builder_ids:
+        fut.subroutine_dict[b].unit_test_function = True
+    fut.filter_builder_calls = [text for _, text in builders]
     fut.driver_sites = sites
     fut.driver_bindings = bindings
     fut.case_dir = case_dir
@@ -371,7 +505,9 @@ def extract_unit_test(
     fut.guarded_usage_dict = {}
 
     roots = {s.id for s in fut.subroutine_dict.values() if s.unit_test_function}
-    adopt_record_access(fut.subroutine_dict, fut.type_dict, roots, fut.driver_bindings)
+    adopt_record_access(
+        fut.subroutine_dict, fut.type_dict, roots, fut.driver_bindings + builder_bindings
+    )
 
     for mod in fut.ordered_mods:
         fn = get_filename_from_module(mod)

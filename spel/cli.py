@@ -2,15 +2,21 @@ import argparse
 import os
 import shlex
 import subprocess
+import sys
 from pathlib import Path
 
-from spel.scripts.config import unittests_dir
-from spel.scripts.export_objects import unpickle_unit_test
-from spel.scripts.ml_training.dataset_analysis import summarize_data
-from spel.scripts.ml_training.prepare_dataset import separate_inputs_outputs
-from spel.scripts.ml_training.sample_spel_output import sample
-from spel.scripts.ml_training.train import train
-from spel.scripts.profiler_context import profile_ctx
+from spel.srcroot_override import OPTION as SRCROOT_OPTION, apply_srcroot
+
+# must run before anything imports spel.scripts.config (E3SM_SRCROOT is fixed at import)
+apply_srcroot(sys.argv[1:])
+
+from spel.scripts.config import unittests_dir  # noqa: E402
+from spel.scripts.export_objects import unpickle_unit_test  # noqa: E402
+from spel.scripts.ml_training.dataset_analysis import summarize_data  # noqa: E402
+from spel.scripts.ml_training.prepare_dataset import separate_inputs_outputs  # noqa: E402
+from spel.scripts.ml_training.sample_spel_output import sample  # noqa: E402
+from spel.scripts.ml_training.train import train  # noqa: E402
+from spel.scripts.profiler_context import profile_ctx  # noqa: E402
 
 SPEL_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
@@ -55,13 +61,12 @@ def _run_and_validate(case_dir) -> None:
 
 
 def instrument(args):
-    from spel.scripts.instrument_elm import instrument_case, uninstrument_elm
+    from spel.scripts.instrument_elm import instrument_case, undo_instrumentation
 
     if args.undo:
         from spel.scripts.config import E3SM_SRCROOT
 
-        for path in uninstrument_elm(E3SM_SRCROOT):
-            print(f"Removed SPEL capture calls from {path}")
+        undo_instrumentation(E3SM_SRCROOT)
         return
     report = instrument_case(
         args.case,
@@ -154,7 +159,15 @@ def run(args):
         # assume cwd
         case_dir = Path.cwd()
     # REMAINDER swallows options given after the case name
-    exe_args = [a for a in args.exe_args if a != "--no-diff"]
+    exe_args, skip = [], False
+    for a in args.exe_args:
+        if skip or a == "--no-diff" or a.startswith(SRCROOT_OPTION + "="):
+            skip = False
+            continue
+        if a == SRCROOT_OPTION:
+            skip = True
+            continue
+        exe_args.append(a)
     validate = not args.no_diff and "--no-diff" not in args.exe_args
     if code := run_unit_test(case_dir, exe_args, validate=validate):
         raise SystemExit(code)
@@ -222,14 +235,28 @@ def config(args):
         )
         return
 
+    from spel.scripts.analysis_cache import cache_dir, list_caches, migrate_legacy_cache
+
+    migrate_legacy_cache()
+
     print(textwrap.dedent(f"""
     E3SM SRCROOT: {cfg.E3SM_SRCROOT}
     ELM SRC     : {cfg.ELM_SRC}
     SHR SRC     : {cfg.SHR_SRC}
+    Cache       : {cache_dir()}
 
     Local override file: {cfg.LOCAL_ENV_FILE}
-    (change with: spel config --set-srcroot <path>)
+    (change with: spel config --set-srcroot <path>, or per command with --srcroot <path>)
     """))
+    caches = list_caches()
+    print("elm_drv analysis caches:" if caches else "No elm_drv analysis caches yet")
+    for path, meta in caches:
+        e3sm = meta.get("e3sm") or {}
+        print(
+            f"  {meta.get('e3sm_srcroot', '?')}  "
+            f"{e3sm.get('branch')}@{(e3sm.get('commit') or '?')[:10]}  "
+            f"built {meta.get('created_at', '?')[:19]}  -> {path.parent.name}"
+        )
 
 
 def add_capture_args(parser: argparse.ArgumentParser, standalone: bool) -> None:
@@ -327,7 +354,7 @@ def main():
         "--dry-run", action="store_true", help="Report what would change"
     )
     instrument_parser.add_argument(
-        "--undo", action="store_true", help="Remove SPEL capture calls from ELM"
+        "--undo", action="store_true", help="Remove SPEL capture calls from ELM and revert its public/unprotected edits"
     )
     add_capture_args(instrument_parser, standalone=True)
     instrument_parser.set_defaults(func=instrument)
@@ -527,6 +554,16 @@ def main():
         help="Don't prompt for confirmation before copying files",
     )
     restore_parser.set_defaults(func=restore)
+
+    # parsed for --help/validation only: apply_srcroot() already applied it
+    srcroot_help = (
+        "E3SM checkout to use for this command (default: SPEL_E3SM_SRCROOT / "
+        ".spel.env, see `spel config`). Each checkout has its own elm_drv analysis cache"
+    )
+    for p in (parser, *subparsers.choices.values()):
+        p.add_argument(
+            SRCROOT_OPTION, metavar="DIR", default=argparse.SUPPRESS, help=srcroot_help
+        )
 
     args = parser.parse_args()
     try:

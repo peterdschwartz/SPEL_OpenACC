@@ -146,107 +146,6 @@ def get_delta_from_dim(dim, delta):
     return newdim
 
 
-def generate_cmake(files: list[str], case_dir: Path):
-    """
-    Generates a CMakeLists.txt file for compiling unit-test
-    using cmake
-    """
-    from spel.scripts.edit_files import macros
-
-    exe_name = "elmtest"
-
-    cmake_script = textwrap.dedent(f"""
-    cmake_minimum_required(VERSION 3.20)
-    project(ELM-UnitTest LANGUAGES Fortran)
-
-    option(DBG "Enable Debug mode" OFF)
-    option(GPU "Enable OpenACC (GPU) support" OFF)
-
-    enable_testing()
-    set(CMAKE_VERBOSE_MAKEFILE ON)
-    set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-    set(CMAKE_Fortran_FLAGS "" CACHE STRING "Fortran Compiler Flags" FORCE)
-    if (CMAKE_Fortran_COMPILER_ID STREQUAL "GNU")
-        message(STATUS "Using gfortran as the Fortran compiler")
-        string(APPEND CMAKE_Fortran_FLAGS " -fconvert=big-endian -ffree-line-length-none -ffixed-line-length-none")
-        string(APPEND CMAKE_Fortran_FLAGS " -fallow-argument-mismatch")
-        if (DBG)
-            message(STATUS "Debug + Coverage build enabled")
-            string(APPEND CMAKE_Fortran_FLAGS " -g -O0 -fprofile-arcs -ftest-coverage")
-        endif()
-    else()
-        if (DBG)
-            set(CMAKE_Fortran_FLAGS "${{CMAKE_Fortran_FLAGS}} -g -O0 -Mchkptr -Mchkstk" CACHE STRING "Fortran Compiler Flags" FORCE)
-        else()
-            set(CMAKE_Fortran_FLAGS "${{CMAKE_Fortran_FLAGS}} -fast")
-        endif()
-
-        if (GPU)
-            message(STATUS "Enabling OpenACC GPU support")
-            set(OPENACC_FLAGS "-gpu -Minfo=accel -cuda")
-            # Append to existing flags for each build type
-            set(CMAKE_Fortran_FLAGS "${{CMAKE_Fortran_FLAGS}} ${{OPENACC_FLAGS}}" CACHE STRING "Fortran Compiler Flags" FORCE)
-        endif()
-    endif()
-
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(NetCDFF REQUIRED netcdf-fortran)
-
-    file(GLOB SOURCES "*.F90")
-    add_executable({exe_name} ${{SOURCES}})
-    include_directories(${{NetCDFF_INCLUDE_DIRS}})
-    target_link_directories({exe_name} PRIVATE ${{NetCDFF_LIBRARY_DIRS}})
-    target_link_libraries({exe_name} PRIVATE ${{NetCDFF_LIBRARIES}})
-
-    find_package(LAPACK REQUIRED)
-
-    if (LAPACK_FOUND)
-        message(STATUS "LAPACK found: ${{LAPACK_LIBRARIES}}")
-        target_link_libraries(elmtest PRIVATE ${{LAPACK_LIBRARIES}})
-    endif()
-
-
-    target_compile_definitions({exe_name} PRIVATE {" ".join(macros)})
-    message(STATUS "Final Fortran flags: ${{CMAKE_Fortran_FLAGS}}")
-
-    # Add test
-    add_test(NAME run_elmtest COMMAND elmtest)
-    # === Coverage Helper Targets ===
-    # Object directory
-    set(OBJECT_DIR "${{CMAKE_BINARY_DIR}}/CMakeFiles/elmtest.dir")
-    message(STATUS "Object directory: ${{OBJECT_DIR}}")
-
-    # Create coverage directory
-    file(MAKE_DIRECTORY "${{CMAKE_BINARY_DIR}}/coverage")
-    # gcov target
-    add_custom_target(gcov
-        COMMENT "Generating GCOV report..."
-        COMMAND ${{CMAKE_CTEST_COMMAND}} --output-on-failure
-        COMMAND echo "=================== GCOV ===================="
-        COMMAND ${{CMAKE_COMMAND}} -E make_directory coverage
-        COMMAND gcov -abcf ${{OBJECT_DIR}}/*.o > coverage/gcov.log
-        COMMAND grep -H "Lines executed" coverage/gcov.log || true
-        WORKING_DIRECTORY ${{CMAKE_BINARY_DIR}}
-        DEPENDS elmtest
-    )
-
-    # scrub target: cleans .gcda/.gcno and object files
-    add_custom_target(scrub
-        COMMAND ${{CMAKE_COMMAND}} --build . --target clean
-        COMMAND find ${{OBJECT_DIR}} -name '*.gcda' -delete
-        COMMAND find ${{OBJECT_DIR}} -name '*.gcno' -delete
-        COMMAND rm -rf ${{CMAKE_BINARY_DIR}}/coverage
-        COMMENT "Scrubbing coverage and build artifacts"
-        WORKING_DIRECTORY ${{CMAKE_BINARY_DIR}}
-    )
-
-    """)
-
-    with open(f"{case_dir}/CMakeLists.txt", "w") as cmake_file:
-        cmake_file.writelines(cmake_script)
-
-
 def generate_makefile(files: list[str], case_dir: Path):
     """
     This function takes the list of needed files
@@ -611,10 +510,10 @@ def prepare_main(
         lines_to_add=io_call,
     )
 
-    copyin_lines: list[str] = ["!$acc enter data copyin(& \n"]
-    for el in sorted(list(active_instances.keys())):
-        copyin_lines.append(f"!$acc& {el},&\n")
-    copyin_lines.append("!$acc& )\n")
+    copyin_lines = acc_clause_lines(
+        "enter data copyin",
+        sorted(n for n, v in active_instances.items() if v.type != "bounds_type"),
+    )
     lines = insert_at_token(
         lines=lines,
         token="!#ACC_COPYIN",
@@ -737,6 +636,26 @@ def prep_elm_init(type_dict: TypeDict, case_dir: Path):
     return
 
 
+
+def acc_clause_lines(directive: str, entries: list[str], tabs: str = "") -> list[str]:
+    """`!$acc <directive>(e1, ..., eN)` split over `!$acc&` lines, with no trailing comma."""
+    if not entries:
+        return []
+    lines = [f"{tabs}!$acc {directive}( &\n"]
+    lines.extend(f"{tabs}!$acc&   {name}, &\n" for name in entries[:-1])
+    lines.append(f"{tabs}!$acc&   {entries[-1]})\n")
+    return lines
+
+
+def acc_update_device_lines(variables, tabs: str) -> list[str]:
+    entries = []
+    for var in variables:
+        dim_str = ",".join(":" for _ in range(var.dim))
+        entries.append(f"{var.name}({dim_str})" if dim_str else var.name)
+    lines = acc_clause_lines("update device", entries, tabs)
+    return lines + ["\n"] if lines else lines
+
+
 def create_update_mod(vars: dict[str, Variable], casedir: Path):
     tabs = hio.indent(hio.Tab.reset)
     mod_name = "UpdateParamsAccMod"
@@ -759,13 +678,7 @@ def create_update_mod(vars: dict[str, Variable], casedir: Path):
 
     lines.append(f"{tabs}subroutine {sub_name}()\n")
     tabs = hio.indent(hio.Tab.shift)
-    lines.append(rf"{tabs}!$acc update device(&\n")
-
-    for var in vars.values():
-        dim_str = ",".join([":" for i in range(var.dim)])
-        dim_str = f"({dim_str})" if dim_str else ""
-        lines.append(rf"{tabs}!$acc&   {var.name}{dim_str},&\n")
-    lines.append(f"{tabs}!$acc&  )\n\n")
+    lines.extend(acc_update_device_lines(vars.values(), tabs))
 
     tabs = hio.indent(hio.Tab.unshift)
     lines.append(f"{tabs}end subroutine {sub_name}\n")
@@ -775,170 +688,6 @@ def create_update_mod(vars: dict[str, Variable], casedir: Path):
         ofile.writelines(lines)
 
     return
-
-
-def duplicate_clumps(type_dict: dict[str, DerivedType]):
-    """
-    Function that writes a Fortran module containing
-    subroutines needed to duplicate the input data
-    to an arbirtary number of gridcells
-    """
-    file = open(f"{spel_output_dir}/duplicateMod.F90", "w")
-    spaces = hio.indent(hio.Tab.reset)
-    file.write("module duplicateMod\n")
-
-    active_instances, use_statements, elminst_vars = (
-        hio.get_var_usage_and_elm_inst_vars(type_dict)
-    )
-    for stmt in use_statements:
-        file.write(stmt)
-    file.write(f"\n{spaces}use elm_instMod\n")
-    file.write("contains\n")
-
-    file.write("subroutine duplicate_weights(unique_sites,total_gridcells)\n")
-    file.write(spaces + "use elm_varsur, only : wt_lunit, urban_valid\n")
-    file.write(spaces + "implicit none\n")
-    file.write(spaces + "integer, intent(in) :: unique_sites\n")
-    file.write(spaces + "integer, intent(in) :: total_gridcells\n")
-    file.write(spaces + "integer :: g, dim3, l, gcopy\n")
-    file.write(spaces + "dim3 = size(wt_lunit,3)\n")
-    file.write(spaces + "print *, 'dim3 = ',dim3\n")
-    file.write(spaces + "do g = unique_sites+1, total_gridcells\n")
-    file.write(spaces + spaces + "gcopy = mod(g-1,unique_sites)+1\n")
-    file.write(spaces + spaces + "do l=1,dim3\n")
-    file.write(spaces * 3 + "wt_lunit(g,1,l) = wt_lunit(gcopy,1,l)\n")
-    file.write(spaces * 2 + "end do\n")
-    file.write(spaces * 2 + "urban_valid(g,1) = urban_valid(gcopy,1)\n")
-    file.write(spaces + "end do\n")
-    file.write("end subroutine duplicate_weights\n")
-
-    file.write("subroutine duplicate_clumps(mode,unique_sites,num_sites)\n")
-
-    # Use statements
-
-    file.write(
-        spaces + "use decompMod, only : bounds_type, get_clump_bounds, procinfo\n"
-    )
-    file.write(spaces + "use elm_varcon\n")
-    file.write(spaces + "use elm_varpar\n")
-    file.write(spaces + "use elm_varctl\n")
-    file.write(spaces + "use landunit_varcon\n")
-    file.write(spaces + "implicit none\n")
-    file.write(spaces + "integer, intent(in) :: mode, unique_sites, num_sites\n")
-    file.write(spaces + "type(bounds_type)  :: bounds_copy, bounds\n")
-    file.write(spaces + "integer :: errcode, nc,nc_copy, nclumps\n")
-    file.write(spaces + "integer :: begp_copy, endp_copy, begp, endp\n")
-    file.write(spaces + "integer :: begc_copy, endc_copy, begc, endc\n")
-    file.write(spaces + "integer :: begg_copy, endg_copy, begg, endg\n")
-    file.write(spaces + "integer :: begt_copy, endt_copy, begt, endt\n")
-    file.write(spaces + "integer :: begl_copy, endl_copy, begl, endl\n")
-    file.write(spaces + "nclumps = num_sites\n")
-    #
-    file.write(spaces + "if(mode == 0) then\n")
-    file.write(spaces * 2 + "do nc=unique_sites+1, num_sites\n")
-    file.write(spaces * 3 + "nc_copy = mod(nc-1,unique_sites)+1\n")
-    file.write(spaces * 3 + "call get_clump_bounds(nc,bounds)\n")
-    file.write(spaces * 3 + "call get_clump_bounds(nc_copy,bounds_copy)\n")
-
-    file.write(spaces * 3 + "begg_copy=bounds_copy%begg; endg_copy=bounds_copy%endg\n")
-    file.write(spaces * 3 + "begt_copy=bounds_copy%begt; endt_copy=bounds_copy%endt\n")
-    file.write(spaces * 3 + "begl_copy=bounds_copy%begl; endl_copy=bounds_copy%endl\n")
-    file.write(spaces * 3 + "begc_copy=bounds_copy%begc; endc_copy=bounds_copy%endc\n")
-    file.write(spaces * 3 + "begp_copy=bounds_copy%begp; endp_copy=bounds_copy%endp\n")
-
-    file.write(spaces * 3 + "begg=bounds%begg; endg=bounds%endg\n")
-    file.write(spaces * 3 + "begt=bounds%begt; endt=bounds%endt\n")
-    file.write(spaces * 3 + "begl=bounds%begl; endl=bounds%endl\n")
-    file.write(spaces * 3 + "begc=bounds%begc; endc=bounds%endc\n")
-    file.write(spaces * 3 + "begp=bounds%begp; endp=bounds%endp\n")
-
-    # First create mode for duplicating decomp related data.
-    ignore_list = ["is_veg", "is_bareground", "wt_ed"]
-    for var in active_instances.values():
-        type_name = var.type
-        if type_name in PHYSICAL_PROP_TYPE_LIST:
-            dtype = type_dict[type_name]
-            for field_var in dtype.components.values():
-                if field_var.pointer:
-                    continue
-                active = field_var.active
-                bounds = field_var.bounds
-                if not active:
-                    continue
-                if "%" not in field_var.name:
-                    fname = var.name + "%" + field_var.name
-                    comp_name = field_var.name
-                else:
-                    fname = field_var.name
-                    comp_name = field_var.name.split("%")[1]
-                if comp_name in ignore_list:
-                    continue
-
-                dim = bounds
-                newdim = get_delta_from_dim(dim, "y")
-                dim1 = get_delta_from_dim(dim, "n")
-                dim1 = dim1.replace("_all", "")
-                if newdim == "(:)" or newdim == "":
-                    continue
-                file.write(spaces * 3 + fname + newdim + " &" + "\n")
-                file.write(spaces * 4 + "= " + fname + dim1 + "\n")
-
-    file.write(spaces * 2 + "end do\n")
-
-    file.write(spaces + "else\n")
-    file.write(spaces * 2 + "do nc=unique_sites+1, num_sites\n")
-    file.write(spaces * 3 + "nc_copy = mod(nc-1,unique_sites)+1\n")
-    file.write(spaces * 3 + "call get_clump_bounds(nc,bounds)\n")
-    file.write(spaces * 3 + "call get_clump_bounds(nc_copy,bounds_copy)\n")
-
-    file.write(spaces * 3 + "begg_copy=bounds_copy%begg; endg_copy=bounds_copy%endg\n")
-    file.write(spaces * 3 + "begt_copy=bounds_copy%begt; endt_copy=bounds_copy%endt\n")
-    file.write(spaces * 3 + "begl_copy=bounds_copy%begl; endl_copy=bounds_copy%endl\n")
-    file.write(spaces * 3 + "begc_copy=bounds_copy%begc; endc_copy=bounds_copy%endc\n")
-    file.write(spaces * 3 + "begp_copy=bounds_copy%begp; endp_copy=bounds_copy%endp\n")
-
-    file.write(spaces * 3 + "begg=bounds%begg; endg=bounds%endg\n")
-    file.write(spaces * 3 + "begt=bounds%begt; endt=bounds%endt\n")
-    file.write(spaces * 3 + "begl=bounds%begl; endl=bounds%endl\n")
-    file.write(spaces * 3 + "begc=bounds%begc; endc=bounds%endc\n")
-    file.write(spaces * 3 + "begp=bounds%begp; endp=bounds%endp\n")
-
-    # Duplicate statements for unit test variables
-    for var in active_instances.values():
-        type_name = var.type
-        if type_name not in PHYSICAL_PROP_TYPE_LIST:
-            dtype = type_dict[type_name]
-            for field_var in dtype.components.values():
-                if not var.active:
-                    continue
-                for field_var in dtype.components.values():
-                    if field_var.pointer:
-                        continue
-                    active = field_var.active
-                    bounds = field_var.bounds
-                    if not active:
-                        continue
-                    if "%" not in field_var.name:
-                        fname = var.name + "%" + field_var.name
-                        comp_name = field_var.name
-                    else:
-                        fname = field_var.name
-                        comp_name = field_var.name.split("%")[1]
-                    dim = bounds
-                    newdim = get_delta_from_dim(dim, "y")
-                    dim1 = get_delta_from_dim(dim, "n")
-                    dim1 = dim1.replace("_all", "")
-                    if newdim == "(:)" or newdim == "":
-                        continue
-                    file.write(spaces * 3 + fname + newdim + " &" + "\n")
-                    file.write(spaces * 4 + "= " + fname + dim1 + "\n")
-
-    file.write(spaces + "end do\n")
-    file.write(spaces + "end if\n")
-
-    file.write("end subroutine duplicate_clumps\n")
-    file.write("end module\n")
-    file.close()
 
 
 def create_init_params(global_vars: dict[str, Variable], casedir: Path):
