@@ -159,7 +159,7 @@ def load_module(mod_name: str) -> tuple[FortranModule, list[LineTuple]]:
 
 
 def routine_lines(lines: list[LineTuple], name: str) -> list[LineTuple]:
-    start = re.compile(rf"^\s*subroutine\s+{name}\b", re.IGNORECASE)
+    start = re.compile(rf"^\s*(?:(?:pure|elemental|recursive|impure|module)\s+)*subroutine\s+{name}\b", re.IGNORECASE)
     end = re.compile(rf"^\s*end\s*subroutine\s+{name}\b", re.IGNORECASE)
     out: list[LineTuple] = []
     for lt in lines:

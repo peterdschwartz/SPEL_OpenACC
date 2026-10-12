@@ -324,7 +324,7 @@ def find_file_for_subroutine(name, fn="", ignore_interface=False, verbose=False)
 
     interface_list = get_interface_list()
     if name not in interface_list or ignore_interface:
-        cmd = f'grep -rin -E "^[[:space:]]*(subroutine[[:space:]]* {name})\\b" {search_file} | head -1'
+        cmd = f'grep -rin -E "^[[:space:]]*((pure|elemental|recursive|impure|module)[[:space:]]+)*(subroutine[[:space:]]* {name})\\b" {search_file} | head -1'
         cmd_end = f'grep -rin -E "^[[:space:]]*(end subroutine[[:space:]]* {name})\\b" {search_file} | head -1'
     else:
         cmd = f'grep -rin -E "^[[:space:]]+(interface[[:space:]]* {name})" {search_file} | head -1'

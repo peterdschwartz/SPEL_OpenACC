@@ -169,7 +169,10 @@ regex_ifthen = re.compile(r"^(if\b)(.+)(then)$", re.IGNORECASE)
 regex_endif = re.compile(r"^(end\s*if)", re.IGNORECASE)
 
 regex_include_assert = re.compile(r"^(#include)\s+[\"\'](shr_assert.h)[\'\"]")
-regex_sub = re.compile(r"^\s*(subroutine)\s+")
+regex_sub = re.compile(
+    r"^\s*(?:(?:pure|elemental|recursive|impure|module)\s+)*(subroutine)\s+",
+    re.IGNORECASE,
+)
 regex_shr_assert = re.compile(r"^\s*call\s+(shr_assert_all|shr_assert)\b")
 regex_end_sub = re.compile(r"^\s*(end\s*subroutine)")
 
@@ -268,7 +271,9 @@ def set_in_subroutine(state: ParseState, logger: Logger):
     full_line = state.curr_line.line
     start_ln = state.curr_line.ln
 
-    subname = full_line.split()[1].split("(")[0].strip()
+    sub_match = regex_sub.match(full_line)
+    assert sub_match
+    subname = full_line[sub_match.end() :].split("(")[0].split()[0].strip()
 
     cpp_ln = ct if state.cpp_file else None
     sub_start: Optional[SubStart] = SubStart(
