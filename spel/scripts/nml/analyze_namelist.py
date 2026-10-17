@@ -10,6 +10,7 @@ from spel.scripts.config import ELM_SRC
 from spel.scripts.DerivedType import DerivedType, get_component
 from spel.scripts.fortran_parser.boolen_expression import (
     NO_EXPECTATION,
+    AllOf,
     AnyOf,
     ConditionExpectation,
     Expectation,
@@ -46,10 +47,13 @@ def find_nml_ifs(sub_dict: dict[str, Subroutine], nml_dict: dict[str, NameList])
             if_node.nml_cascades.update({v: NML_CASCADES[v] for v in dep_vars})
             if temp or dep_vars:
                 variables = {v for v in dep_vars + nml_vars}
-                if_node.condtional_expectation = infer_condition_expectations(
-                    expr=if_node.condition,
-                    variables=variables,
+                if_node.condtional_expectation = cascade_to_triggers(
+                    infer_condition_expectations(
+                        expr=if_node.condition,
+                        variables=variables,
+                    )
                 )
+                variables |= {NML_CASCADES[v].trigger_name for v in dep_vars}
                 for v in variables:
                     if_node.expected_namelist_values |= expected_constraints(
                         if_node.condtional_expectation, v
@@ -58,18 +62,64 @@ def find_nml_ifs(sub_dict: dict[str, Subroutine], nml_dict: dict[str, NameList])
     return
 
 
-def nml_guards(root_sub: Subroutine) -> dict[str, ConditionExpectation]:
+def cascade_to_triggers(condition: ConditionExpectation) -> ConditionExpectation:
+    """
+    Replace expectations on logical cascade variables by what they imply for the
+    trigger namelist variable: the cascade variable may be an array element
+    (lun_pp%ispolygon(l)) that a guard can't evaluate. Negations are already at
+    the leaves, so the weaker condition still holds wherever the original does.
+    """
+    match condition:
+        case Expectation(var, constraint) if var in NML_CASCADES:
+            dep = NML_CASCADES[var]
+            if constraint not in ("True", "False"):
+                return condition
+            trigger = dep.trigger_constraint(constraint)
+            if trigger is None:
+                return NO_EXPECTATION
+            return Expectation(dep.trigger_name, trigger)
+        case AllOf(items):
+            return AllOf(tuple(cascade_to_triggers(c) for c in items))
+        case AnyOf(items):
+            return AnyOf(tuple(cascade_to_triggers(c) for c in items))
+    return condition
+
+
+def nml_guards(
+    root_sub: Subroutine,
+    _memo: dict[str, dict[str, ConditionExpectation]] | None = None,
+    _active: frozenset[str] = frozenset(),
+) -> dict[str, ConditionExpectation]:
     """
     inst%field -> namelist condition under which root_sub (incl. its children,
     via their call sites) accesses it, for fields ONLY accessed under namelist ifs.
+    An access at a call site is guarded by the enclosing namelist if AND the
+    callee's own guard for the field (e.g. FracH2OSfc reads col_ws%iwp_* only
+    under lun_pp%ispolygon, i.e. use_polygonal_tundra).
     """
-    exclusive = root_sub.elmtype_accesses_exclusive_to_namelist_ifs()
+    memo = {} if _memo is None else _memo
+    if root_sub.id in memo:
+        return memo[root_sub.id]
+    active = _active | {root_sub.id}
+
+    callee_guards: dict[int, dict[str, ConditionExpectation]] = {}
+    for ln, desc in root_sub.sub_call_desc.items():
+        child = root_sub.child_subroutines.get(desc.fn)
+        if child is not None and child.id not in active:
+            callee_guards[ln] = nml_guards(child, memo, active)
+
     var_dict: dict[str, ConditionExpectation] = {}
-    for v, flatifs in exclusive.items():
-        expectations: set[ConditionExpectation] = {if_.condtional_expectation for if_ in flatifs}
-        combined = simplify(AnyOf(tuple(expectations)))
+    for v, accesses in root_sub.elmtype_access_by_ln.items():
+        conditions: list[ConditionExpectation] = []
+        for rw in accesses:
+            if_ = root_sub.namelist_if_at(rw.ln)
+            local = if_.condtional_expectation if if_ else NO_EXPECTATION
+            callee = callee_guards.get(rw.ln, {}).get(v, NO_EXPECTATION)
+            conditions.append(AllOf((local, callee)))
+        combined = simplify(AnyOf(tuple(conditions)))
         if combined != NO_EXPECTATION:
             var_dict[v] = combined
+    memo[root_sub.id] = var_dict
     return var_dict
 
 

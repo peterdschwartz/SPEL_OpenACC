@@ -7,6 +7,7 @@ from typing import TypeAlias
 
 from spel.scripts.fortran_parser.spel_ast import (
     Expression,
+    FuncExpression,
     Identifier,
     IfConstruct,
     InfixExpression,
@@ -44,6 +45,8 @@ class AllOf:
         return {name for item in self.items for name in item.variable_names()}
 
     def to_fortran(self) -> str:
+        if not self.items:  # no conditions: always true
+            return ".true."
         return (
             "(" + " .and. ".join([f"{item.to_fortran()}" for item in self.items]) + ")"
         )
@@ -67,6 +70,8 @@ class AnyOf:
         return {name for item in self.items for name in item.variable_names()}
 
     def to_fortran(self) -> str:
+        if not self.items:
+            return ".false."
         return (
             "(" + " .or. ".join([f"({item.to_fortran()})" for item in self.items]) + ")"
         )
@@ -205,6 +210,19 @@ def negate(
 
 
 def simplify(
+    condition: ConditionExpectation,
+) -> ConditionExpectation:
+    # one pass can leave reducible terms, e.g. combining
+    # (a .and. b) .or. (a .and. .not. b) .or. .not. a  ->  a .or. .not. a
+    for _ in range(100):
+        simplified = _simplify_once(condition)
+        if simplified == condition:
+            return simplified
+        condition = simplified
+    return condition
+
+
+def _simplify_once(
     condition: ConditionExpectation,
 ) -> ConditionExpectation:
     match condition:
@@ -406,6 +424,14 @@ def infer_condition_expectations(
 
     if isinstance(expr, Identifier) and expr.value in variables:
         return Expectation(expr.value, str(truth))
+
+    # logical arrays/components, e.g. lun_pp%ispolygon(l) for the cascade var ispolygon
+    if isinstance(expr, FuncExpression):
+        expr = expr.function
+    if isinstance(expr, Identifier) and "%" in expr.value:
+        name = expr.value.split("%")[-1]
+        if name in variables:
+            return Expectation(name, str(truth))
 
     return NO_EXPECTATION
 

@@ -44,6 +44,7 @@ from spel.scripts.nml.analyze_namelist import (
     find_nml_ifs,
     nml_guards,
 )
+from spel.scripts.nml.namelist_cascade import cascade_trigger_variables
 from spel.scripts.types import ReadWrite, UnitTestMode
 from spel.scripts.utilityFunctions import Variable
 from spel.scripts.validate_access import (
@@ -272,6 +273,12 @@ def finalize_unit_test(unit_test: FunctionalUnitTest, db_mode: bool) -> None:
         for subnode in sub.abstract_call_tree.traverse_preorder():
             childsub = unit_test.subroutine_dict[subnode.node.subname]
             unit_test.active_global_vars.update(childsub.active_global_vars)
+    # namelist triggers of cascade variables (see cascade_to_triggers) appear only in guards
+    unit_test.active_global_vars.update(
+        cascade_trigger_variables(
+            name for cond in unit_test.guarded_usage_dict for name in cond.variable_names()
+        )
+    )
 
     if not db_mode:
         # Create a makefile for the unit test

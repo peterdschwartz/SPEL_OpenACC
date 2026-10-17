@@ -920,6 +920,27 @@ class Dependence:
         self.trigger: str = trigger
         self.pairs = val_pairs
 
+    @property
+    def trigger_name(self) -> str:
+        return self.trigger.split("::")[-1]
+
+    def trigger_constraint(self, cascade_constraint: str) -> str | None:
+        """
+        Constraint ("True"/"False") on the trigger implied by a logical cascade
+        variable's constraint, or None if it implies nothing: the trigger can't
+        take a value whose pair forces the cascade variable to the other value.
+        """
+        values = {"True": ".true.", "False": ".false."}
+        wanted = values.get(cascade_constraint)
+        if wanted is None:
+            return None
+        allowed = {".true.", ".false."} - {
+            p.nml_val for p in self.pairs if p.cascade_val != wanted
+        }
+        if len(allowed) != 1:
+            return None
+        return "True" if allowed == {".true."} else "False"
+
 
 class PassManager:
     """
