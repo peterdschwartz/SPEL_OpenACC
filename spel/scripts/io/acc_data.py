@@ -79,6 +79,8 @@ def _use_lines(unit_test: FunctionalUnitTest, active_instances) -> list[str]:
             continue
         stmts.add(f"{tabs}use {var.declaration}, only : {var.name}\n")
     stmts.add(f"{tabs}use filterMod, only : {', '.join(FILTER_INSTANCES)}\n")
+    # namelist guards compare strings with spel_streq (see Expectation.to_fortran)
+    stmts.add(f"{tabs}use nc_io, only : spel_streq\n")
     guard_vars = [
         fv
         for dtype in unit_test.type_dict.values()
