@@ -30,12 +30,16 @@ from spel.scripts.types import LineTuple, ModUsage, PointerAlias
 
 def get_module_name_from_file(fpath: str) -> tuple[int, str]:
     """
-    Given a file path, returns the name of the module
+    Given a file path, returns the name of the module (and the 1-based line of
+    its declaration), or (-1, "") for a file without a module (e.g. a program).
     """
     if fpath not in dg.map_fpath_to_module_name:
         cmd = f'grep -rin -E "^[[:space:]]*module [[:space:]]*[[:alnum:]]+" {fpath}'
         # the module declaration will be the first one. Any others will be interfaces
         module_name = sp.getoutput(cmd).split("\n")[0]
+        if not module_name:
+            dg.map_fpath_to_module_name[fpath] = (-1, "")
+            return -1, ""
         # grep will have pattern <line_number>:module <module_name>
         linenumber, module_name = module_name.split(":")
         module_name = module_name.split()[1].lower()

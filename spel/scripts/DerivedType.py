@@ -112,6 +112,8 @@ class DerivedType(object):
         io_list = defaultdict(list)
         for f, ln in zip(files, lns):
             _, mod = get_module_name_from_file(f)
+            if not mod:  # not a module (e.g. a test program): no instances here
+                continue
             if ln < mod_ln_helper(mod, f):
                 io_list[f].append(ln)
 
