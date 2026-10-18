@@ -12,7 +12,7 @@ from pathlib import Path
 
 from spel.scripts.analyze_subroutines import Subroutine, link_internal_subprograms
 from spel.scripts.check_sections import check_function_start, create_init_obj
-from spel.scripts.config import E3SM_SRCROOT, spel_output_dir
+from spel.scripts.config import E3SM_SRCROOT, spel_mods_dir, spel_output_dir
 from spel.scripts.DerivedType import DerivedType, parse_derived_type_definition
 from spel.scripts.fortran_parser.symbols import rename_pair
 from spel.scripts.fortran_modules import (
@@ -122,13 +122,30 @@ bad_symbols = {
     "ncd_pio_openfile",
     "ncd_io",
     "ncd_pio_closefile",
-    "alm_fates",
-    "elm_fates",
     "ncd_inqdlen",
     "t_start_lnd",
     "t_stop_lnd",
     "ep_betr",
 }
+
+INTRINSIC_TYPES = {"integer", "real", "logical", "character", "complex"}
+
+
+def read_header_types(path: Path) -> set[str]:
+    """Derived types that unittest_defs.h `#define`s to an intrinsic type."""
+    regex = re.compile(r"^\s*#define\s+(\w+)\s+(\w+)\s*$")
+    return {
+        m.group(1).lower()
+        for line in path.read_text().splitlines()
+        if (m := regex.match(line)) and m.group(2).lower() in INTRINSIC_TYPES
+    }
+
+
+# Types of bad modules that stay usable: the unit test's unittest_defs.h maps
+# them to an intrinsic type, so their objects can still be declared and passed
+# as arguments (e.g. alm_fates). Only statements that reference their
+# components (`alm_fates%...`) are commented out.
+header_types: set[str] = read_header_types(Path(spel_mods_dir) / "unittest_defs.h")
 
 remove_subs = [
     "prepare_data_for_em_ptm_driver",
@@ -158,6 +175,9 @@ BAD_MODULE_NAMES: dict[str, set[str]] = {
     },
 }
 bad_module_imports: dict[str, set[str]] = {k: set(v) for k, v in BAD_MODULE_NAMES.items()}
+
+# module name -> its globals of a header type (see header_types)
+opaque_exports: dict[str, set[str]] = {}
 
 # Entries of bad_symbols that must not be commented out
 regex_hack = re.compile(r"\b(nan|spval|r8|is_active_betr_bgc)\b")
@@ -200,6 +220,8 @@ parse_interface_end = "parse_interface_end"
 # These are required to be re-compiled after an initial pass through file
 parse_bad_inst = "parse_bad_inst"
 parse_sub_call = "parse_sub_call"
+parse_opaque_decl = "parse_opaque_decl"
+parse_opaque_ref = "parse_opaque_ref"
 
 #
 # Macros that we want to process. Any not in the list will be
@@ -322,6 +344,7 @@ def pop_routine_frame(state: ParseState, name: str, logger: Logger) -> RoutineFr
         sys.exit(1)
     frame = state.routine_stack.pop()
     state.bad_names.difference_update(frame.bad_locals)
+    state.opaque_names.difference_update(frame.opaque_locals)
     return frame
 
 
@@ -450,6 +473,38 @@ def handle_bad_inst(state: ParseState, logger: Logger):
     return
 
 
+def record_opaque_decl(state: ParseState, logger: Logger):
+    """Declaration of objects of a header type: keep it, track the names."""
+    assert state.curr_line
+    names = declared_names(state.curr_line.line)
+    state.opaque_names.update(names)
+    if state.routine_stack:
+        state.routine_stack[-1].opaque_locals.update(names)
+    elif not state.in_interface and not in_derived_type_def(state):
+        opaque_exports.setdefault(state.module_name.lower(), set()).update(names)
+
+
+def collect_opaque_imports(state: ParseState):
+    """Names imported from modules whose globals of a header type are kept."""
+    if not opaque_exports:
+        return
+    for fline in state.line_it:
+        m = regex_use.match(fline.line)
+        if not m or state.line_it.lines[state.line_it.start_index].commented:
+            continue
+        exported = opaque_exports.get(m.group(1).lower())
+        if not exported:
+            continue
+        if not m.group(2):
+            state.opaque_names.update(exported)
+            continue
+        for item in split_top_level(m.group(3) or ""):
+            local, _, remote = (x.strip().lower() for x in item.partition("=>"))
+            if (remote or local) in exported:
+                state.opaque_names.add(local)
+    state.line_it.reset()
+
+
 def apply_comments(lines: list[LineTuple]) -> list[LineTuple]:
     comment_ = "!#py "
 
@@ -504,6 +559,8 @@ def parse_bad_modules(
                         continue
                     el = name if name.lower() == "nan" else f"{name}|{alias}"
                 el = el.lower()
+                if el.split("|")[0] in header_types:
+                    continue  # provided by unittest_defs.h
                 if el and not regex_hack.search(el):
                     state.bad_names.add(el)
                     imported.setdefault(orig_ln, set()).add(el)
@@ -747,15 +804,30 @@ def comment_bad_references(state: ParseState, pass_manager: PassManager, head_ln
             module_level
         )
     prune_unavailable_imports(state)
+    collect_opaque_imports(state)
 
-    pass_manager.remove_pass(name=parse_sub_call)
-    pass_manager.remove_pass(name=parse_bad_inst)
+    for name in (parse_opaque_decl, parse_sub_call, parse_opaque_ref, parse_bad_inst):
+        pass_manager.remove_pass(name=name)
+    if header_types:
+        types_alt = "|".join(sorted(map(re.escape, header_types)))
+        pass_manager.add_pass(
+            pattern=re.compile(
+                rf"^\s*(?:type|class)\s*\(\s*({types_alt})\s*\)", re.IGNORECASE
+            ),
+            fn=record_opaque_decl,
+            name=parse_opaque_decl,
+        )
     pass_manager.add_pass(
         pattern=NameSetPattern(
             state.bad_names, r"\s*(call)[\s]+({names})", re.IGNORECASE
         ),
         fn=set_comment,
         name=parse_sub_call,
+    )
+    pass_manager.add_pass(
+        pattern=NameSetPattern(state.opaque_names, r"\b({names})\s*%"),
+        fn=handle_bad_inst,
+        name=parse_opaque_ref,
     )
     pass_manager.add_pass(
         pattern=NameSetPattern(state.bad_names, r"\b({names})\b"),
@@ -875,6 +947,7 @@ def get_used_mods(
     Checks to see what mods are needed to compile the file
     """
     # Keep track of nested level
+    assert ifile, "Attempting to parse None"
     linenumber, module_name = get_module_name_from_file(fpath=ifile)
     fort_mod = FortranModule(fname=ifile, name=module_name, ln=linenumber)
 
@@ -945,6 +1018,18 @@ def get_used_mods(
     if module_head:
         fort_mod.end_of_head_ln = len(lines) - 1
 
+    # Only declarations the preprocessor keeps: SnowSnicarMod declares
+    # ss_alb_bc1(numrad_snw, idx_bc_nclrds_max) under MODAL_AER and
+    # ss_alb_bc1(numrad_snw) under #else; the later (inactive) one used to win
+    active_lns = None
+    if any(re.match(r"^\s*#\s*if", line) for line in lines[: fort_mod.end_of_head_ln]):
+        cpp_lines = apply_preprocessor(Path(fn))
+        # cpp blanks short inactive blocks instead of dropping them
+        active_lns = {
+            lt.ln for lt in remove_cpp_directives(cpp_lines, str(fn), None) if lt.line.strip()
+        }
+        var_decls_lines = [lt for lt in var_decls_lines if lt.ln in active_lns]
+
     if module_name in DECLARATION_ONLY_MODULES:
         # the contained routines (and their dependencies) are never used
         fort_mod.use_stmts = use_stmts = [
@@ -967,7 +1052,9 @@ def get_used_mods(
                 needed_mods.append(mod)
 
     head_lines = [
-        LineTuple(line=lines[i], ln=i) for i in range(0, fort_mod.end_of_head_ln)
+        LineTuple(line=lines[i], ln=i)
+        for i in range(0, fort_mod.end_of_head_ln)
+        if active_lns is None or i in active_lns or not lines[i].strip()
     ]
     parsed_type_dict = parse_derived_type_definition(head_lines, module_name, ifile)
     fort_mod.defined_types.update(parsed_type_dict)
@@ -976,6 +1063,7 @@ def get_used_mods(
     files_to_parse = []
     for m in needed_mods:
         needed_modfile = get_filename_from_module(m, verbose=verbose)
+        assert needed_modfile, f"Couldn't find file for {m}"
         if needed_modfile not in mods:
             files_to_parse.append(needed_modfile)
             mods.append(needed_modfile)
@@ -1045,13 +1133,18 @@ def remove_cpp_directives(
         if orig_ln is not None:
             # capture the first encountered preprocessed text for that orig line
             if match_assert:
-                work_lines.append(
-                    LineTuple(
-                        line=f"#include '{remove_include}'",
-                        ln=orig_ln - 1,
-                        commented=True,
-                    )
+                # stands in for the `#include` line (commented out in the unit
+                # test). It replaces the blank line cpp emitted for it: an extra
+                # entry would shift the position of every later line by one.
+                include = LineTuple(
+                    line=f"#include '{remove_include}'",
+                    ln=orig_ln - 1,
+                    commented=True,
                 )
+                if work_lines and work_lines[-1].ln == orig_ln - 1:
+                    work_lines[-1] = include
+                else:
+                    work_lines.append(include)
                 match_assert = False
             mapping[orig_ln] = i
             work_lines.append(LineTuple(line=cpp_lines[i].lower(), ln=orig_ln, commented=False))
@@ -1225,7 +1318,7 @@ def process_for_unit_test(
                 mod_dict=mod_dict,
             )
 
-    required_mod_paths = [get_filename_from_module(m) for m in required_mods]
+    required_mod_paths = [rfile for x in required_mods if (rfile := get_filename_from_module(x)) is not None]
     for rmod in required_mod_paths:
         if rmod not in mods:
             mods, mod_dict = get_used_mods(

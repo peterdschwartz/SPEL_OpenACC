@@ -105,8 +105,10 @@ All commands are subcommands of `spel`. Run `spel <command> --help` for the auth
 | [`spel create`](#spel-create) | Extract subroutines from the cached analysis and generate a functional unit test |
 | [`spel instrument`](#spel-instrument) | Instrument ELM to capture reference data; optionally build/run a CIME case |
 | [`spel validate`](#spel-validate) | Create, capture (one ELM run) and validate many unit tests in parallel |
+| [`spel subset`](#gridcell-subsets) | Write some gridcells of a case's reference data as a new case's |
 | [`spel run`](#spel-run) | Configure, build, and run a generated unit test, then validate it against ELM's data |
 | [`spel profile`](#spel-profile) | Build and run a unit test without outputs under Nsight Systems/Compute |
+| [`spel acc2omp`](#spel-acc2omp) | Translate modules' OpenACC directives to OpenMP (to run multithreaded with gfortran) |
 | [`spel diff`](#spel-diff) | Compare two netCDF files and report relative error |
 | [`spel export`](#spel-export) | Turn a pickled unit test into database CSVs |
 | [`spel config`](#spel-config) | Print the resolved E3SM/ELM source paths |
@@ -168,6 +170,7 @@ spel create -s <subroutine> [<subroutine> ...] [-c <casename>] [-u] [--db]
 | `--instrument` | no | off | Afterwards run [`spel instrument`](#spel-instrument) for the case |
 | `--run-case` | no | off | Also create/build/run the CIME case, collect its `spel-*.nc`, then [`spel run`](#spel-run) the unit test (implies `--instrument`) |
 | `--freq`, `--case-args` | no | `9`, `""` | See [`spel instrument`](#spel-instrument) |
+| `--subset`, `--subset-max` | no | all gridcells | Capture a [gridcell subset](#gridcell-subsets) |
 
 Without `-u`, an existing case directory is cleared, and stale `.pkl` and `script-output/*.F90`
 files are removed before the run.
@@ -264,7 +267,49 @@ either `case: sub1 sub2` or just `sub`, with `#` comments. To split up an enormo
 | `ELM_RUN_FAILED` | the CIME build or run failed |
 
 `--skip-create` reuses existing cases. `--dry-run` creates the cases and reports what would be
-instrumented without touching ELM.
+instrumented without touching ELM. `--subset MASK` captures a [gridcell subset](#gridcell-subsets)
+for every case; in a list file, `case[MASK]: subs` (optionally `[MASK; max=N]`) sets it per case.
+
+### Gridcell subsets
+
+`spel instrument`, `spel create --instrument/--run-case` and `spel validate` take
+`--subset MASK [--subset-max N]`: the capture then writes only up to `N` (default 100) gridcells
+matching `MASK`, with all their topounits, landunits, columns and patches. The subgrid index
+fields (`lun_pp%gridcell`, `col_pp%landunit`, `grc_pp%coli`, ...) and the bounds are renumbered
+from 1, so the files look like the capture of a smaller domain and the unit test runs on them
+unchanged. Use it to pull a small, targeted test out of a large simulation.
+
+| `MASK` | A gridcell matches if it has ... |
+|--------|-----------------------------------|
+| `urban`, `lake`, `crop`, `glacier`, `wetland` | a landunit of that type with weight > 0 (`crop` is `istcrop`) |
+| `all` | (every gridcell) |
+| `urban,lake` | any of the listed presets |
+| `<level>: <expr>` | a `<level>` entry (gridcell, topounit, landunit, column, patch) for which the Fortran expression is true |
+
+Custom expressions use the index `g`, `t`, `l`, `c` or `p` of their level, the instances
+`grc_pp`, `top_pp`, `lun_pp`, `col_pp`, `veg_pp`, and anything public in `landunit_varcon`,
+`column_varcon` and `pftvarcon`; the ELM build is what checks them. The presets require a weight
+because zero-weight landunits exist (every gridcell has urban landunits when
+`run_zero_weight_urban` is on).
+
+```bash
+spel instrument urbanfluxes --subset urban --run-case
+spel validate --list cases.txt          # e.g. a line `soil_tall[patch: veg_pp%itype(p) == ndllf_evr_tmp_tree; max=20]: canopyfluxes`
+spel validate -s canopyfluxes --subset "gridcell: grc_pp%latdeg(g) > 60._r8" --subset-max 10
+```
+
+The selection runs in ELM at the first capture (`spel_select_subset` in `SpelCapture_<tag>`), so
+masks can use fields the unit test never reads. Matches are taken evenly spaced when there are more
+than `N`. With several MPI ranks, the rank with the most matches writes the capture and the others
+write nothing, so the subset holds at most that rank's matches. The run's `e3sm.log` has a
+`SPEL subset` line with the counts, and each file records the mask and the kept gridcells'
+global index, latitude and longitude as global attributes (`spel_subset_*`).
+`spel_reference.json` records the mask and `spel run` prints it.
+
+`spel subset SRC DST --gridcells 3,5,7` does the same offline: it writes those gridcells (1-based
+positions in SRC's files) of `unit-tests/input-data/SRC` to `unit-tests/input-data/DST`, using
+the same rules (`spel/scripts/subset.py`). Masks need ELM fields that the capture usually lacks, so
+offline subsets take explicit gridcells.
 
 ### `spel run`
 
@@ -291,12 +336,23 @@ The test executable accepts one optional positional argument:
 |-----|---------|---------|
 | 1 | copies of the input sites (`nsets`) | 1 |
 
-The unit test always runs a single clump spanning the whole process, so filters and loops cover
-every site at once. With `nsets > 1`, the netCDF reads replicate each subgrid-dimensioned input
+By default the unit test runs a single clump spanning the whole process, so filters and loops
+cover every site at once. With `nsets > 1`, the netCDF reads replicate each subgrid-dimensioned input
 `nsets` times and the generated `duplicateMod` offsets the subgrid index fields
 (`veg_pp%column`, `col_pp%landunit`, ...) of each copy. Outputs are written for the first copy
 only, so `fut-outputs*.nc` stay comparable with `spel-outputs*.nc`. A
 `WARNING (spel_nsets)` line means a copy produced results that differ from the first copy.
+
+`SPEL_CLUMPS=N` (run time, `1 <= N <= nsets`) splits the sets into `N` clumps of whole sets
+(as evenly as possible), builds the filters of each clump, and calls the routines in the same
+`!$OMP PARALLEL DO` over clumps that `elm_drv` uses, so a build with `ACC=OPENMP` threads the
+unit test the way ELM threads it on CPUs (one thread per clump, `OMP_NUM_THREADS=N`). Without
+OpenMP the clumps run one after the other. OpenACC builds need `SPEL_CLUMPS=1`. The NVTX range
+`compute` times the whole clump loop.
+
+```bash
+SPEL_ACC=OPENMP SPEL_CLUMPS=8 OMP_NUM_THREADS=8 spel run soiltemperature 16
+```
 
 Time-step inputs are read in chunks: `read_elmtypes` loads a whole input file (720 timesteps by
 default) per variable into set-1-shaped buffers, then each step copies its slice into the
@@ -322,6 +378,7 @@ environment variables `SPEL_FC`, `SPEL_DBG` and `SPEL_ACC` override them without
 | `OFF` (default) | none | `!$acc` directives are comments |
 | `MULTICORE` | nvfortran: `-acc=multicore -Minfo=accel` | compute regions run on host threads; set the count with `ACC_NUM_CORES` (default: all cores). gfortran only gets `-fopenacc -foffload=disable` and a warning: GCC has no multicore target, so regions run on one thread |
 | `GPU` | nvfortran: `-acc=gpu -gpu=deepcopy -Minfo=accel -cuda` | needs nvfortran (`-DGPU=ON` still works as an alias) |
+| `OPENMP` | gfortran: `-fopenmp -U_OPENMP`; nvfortran: `-mp -Minfo=mp -U_OPENMP` | threads the clump loop (`SPEL_CLUMPS`) and sources translated by [`spel acc2omp`](#spel-acc2omp); set the thread count with `OMP_NUM_THREADS`. `-U_OPENMP` keeps ELM's own `#ifdef _OPENMP` code off, as in the analysis |
 
 ```bash
 # nvfortran needs its own netcdf-fortran build (.mod files are compiler specific) on
@@ -363,6 +420,67 @@ You can also set `SPEL_PROFILE` and `SPEL_MAX_STEPS` yourself when running `buil
 directly (e.g. under `nsys` or `ncu` with your own options).
 `ncu` needs access to the GPU performance counters (`ERR_NVGPUCTRPERM` otherwise; see NVIDIA's
 instructions for that error).
+
+To compare a refactored routine against its reference across thread counts, run
+`profile_compare.sh` (repo root) on the machine you want numbers for. It builds both cases with
+nvfortran (`-fast`) and times the NVTX range `compute` (wall time per time step) for:
+
+| Config | Build | Threading |
+|--------|-------|-----------|
+| `master_off`, `acc_off` | `ACC=OFF` | serial |
+| `master_cN`, `acc_cN` | `ACC=OPENMP`, `SPEL_CLUMPS=N` | `N` clumps x 1 thread, as `elm_drv` threads ELM |
+| `acc_mcN` | `ACC=MULTICORE` | 1 clump x `N` OpenACC threads |
+| `ompN` (`--omp-case`) | `ACC=OPENMP` on an `acc2omp` case | 1 clump x `N` OpenMP threads |
+
+The summary gives each configuration's speed-up over master serial, over master with clump
+threading on the same `N` threads (the fair comparison with ELM's CPU threading), and over the
+same code on one thread. `acc_cN` vs `master_cN` isolates the code changes; `acc_mcN` vs
+`master_cN` compares the threading strategies. Clump runs need `N <= nsets`.
+
+```bash
+./profile_compare.sh --env nvhpc_env.sh -n 128 soiltemperature soiltemp_acc
+./profile_compare.sh -c "1 8 32 64 128" --omp-case soiltemp_omp soiltemperature soiltemp_acc
+OMP_PROC_BIND=spread OMP_PLACES=cores LAUNCH="srun -n 1 -c 128 --cpu-bind=cores" \
+    ./profile_compare.sh -n 128 soiltemperature soiltemp_acc
+```
+
+`--env` sources a module/env file first, `--skip` leaves out configurations, `--omp-case` adds
+an `acc2omp` case, `--link-inputs` points a new case at the reference case's input data, and
+`LAUNCH` prefixes every run. Results go to `unit-tests/profiles/compare-<case>-nsets<N>-<date>/`
+(`results.csv`, `summary.txt`, the `.nsys-rep` reports and build/run logs). For weak scaling,
+run it again with `nsets` proportional to the core count.
+
+### `spel acc2omp`
+
+Translates the OpenACC directives of analyzed modules to OpenMP, so a unit test can run
+multithreaded with gfortran (GCC has no OpenACC multicore target). The data-sharing clauses
+come from the analysis, not from the OpenACC clauses:
+
+- the loop each `!$acc parallel loop` applies to, and its `collapse` nest, come from the
+  routine's loop nest; collapsed loops must be perfectly nested and rectangular
+- local scalars written in the loop (including through intent(out)/(inout) call arguments)
+  and inner loop indices become `private`; `firstprivate` if the loop reads them before
+  writing them. OpenACC reductions are kept; arrays stay shared unless OpenACC privatizes them
+- written dummy or global scalars, privatized values read after the loop, and callees that
+  write SAVEd locals or global scalars are reported
+
+The report lists each loop's clauses and how they differ from the OpenACC `private` list
+(`added`: privatized by the analysis but not by OpenACC, a likely race in the OpenACC
+version too). Data directives (`data`, `enter/exit data`, `update`, `declare`, ...),
+`routine` and inner `loop` directives are removed; `atomic` becomes `!$omp atomic`.
+`!$acc parallel`/`kernels` regions without `loop` are left as OpenACC (serial) and reported.
+
+```bash
+spel acc2omp --case soiltemp_acc --diff            # rewrite the case's copies in place
+SPEL_ACC=OPENMP OMP_NUM_THREADS=6 spel run soiltemp_acc
+spel acc2omp soiltemperaturemod -o /tmp/omp        # translated copies of the E3SM sources
+spel acc2omp soiltemperaturemod --dry-run          # report only
+```
+
+With `--case` and no module names, every analyzed module of the case with OpenACC compute
+loops is translated. Edits are located by content, so they apply to the case copies even
+though `spel create` shifted their lines. `spel create` regenerates the case without them.
+The analysis must include loop-nest information (rebuild an older cache with `spel analyze`).
 
 ### `spel diff`
 

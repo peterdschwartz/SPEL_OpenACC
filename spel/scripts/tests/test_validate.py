@@ -35,6 +35,30 @@ def test_parse_request(tmp_path):
         v.parse_request()
 
 
+def test_parse_subsets(tmp_path):
+    lst = tmp_path / "cases.txt"
+    lst.write_text(
+        "urb_sub[urban; max=5]: UrbanFluxes  # three urban gridcells here\n"
+        "soil[landunit: lun_pp%itype(l) == istsoil]: canopyfluxes\n"
+        "full: urbanfluxes\n"
+    )
+    request = v.parse_request(list_file=lst)
+    assert request == {
+        "urb_sub": ["urbanfluxes"], "soil": ["canopyfluxes"], "full": ["urbanfluxes"],
+    }
+    subsets = v.parse_subsets(request, lst)
+    assert set(subsets) == {"urb_sub", "soil"}
+    assert subsets["urb_sub"].mask == "urban" and subsets["urb_sub"].max_cells == 5
+    assert subsets["soil"].custom and subsets["soil"].terms[0].level == "l"
+    # --subset applies to the cases without their own mask
+    subsets = v.parse_subsets(request, lst, default="lake", max_cells=3)
+    assert subsets["full"].mask == "lake" and subsets["full"].max_cells == 3
+    assert subsets["urb_sub"].max_cells == 5
+    lst.write_text("bad[nowhere]: urbanfluxes\n")
+    with pytest.raises(ValueError, match="unknown subset mask"):
+        v.parse_subsets(v.parse_request(list_file=lst), lst)
+
+
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     ut = tmp_path / "unit-tests"
@@ -65,14 +89,15 @@ def env(tmp_path, monkeypatch):
                 (ut / case).mkdir()
                 (ut / case / "fut.pkl").write_text("")
 
-    def instrument_cases(futs, srcroot, freq, dry_run, mods_dir):
+    def instrument_cases(futs, srcroot, freq, dry_run, mods_dir, subsets=None):
         res = MultiInstrumentReport()
         for fut in futs:
             if fut.case_name == "nosite":
                 res.failures["nosite"] = "not called from elm_drv"
             else:
                 res.reports[fut.case_name] = InstrumentReport(
-                    Path("elm_driver.F90"), "elm_driver", "bounds_clump", tag=fut.case_name
+                    Path("elm_driver.F90"), "elm_driver", "bounds_clump", tag=fut.case_name,
+                    subset=(subsets or {}).get(fut.case_name),
                 )
         return res
 

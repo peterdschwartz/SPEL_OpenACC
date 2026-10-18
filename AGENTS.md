@@ -3,6 +3,51 @@
 Notes for AI agents working on SPEL. Read `README.md` for the CLI and the
 reference-vs-development workflow; this file only covers what the README doesn't.
 
+## Environment
+
+The user works on several machines with this repo, and this file is shared between them.
+**Find out which one you're on** (`lscpu`, `nvidia-smi`, `ls ~/climate-projects/py12env`) and
+edit only that machine's notes. Don't replace another machine's section with what you find
+locally. Earlier edits made that mistake.
+
+Common to all: the gfortran netcdf/mpich builds live in `~/.local/gcc/` (the default
+`PKG_CONFIG_PATH`). Production profiling runs on Perlmutter; only test locally unless the user
+asks otherwise.
+
+### Laptop (Ryzen AI 5 340, 6 cores / 12 threads, no NVIDIA GPU)
+
+- `spel` comes from `~/climate-projects/py12env`.
+- nvfortran (NVHPC 26.5) is `~/.local/nvhpc/Linux_x86_64/26.5`, and its netcdf-fortran build is
+  `~/.local/nvhpc-libs/netcdf-fortran`. Run `source ~/.local/nvhpc-libs/env.sh` before any
+  nvfortran build; pass the same file to `profile_compare.sh --env`.
+- No GPU: `ACC=GPU` builds can't run here; use `ACC=MULTICORE` / `OPENMP`.
+- CIME machine `mylaptop` (gnu); the macro `cime_config/machines/cmake_macros/mylaptop_gnu.cmake`
+  is untracked in each E3SM checkout. A one-year run of the 21-gridcell refcase
+  (`~/climate-projects/input-data/spel-refcases/I1850GSWCNPRDCTCBC/canflux/0081-01-01`) takes
+  about 4 minutes.
+
+### GPU workstation (Ryzen 5 3600, 6 cores / 12 threads, RTX 4070)
+
+As recorded on 2026-10-16; not re-checked since.
+
+- `spel` comes from `~/python-envs/py3.12`.
+- nvfortran is `/opt/nvidia/hpc_sdk/Linux_x86_64/25.9`; its netcdf-fortran build is
+  `~/.local/netcdf-fortran` (+ `~/.local/netcdf-c`, `~/.local/hdf5`). There is no `env.sh`;
+  before any nvfortran build set:
+
+  ```bash
+  export PATH=/opt/nvidia/hpc_sdk/Linux_x86_64/25.9/compilers/bin:$PATH
+  export PKG_CONFIG_PATH=$HOME/.local/netcdf-fortran/lib/pkgconfig:$HOME/.local/netcdf-c/lib/pkgconfig:$HOME/.local/hdf5/lib/pkgconfig
+  export LD_LIBRARY_PATH=$HOME/.local/netcdf-fortran/lib:$HOME/.local/netcdf-c/lib:$HOME/.local/hdf5/lib:/opt/nvidia/hpc_sdk/Linux_x86_64/25.9/compilers/lib:$LD_LIBRARY_PATH
+  ```
+
+  Put that in a file and pass it to `profile_compare.sh --env`.
+
+### Perlmutter
+
+Production profiling and large (e.g. crop, `--preset crop-perf`) reference runs. Its paths and
+modules aren't recorded here yet; add them when working there.
+
 ## Generated vs. hand-edited files
 
 - `SourceFiles/nc_io.F90` is **generated**. Edit `spel/scripts/io/netcdf_io.py`, then
@@ -11,47 +56,109 @@ reference-vs-development workflow; this file only covers what the README doesn't
   templates/static files copied into each case; `!#...` markers in them are filled in by the generator.
 - `duplicateMod.F90`, `ReadWriteMod.F90` and the case's ELM sources are generated per case.
   Everything under `unit-tests/<case>/` is overwritten by `spel create`; fix the generator, not the case.
+  The case `CMakeLists.txt` comes from `generate_cmake` in `spel/scripts/functional_unit_test.py`.
 
 ## Testing
 
 ```bash
-source ~/climate-projects/py12env/bin/activate
 python -m pytest -q
 ```
-
 Tests that need a whole-ELM analysis use the session fixture `elm_drv_analysis` (root
 `conftest.py`). It loads the frozen copy `.pytest-fixtures/elm_drv_analysis.pkl`, which is gitignored
 and seeded once from the `E3SM_SRCROOT` cache, so tests never re-analyze. Delete the frozen copy to
 refresh it, or set `SPEL_TEST_ANALYSIS=/path/to/analysis.pkl`. Don't put binary fixtures under
 `spel/scripts/tests/`; `test_sub_parse` greps that directory.
 
-Compile-check Fortran templates with both compilers (netcdf-fortran `.mod` files are compiler specific):
+For analysis features, test on small snippets instead: `walk()` in
+`spel/scripts/fortran_parser/tests/test_scope_walk.py` parses and walks a routine, and the `StubSub`
+pattern in `spel/scripts/tests/test_record_access.py` (or `Sub` in
+`spel/transforms/tests/test_acc_to_omp.py`) feeds it to `AccessMapper`.
+
+Compile-check Fortran templates with both compilers (netcdf-fortran `.mod` files are compiler
+specific; the nvfortran include path is per machine, see Environment):
 
 ```bash
 gfortran -c -ffree-line-length-none -I$HOME/.local/gcc/netcdf-fortran/include SourceFiles/nc_io.F90 SourceFiles/nc_allocMod.F90
-source ~/.local/nvhpc-libs/env.sh
-nvfortran -c -I$HOME/.local/nvhpc-libs/netcdf-fortran/include SourceFiles/nc_io.F90 SourceFiles/nc_allocMod.F90
+nvfortran -c -I$HOME/.local/nvhpc-libs/netcdf-fortran/include SourceFiles/nc_io.F90 SourceFiles/nc_allocMod.F90  # laptop
+nvfortran -c -I$HOME/.local/netcdf-fortran/include SourceFiles/nc_io.F90 SourceFiles/nc_allocMod.F90             # GPU workstation
 ```
 
 Do this in a scratch directory so `.mod`/`.o` files don't land in the repo.
 
 ## Building and running unit tests
 
-- Run `source ~/.local/nvhpc-libs/env.sh` before any nvfortran build.
 - Select the toolchain with env vars, which override `check_config.sh`:
-  `SPEL_FC=nvfortran|gfortran SPEL_ACC=OFF|MULTICORE|GPU SPEL_DBG=ON|OFF spel run <case> [nsets]`.
+  `SPEL_FC=nvfortran|gfortran SPEL_ACC=OFF|MULTICORE|GPU|OPENMP SPEL_DBG=ON|OFF spel run <case> [nsets]`.
 - `spel run` prompts for confirmation; use `yes | spel run ...` when running non-interactively.
+  In scripts with `set -o pipefail`, `yes` exits with SIGPIPE: check the status of the command
+  it feeds, not the pipeline's.
+- gfortran builds: `DBG=ON` (the default) is `-O0` plus gcov coverage, and `DBG=OFF` adds no `-O`
+  flag, so gfortran timings are meaningless (coverage counters also contend under threads).
+  Profile with nvfortran (`-fast`).
+- gfortran `ACC=MULTICORE` runs on one thread (GCC has no multicore OpenACC target). To run a
+  case multithreaded with gfortran, translate it with `spel acc2omp --case <case>` and build with
+  `SPEL_ACC=OPENMP` (`-fopenmp -U_OPENMP`; threads from `OMP_NUM_THREADS`). `-U_OPENMP` keeps
+  ELM's own `#ifdef _OPENMP` clump-threading code off, as in the analysis (it needs
+  `shr_sys_abort` and aborts outside threaded regions). `spel create` undoes the translation, so
+  keep a separate case for it (e.g. `<case>_omp`).
 - `spel profile <case> [nsets] --steps N` runs with `SPEL_PROFILE=1` (no outputs written) under
   `nsys`; it needs the same `SPEL_FC`/`SPEL_ACC` vars as the build, or `check_config.sh` reconfigures.
-  NVTX ranges come from `SourceFiles/spel_profMod.F90` (nvfortran only).
-- Only test on the local machine unless the user asks otherwise.
+  NVTX ranges come from `SourceFiles/spel_profMod.F90` (nvfortran only); `main.F90` pushes one
+  range per routine under test inside `compute`, so `nsys stats --report nvtx_sum` times just that
+  routine.
+- `SPEL_CLUMPS=N` (run time) splits the `nsets` sets into `N` clumps of whole sets and runs the
+  routines in `elm_drv`'s `!$OMP PARALLEL DO` over clumps (`SourceFiles/main.F90`; clumps are set
+  up by `init_clumps` in `SourceFiles/elm_initializeMod.F90`). With `ACC=OPENMP` that is ELM's CPU
+  threading; it is the fair baseline for master, whose routines have no loop-level threading.
+  The clump loop has `IF (nclumps > 1)` so a single-clump OpenMP build doesn't nest the
+  `acc2omp` loops. OpenACC builds need one clump. IO uses the process bounds (`bounds_io`);
+  `read_elmtypes` overwrites its bounds argument with one set's bounds.
+- `nsets=N` with `SPEL_CLUMPS=M` must stay bit-identical to `nsets=1` (no `WARNING (spel_nsets)`).
+- Time the NVTX range `compute` (wall time of the clump loop). The per-routine ranges run inside
+  the clump threads, so with several clumps they time one clump.
+- `profile_compare.sh MASTER_CASE ACC_CASE` (repo root) times `compute` for master serial, master
+  and refactor with N clumps x 1 thread (`ACC=OPENMP`), the refactor with 1 clump x N OpenACC
+  threads (`ACC=MULTICORE`), and optionally an `acc2omp` case (`--omp-case`); the summary includes
+  the speed-up over master on the same thread count. Cases made before `SPEL_CLUMPS` must be
+  regenerated. It leaves the cases configured for nvfortran.
 
-## Analysis cache
+## Analysis
 
-`spel create` reuses the per-srcroot cache in `unit-tests/.spel-cache/<srcroot>-<hash>/elm_drv/`.
-After editing E3SM sources, pass `--reanalyze`; otherwise the generated test may contain
-stale routine code. SPEL warns when HEAD or uncommitted `components/elm` changes differ
-from the cache, but it does not rebuild automatically.
+- `spel create` reuses the per-srcroot cache in `unit-tests/.spel-cache/<srcroot>-<hash>/elm_drv/`.
+  After editing E3SM sources, pass `--reanalyze`; otherwise the generated test may contain
+  stale routine code. SPEL warns when HEAD or uncommitted `components/elm` changes differ
+  from the cache, but it does not rebuild automatically. The analysis is pickled, so changes to
+  the parser, AST or walker (`spel/scripts/fortran_parser/`) also need `--reanalyze`.
+- `meta.json` in the cache lists `failures`/`incomplete` routines; a refactor that doesn't parse
+  shows up there (e.g. `SemanticError: Undeclared symbol ...`) and `spel create` refuses it.
+- **Line numbers are 0-based indices** into the source file everywhere (`LineTuple.ln`,
+  `Subroutine.startline`, the record's events and loops). Add 1 when printing file lines.
+  (Files with `#include "shr_assert.h"` used to be off by one; fixed in `remove_cpp_directives`.)
+- `Subroutine.record` (`SubroutineRecord`, `scope_walk.py`) is the source of truth for a routine:
+  declarations (rank, attributes, intent), every access with line, status and origin, calls,
+  associate frames, and `loop_nest` (`LoopInfo`: extent, index, parent/children, variables read by
+  the bounds, `perfect_nest(n)` for collapse). `Subroutine.record_access` (`record_access.py`) has
+  per-line read/write statuses of locals, dummies and globals, with actual arguments resolved
+  through the callee's dummy intent. Build new analyses on these rather than on regexes.
+- OpenACC directives are comments to the parser; `spel/transforms/acc_directives.py` parses them
+  from the source and `acc_to_omp.py` attaches them to the analyzed loops.
+
+## Refactoring a routine against a reference
+
+- Use a new case name for the refactored test (e.g. `soiltemp_acc`) and make
+  `unit-tests/input-data/<new>/` with symlinks to the reference case's `spel-*.nc` and a copy of
+  its `spel_reference.json` (`profile_compare.sh --link-inputs` does the symlinks). Don't symlink
+  the directory: `spel run` writes `fut-outputs*.nc` there.
+- `spel diff` skips (and lists) reference variables the development branch no longer uses.
+- Target: gfortran `ACC=OFF` bit-for-bit with the reference; nvfortran `ACC=MULTICORE` identical to
+  nvfortran `ACC=OFF`; `acc2omp` + gfortran `OPENMP` bit-for-bit at any thread count (a race shows
+  up there as a difference from the reference).
+- To stay bit-for-bit, keep the reference's summation order: accumulate column sums (over layers or
+  patches) in a per-column parallel loop with `!$acc loop seq` inside, not with OpenACC
+  `reduction` clauses or reordered partial sums. List every scalar assigned in a compute loop in
+  `private`, and give local work arrays a `!$acc data create(...)` region.
+- `spel acc2omp --dry-run` doubles as a race check for OpenACC code: `added vs OpenACC` lists
+  scalars the analysis privatizes but the OpenACC clauses don't.
 
 ## Verifying changes
 
@@ -61,9 +168,60 @@ from the cache, but it does not rebuild automatically.
 - OpenACC: an `ACC=MULTICORE` build should match `ACC=OFF` to about 1e-9 relative. Larger
   differences mean a race, usually a scalar out-argument missing from `private`.
 - `nsets=N` must give output bit-identical to `nsets=1` and print no `WARNING (spel_nsets)` lines.
+- After changing line-number handling, `spel instrument <case> --dry-run` checks that call sites
+  and declarations are still found (it reports only).
+
+## Gridcell subsets
+
+Purpose: extract reference data for a few gridcells (up to `--subset-max`, default 100) of a
+large simulation, e.g. the urban, lake or crop gridcells, without capturing the whole domain.
+Usage is in the README ("Gridcell subsets"): `--subset MASK` on `spel instrument`, `spel create
+--instrument/--run-case` and `spel validate`, or `case[MASK; max=N]: subs` in a validate list file;
+`spel subset SRC DST --gridcells 3,5,7` cuts existing data offline.
+
+Design (keep these properties when changing it):
+
+- The subset files must look like the capture of a smaller domain: whole gridcells with all their
+  topounits/landunits/columns/patches, in their original order, renumbered from 1 (bounds,
+  `lbounds`/`ubounds` attributes and index fields). The unit-test side has no subset code;
+  don't add any.
+- Selection runs in ELM at the first capture (`spel_select_subset`, generated by
+  `capture_select_routine` in `spel/scripts/subset.py` into `SpelCapture_<tag>`), so masks may
+  use any ELM field, e.g. `lun_pp%wtgcell`, which captures usually lack. Presets need weight > 0:
+  every gridcell has zero-weight urban landunits when `run_zero_weight_urban` is on.
+  Presets live in `PRESETS`; custom masks are `<level>: <Fortran expression>` with index g/t/l/c/p.
+- `nc_io` does the writing while a `spel_subset_type` is active (`nc_subset_activate`, one subset
+  per case, so several cases in one ELM build can use different masks): `nc_subset_select`
+  gathers along the first subgrid dimension and renumbers the fields of `SUBGRID_INDEX_FIELDS`
+  (`netcdf_io.py`), which `duplicateMod` also uses. A new subgrid index field must go there, or
+  subsets and `nsets` copies point at the wrong entries. A variable whose subgrid extent isn't the
+  process's stops the run (`nc_subset_n`).
+- Without `--subset` the capture module is byte-identical to before; keep it that way.
+- MPI: the rank with the most matches writes, the others write nothing. Merging ranks into one
+  subset is not implemented.
+- Provenance: global attributes `spel_subset_mask/gindex/latdeg/londeg` in every file, `subset` in
+  `spel_reference.json` (printed by `spel run`), and `SPEL subset` lines in the run's `e3sm.log`.
+
+Testing:
+
+- `spel/scripts/tests/test_subset.py`: mask parsing, capture-module generation, and a gfortran
+  program writing a synthetic capture (non-unit process bounds) through `nc_io`, compared
+  bit-for-bit with the offline subsetter (`subset_dataset`, `diff_datasets`).
+- End to end (done on the laptop on 2026-10-18, all PASS): one `spel validate` run with a full
+  case and a subset case of the same routine (e.g. `urb_full: urbanfluxes` and
+  `urb_sub[urban]: urbanfluxes`), then check that `subset_dataset` of the full files at the
+  `spel_subset_gindex` gridcells is bit-for-bit the subset files, and that `[all]` reproduces the
+  full capture. On the 21-gridcell case, urban = gridcells 3, 5, 7 and lakes = 1-9 (from
+  `PCT_URBAN`/`PCT_LAKE` in its surface dataset). That case has no crops: the `crop` preset
+  (`lun_pp%itype(l) == istcrop`) still needs a test on a crop configuration (Perlmutter).
+- To instrument E3SM master without touching uncommitted work in it, use a scratch `git worktree`
+  of its HEAD, rsync the submodule trees and the untracked `mylaptop_gnu.cmake` into it, and pass
+  `--srcroot` (its analysis takes about 45 s). Remove the worktree and its `.spel-cache` entry after.
 
 ## Don'ts
 
-- Don't modify uncommitted work in the E3SM checkouts (`~/climate-projects/E3SM`, `~/climate-projects/dev_E3SM`).
-- Run `spel instrument --undo` before analyzing an instrumented checkout.
+- Don't modify uncommitted work in the E3SM checkouts (`~/climate-projects/E3SM`, `~/climate-projects/dev_E3SM`)
+  unless the user asks; if they do, back the file up first.
+- `~/climate-projects/E3SM` (master) may be instrumented: run `spel instrument --undo` before
+  analyzing it, and don't reanalyze it to test SPEL changes (use `dev_E3SM`).
 - Don't name scratch Python files after stdlib modules (e.g. `/tmp/copy.py`).

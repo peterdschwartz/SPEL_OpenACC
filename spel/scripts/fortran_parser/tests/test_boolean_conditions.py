@@ -137,3 +137,50 @@ def test_boolean_equality():
 
     assert expr_1 == expr_2
 
+
+
+def test_string_comparison_guard_is_quoted_fortran():
+    # nu_com .eq. 'rd'  (analysis lowercases sources, so the literal is 'rd')
+    from spel.scripts.fortran_parser.spel_ast import StringLiteral
+
+    expr = InfixExpression(
+        tok=tok,
+        op=".eq.",
+        left=Identifier(tok=tok, value="nu_com"),
+        right=StringLiteral(tok=tok, val="rd"),
+    )
+    variables = {"nu_com"}
+    assert infer_condition_expectations(expr, variables, True) == Expectation(
+        "nu_com", ".eq. 'rd'"
+    )
+    assert (
+        infer_condition_expectations(expr, variables, True).to_fortran()
+        == "spel_streq(nu_com, 'rd')"
+    )
+    assert (
+        infer_condition_expectations(expr, variables, False).to_fortran()
+        == ".not. spel_streq(nu_com, 'rd')"
+    )
+
+
+def test_empty_condition_renders_as_valid_fortran():
+    # an unconditional access alongside a guarded one: (guard) .or. (always)
+    guard = AllOf((Expectation("tw_irr", "True"), Expectation("irrigate", "True")))
+    assert AnyOf((guard, AllOf(()))).to_fortran() == "(((tw_irr .and. irrigate)) .or. (.true.))"
+    assert AnyOf(()).to_fortran() == ".false."
+
+
+def test_simplify_reaches_fixed_point():
+    # CanopyHydrology accesses qflx_supply under every irrigate/tw_irr branch
+    from spel.scripts.fortran_parser.boolen_expression import NO_EXPECTATION, simplify
+
+    irr, twi, gw = (Expectation(v, "True") for v in ("irrigate", "tw_irr", "extra_gw_irr"))
+    branches = AnyOf(
+        (
+            AllOf((irr, twi)),
+            AllOf((irr, twi, gw)),
+            AllOf((irr, Expectation("tw_irr", "False"))),
+            Expectation("irrigate", "False"),
+        )
+    )
+    assert simplify(branches) == NO_EXPECTATION

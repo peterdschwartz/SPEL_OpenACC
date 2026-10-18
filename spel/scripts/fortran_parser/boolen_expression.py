@@ -7,10 +7,12 @@ from typing import TypeAlias
 
 from spel.scripts.fortran_parser.spel_ast import (
     Expression,
+    FuncExpression,
     Identifier,
     IfConstruct,
     InfixExpression,
     PrefixExpression,
+    StringLiteral,
 )
 
 
@@ -27,8 +29,12 @@ class Expectation:
             return f".not. {self.variable}"
         elif self.constraint == "True":
             return self.variable
-        else:
-            return f"{self.variable} {self.constraint}"
+        op, _, rhs = self.constraint.partition(" ")
+        if _is_string_literal(rhs) and op.lower() in _STRING_EQ | _STRING_NE:
+            # the analysis lowercases sources, so compare strings case-insensitively
+            streq = f"spel_streq({self.variable}, {rhs})"
+            return streq if op.lower() in _STRING_EQ else f".not. {streq}"
+        return f"{self.variable} {self.constraint}"
 
 
 @dataclass(frozen=True)
@@ -39,6 +45,8 @@ class AllOf:
         return {name for item in self.items for name in item.variable_names()}
 
     def to_fortran(self) -> str:
+        if not self.items:  # no conditions: always true
+            return ".true."
         return (
             "(" + " .and. ".join([f"{item.to_fortran()}" for item in self.items]) + ")"
         )
@@ -62,6 +70,8 @@ class AnyOf:
         return {name for item in self.items for name in item.variable_names()}
 
     def to_fortran(self) -> str:
+        if not self.items:
+            return ".false."
         return (
             "(" + " .or. ".join([f"({item.to_fortran()})" for item in self.items]) + ")"
         )
@@ -78,6 +88,20 @@ class AnyOf:
 
 
 ConditionExpectation: TypeAlias = Expectation | AllOf | AnyOf
+
+_STRING_EQ = {"==", "=", ".eq."}
+_STRING_NE = {"/=", "!=", ".ne."}
+
+
+def _is_string_literal(text: str) -> bool:
+    return len(text) >= 2 and text[0] == text[-1] and text[0] in "'\""
+
+
+def _operand_str(expr: Expression) -> str:
+    """Fortran source for a comparison operand (StringLiteral.__str__ drops the quotes)"""
+    if isinstance(expr, StringLiteral):
+        return f"'{expr.value}'"
+    return str(expr)
 
 
 def expected_constraints(
@@ -186,6 +210,19 @@ def negate(
 
 
 def simplify(
+    condition: ConditionExpectation,
+) -> ConditionExpectation:
+    # one pass can leave reducible terms, e.g. combining
+    # (a .and. b) .or. (a .and. .not. b) .or. .not. a  ->  a .or. .not. a
+    for _ in range(100):
+        simplified = _simplify_once(condition)
+        if simplified == condition:
+            return simplified
+        condition = simplified
+    return condition
+
+
+def _simplify_once(
     condition: ConditionExpectation,
 ) -> ConditionExpectation:
     match condition:
@@ -364,7 +401,7 @@ def infer_condition_expectations(
                 expectations.append(
                     Expectation(
                         expr.left_expr.value,
-                        f"{expected_op} {expr.right_expr}",
+                        f"{expected_op} {_operand_str(expr.right_expr)}",
                     )
                 )
 
@@ -379,7 +416,7 @@ def infer_condition_expectations(
                 expectations.append(
                     Expectation(
                         expr.right_expr.value,
-                        f"{expected_op} {expr.left_expr}",
+                        f"{expected_op} {_operand_str(expr.left_expr)}",
                     )
                 )
 
@@ -387,6 +424,14 @@ def infer_condition_expectations(
 
     if isinstance(expr, Identifier) and expr.value in variables:
         return Expectation(expr.value, str(truth))
+
+    # logical arrays/components, e.g. lun_pp%ispolygon(l) for the cascade var ispolygon
+    if isinstance(expr, FuncExpression):
+        expr = expr.function
+    if isinstance(expr, Identifier) and "%" in expr.value:
+        name = expr.value.split("%")[-1]
+        if name in variables:
+            return Expectation(name, str(truth))
 
     return NO_EXPECTATION
 

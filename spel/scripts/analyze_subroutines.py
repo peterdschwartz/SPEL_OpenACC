@@ -122,6 +122,7 @@ class Subroutine(object):
         self.sub_lines: list[LineTuple] = []
 
         self.logger: logging.Logger = get_logger(f"{self.module}::{self.name}")
+        self.logger.info(f"Analyzing {self.module}::{self.name}")
         self.flat_ifs: list[FlatIfs] = []
         self.ifs_analyzed: bool = False
         self.syntax_tree: Optional[SubroutineDefinitionConstruct] = None
@@ -662,34 +663,31 @@ class Subroutine(object):
     def _get_ptr_targets(self, pot_ptr: str) -> list[str]:
         return self.ptr_vars.get(pot_ptr, [pot_ptr])
 
+    def namelist_if_at(self, ln: int) -> Optional[FlatIfs]:
+        """
+        Innermost namelist-gated flat if whose body contains line `ln`, if any.
+        The if's own condition (start_ln) runs whether or not it holds, e.g.
+        `if (lun_pp%ispolygon(l))` reads ispolygon without use_polygonal_tundra.
+        """
+        enclosing = [
+            (ln - x_if.start_ln, x_if)
+            for x_if in self.flat_ifs
+            if (x_if.nml_vars or x_if.nml_cascades) and x_if.start_ln < ln < x_if.end_ln
+        ]
+        if enclosing:
+            return min(enclosing, key=lambda x: x[0])[1].copy()
+        return None
+
     def elmtype_accesses_exclusive_to_namelist_ifs(self) -> dict[str, set[FlatIfs]]:
         """
         Return ELM derived-type fields whose accesses occur only inside namelist-gated
         flat if blocks.
         """
 
-        nml_ifs = [
-            flat_if
-            for flat_if in self.flat_ifs
-            if flat_if.nml_vars or flat_if.nml_cascades
-        ]
-
-        def matching_namelist_if(access: ReadWrite) -> Optional[FlatIfs]:
-            distance_from_if = [
-                (dist, x_if)
-                for x_if in nml_ifs
-                if (dist := access.ln - x_if.start_ln) >= 0 and access.ln < x_if.end_ln
-            ]
-            distance_from_if.sort(key=lambda x: x[0])
-
-            if distance_from_if:
-                return distance_from_if[0][1].copy()
-            return None
-
         exclusive: dict[str, set[FlatIfs]] = {}
 
         for elm_field, accesses in self.elmtype_access_by_ln.items():
-            guarded_accesses = [matching_namelist_if(rw) for rw in accesses]
+            guarded_accesses = [self.namelist_if_at(rw.ln) for rw in accesses]
             guarded_accesses = [_if for _if in guarded_accesses if _if is not None]
 
             # check if every access is a guarded access

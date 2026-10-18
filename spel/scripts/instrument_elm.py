@@ -37,6 +37,7 @@ from spel.scripts.module_resolver import ModuleHead, entity_names, module_head
 
 if TYPE_CHECKING:
     from spel.scripts.functional_unit_test import FunctionalUnitTest
+    from spel.scripts.subset import SubsetSpec
 
 CAPTURE_PREFIX = "SpelCapture_"
 MAX_TAG = 40  # Fortran names are <= 63 characters
@@ -117,9 +118,12 @@ class CaptureNames:
     """
 
     tag: str
+    # elm_drv scalar dummies the unit test needs: ((name, type), ...); see
+    # FunctionalUnitTest.driver_args
+    drv_args: tuple[tuple[str, str], ...] = ()
 
     @classmethod
-    def for_case(cls, case_name: str) -> "CaptureNames":
+    def for_case(cls, case_name: str, drv_args: tuple[tuple[str, str], ...] = ()) -> "CaptureNames":
         tag = re.sub(r"\W+", "_", case_name.lower()).strip("_")
         if tag and tag[0].isdigit():
             tag = f"c{tag}"
@@ -128,7 +132,7 @@ class CaptureNames:
                 f"case name {case_name!r} can't be used in Fortran names "
                 f"(1-{MAX_TAG} letters, digits or _)"
             )
-        return cls(tag)
+        return cls(tag, tuple(drv_args))
 
     @property
     def module(self) -> str:
@@ -179,6 +183,38 @@ def _check_call_sites(lines: list[str], sites: DriverSites) -> tuple[int, int, s
     return first.ln, max(statement_end(lines, c.ln) for c in calls), first.bounds
 
 
+def _first_calls_end(lines: list[str], sites: DriverSites) -> int:
+    """Last line of the first call to each routine (main.F90 makes those calls)."""
+    return max(statement_end(lines, min(c.ln for c in found)) for found in sites.calls.values())
+
+
+_BLOCK_OPEN = re.compile(
+    r"^(\w+\s*:\s*)?(if\s*\(.*\)\s*then|do\b|select\s*(case|type)\b|associate\s*\(|block$|where\s*\(.*\)$)"
+)
+_BLOCK_CLOSE = re.compile(r"^end\s*(if|do|select|associate|block|where)\b")
+_BLOCK_MID = re.compile(r"^(else\b|elseif\b|case\b|elsewhere\b)")
+
+
+def _same_block(lines: list[str], start: int, end: int) -> bool:
+    """Whether lines start..end stay in one block: no else/case of, or exit from,
+    the construct around `start`, and no construct left open."""
+    depth = 0
+    ln = start
+    while ln <= end:
+        text = statement_text(lines, ln)
+        if _BLOCK_CLOSE.match(text):
+            depth -= 1
+            if depth < 0:
+                return False
+        elif _BLOCK_MID.match(text):
+            if depth == 0:
+                return False
+        elif _BLOCK_OPEN.match(text):
+            depth += 1
+        ln = statement_end(lines, ln) + 1
+    return depth == 0
+
+
 def instrument_lines(
     lines: list[str], groups: list[tuple[DriverSites, CaptureNames]]
 ) -> tuple[list[str], dict[str, str]]:
@@ -198,9 +234,25 @@ def instrument_lines(
     for sites, names in groups:
         first, end, bnd = _check_call_sites(lines, sites)
         bounds[names.tag] = bnd
-        indent = re.match(r"\s*", lines[first]).group()
-        before.setdefault(first, []).append(f"{indent}call {names.inputs}({bnd}) {MARKER}\n")
-        after.setdefault(end, []).append(f"{indent}call {names.outputs}({bnd}) {MARKER}\n")
+        if _same_block(lines, first, end):
+            # a routine called again later in the block (AerosolMasses for snow,
+            # then lake columns) is captured around its first call only: the
+            # code in between isn't part of the unit test
+            spans = [(first, _first_calls_end(lines, sites))]
+        else:
+            # e.g. HydrologyDrainage in both branches of an if: capture around
+            # each call, or the inputs capture sits in a branch that never runs
+            calls = sorted(c.ln for found in sites.calls.values() for c in found)
+            spans = [(ln, statement_end(lines, ln)) for ln in calls]
+        for span_first, span_end in spans:
+            indent = re.match(r"\s*", lines[span_first]).group()
+            actuals = "".join(f", {name}" for name, _ in names.drv_args)
+            before.setdefault(span_first, []).append(
+                f"{indent}call {names.inputs}({bnd}{actuals}) {MARKER}\n"
+            )
+            after.setdefault(span_end, []).append(
+                f"{indent}call {names.outputs}({bnd}) {MARKER}\n"
+            )
         uses.setdefault(sites.module, []).append(
             f"  use {names.module}, only : {names.inputs}, {names.outputs} {MARKER}\n"
         )
@@ -497,26 +549,29 @@ def generate_capture_module(
     instances: list[str],
     freq: int = DEFAULT_FREQ,
     max_tpf: int = DEFAULT_MAX_TPF,
+    subset: Optional[SubsetSpec] = None,
 ) -> str:
     """
     Wrappers so the ELM call site only needs one call before/after. Each case
     owns its spel_io_type handles and writes <tag>.spel-*.nc, so several
     cases can be captured by one run.
+
+    With a `subset`, the first capture selects the gridcells (see
+    spel.scripts.subset) and every write runs with that subset active in
+    nc_io and with the subset's bounds; ranks without the subset write nothing.
     """
-    cont = " &\n         "
-    inst_use = (
-        f"  use elm_instMod, only :{cont}{(','+cont).join(instances)}\n" if instances else ""
-    )
-    inst_args = "".join(f",{cont}{n}={n}" for n in instances)
-    rw, fc = names.io_module("ReadWriteMod"), names.io_module("FUTConstantsMod")
-    pre = names.file_prefix
+    parts = _capture_parts(names, instances)
+    if subset is not None:
+        return _subset_capture_module(names, parts, freq, max_tpf, subset)
+    inst_use, inst_args, rw, fc, pre, drv_dummies, drv_use, drv_decl, drv_copy = parts
     return f"""module {names.module}
   !!! Auto-generated by SPEL: dump reference data for functional unit tests.
   !!! Inputs/outputs are captured every capture_freq model steps.
+  use shr_kind_mod, only : r8 => shr_kind_r8
   use decompMod, only : bounds_type
   use elm_time_manager, only : get_nstep
   use nc_io, only : spel_io_type
-  use {rw}, only : write_elmtypes
+  use {rw}, only : write_elmtypes{drv_use}
   use {fc}, only : write_constants
 {inst_use}  implicit none
   private
@@ -526,9 +581,9 @@ def generate_capture_module(
   type(spel_io_type) :: io_constants, io_inputs, io_outputs
   logical :: capturing = .false.
 contains
-  subroutine {names.inputs}(bounds)
+  subroutine {names.inputs}(bounds{drv_dummies})
     type(bounds_type), intent(in) :: bounds
-    if (.not. io_constants%created) then
+{drv_decl}{drv_copy}    if (.not. io_constants%created) then
       call io_constants%init(base_fn='{pre}spel-constants', max_tpf=max_tpf, read_io=.false.)
       call io_inputs%init(base_fn='{pre}spel-inputs', max_tpf=max_tpf, read_io=.false.)
       call io_outputs%init(base_fn='{pre}spel-outputs', max_tpf=max_tpf, read_io=.false.)
@@ -542,6 +597,92 @@ contains
     type(bounds_type), intent(in) :: bounds
     if (capturing) call write_elmtypes(io_outputs, bounds{inst_args})
   end subroutine {names.outputs}
+end module {names.module}
+"""
+
+
+def _capture_parts(names: CaptureNames, instances: list[str]) -> tuple[str, ...]:
+    """Pieces of the capture module that depend on the case's instances and elm_drv dummies."""
+    cont = " &\n         "
+    inst_use = (
+        f"  use elm_instMod, only :{cont}{(','+cont).join(instances)}\n" if instances else ""
+    )
+    inst_args = "".join(f",{cont}{n}={n}" for n in instances)
+    rw, fc = names.io_module("ReadWriteMod"), names.io_module("FUTConstantsMod")
+    pre = names.file_prefix
+    ftype = {"real": "real(r8)", "integer": "integer"}
+    drv_dummies = "".join(f", {n}" for n, _ in names.drv_args)
+    drv_use = "".join(f", spel_drv_{n}" for n, _ in names.drv_args)
+    drv_decl = "".join(f"    {ftype[t]}, intent(in) :: {n}\n" for n, t in names.drv_args)
+    drv_copy = "".join(f"    spel_drv_{n}(1) = {n}\n" for n, _ in names.drv_args)
+    return inst_use, inst_args, rw, fc, pre, drv_dummies, drv_use, drv_decl, drv_copy
+
+
+def _subset_capture_module(
+    names: CaptureNames,
+    parts: tuple[str, ...],
+    freq: int,
+    max_tpf: int,
+    subset: SubsetSpec,
+) -> str:
+    from spel.scripts.subset import capture_select_routine
+
+    inst_use, inst_args, rw, fc, pre, drv_dummies, drv_use, drv_decl, drv_copy = parts
+    mask_uses = "".join(f"  use {u}\n" for u in subset.uses())
+    return f"""module {names.module}
+  !!! Auto-generated by SPEL: dump reference data for functional unit tests.
+  !!! Inputs/outputs are captured every capture_freq model steps, for a
+  !!! gridcell subset (spel_select_subset)
+  use shr_kind_mod, only : r8 => shr_kind_r8
+  use decompMod, only : bounds_type, get_proc_bounds
+  use elm_time_manager, only : get_nstep
+  use spmdMod, only : masterproc, iam, npes, mpicom, MPI_INTEGER, MPI_MAX, MPI_MIN
+  use nc_io, only : spel_io_type, spel_subset_type, nc_subset_set_level, nc_subset_count, &
+       nc_subset_activate, nc_subset_deactivate
+  use {rw}, only : write_elmtypes{drv_use}
+  use {fc}, only : write_constants
+{inst_use}{mask_uses}  implicit none
+  private
+  public :: {names.inputs}, {names.outputs}
+  integer, parameter :: capture_freq = {freq}
+  integer, parameter :: max_tpf = {max_tpf}
+  integer, parameter :: spel_subset_max = {subset.max_cells}
+  type(spel_io_type) :: io_constants, io_inputs, io_outputs
+  type(spel_subset_type), target :: spel_sub
+  type(bounds_type) :: spel_bounds_sub
+  logical :: spel_writer = .false.
+  logical :: capturing = .false.
+contains
+  subroutine {names.inputs}(bounds{drv_dummies})
+    type(bounds_type), intent(in) :: bounds
+{drv_decl}{drv_copy}    if (.not. io_constants%created) then
+      call spel_select_subset(bounds)
+      call io_constants%init(base_fn='{pre}spel-constants', max_tpf=max_tpf, read_io=.false.)
+      call io_inputs%init(base_fn='{pre}spel-inputs', max_tpf=max_tpf, read_io=.false.)
+      call io_outputs%init(base_fn='{pre}spel-outputs', max_tpf=max_tpf, read_io=.false.)
+      if (spel_writer) then
+        call nc_subset_activate(spel_sub)
+        call write_constants(io_constants)
+        call nc_subset_deactivate()
+      end if
+    end if
+    capturing = spel_writer .and. mod(get_nstep(), capture_freq) == 0
+    if (capturing) then
+      call nc_subset_activate(spel_sub)
+      call write_elmtypes(io_inputs, spel_bounds_sub{inst_args})
+      call nc_subset_deactivate()
+    end if
+  end subroutine {names.inputs}
+
+  subroutine {names.outputs}(bounds)
+    type(bounds_type), intent(in) :: bounds
+    if (capturing) then
+      call nc_subset_activate(spel_sub)
+      call write_elmtypes(io_outputs, spel_bounds_sub{inst_args})
+      call nc_subset_deactivate()
+    end if
+  end subroutine {names.outputs}
+{capture_select_routine(subset, names.tag)}
 end module {names.module}
 """
 
@@ -581,6 +722,7 @@ class InstrumentReport:
     case_dir: Optional[Path] = None
     copied: list[Path] = field(default_factory=list)
     made_public: dict[Path, list[str]] = field(default_factory=dict)
+    subset: Optional[SubsetSpec] = None
 
     def to_json(self) -> dict:
         return {
@@ -590,6 +732,7 @@ class InstrumentReport:
             "tag": self.tag,
             "copied": [str(p) for p in self.copied],
             "made_public": {str(k): v for k, v in self.made_public.items()},
+            "subset": self.subset.to_json() if self.subset else None,
         }
 
 
@@ -646,12 +789,15 @@ def instrument_cases(
     freq: int = DEFAULT_FREQ,
     dry_run: bool = False,
     mods_dir: Optional[Path] = None,
+    subsets: Optional[dict[str, SubsetSpec]] = None,
 ) -> MultiInstrumentReport:
     """
     Instrument ELM so one run captures reference data for every case in
     `futs`. A case that can't be instrumented is recorded in `failures` and
-    skipped; the others are still instrumented.
+    skipped; the others are still instrumented. `subsets` maps case names to
+    the gridcell subset their capture writes (default: every gridcell).
     """
+    subsets = subsets or {}
     srcroot = Path(srcroot)
     dest = srcroot / "components/elm/src/main"
     result = MultiInstrumentReport()
@@ -666,7 +812,9 @@ def instrument_cases(
     for fut in futs:
         name = fut.case_name
         try:
-            names = CaptureNames.for_case(name)
+            names = CaptureNames.for_case(
+                name, tuple(getattr(fut, "driver_args", {}).items())
+            )
             if names.tag in tags:
                 raise InstrumentError(f"case name clashes with {tags[names.tag]} (tag {names.tag})")
             case_symbols = _check_case(fut, mods_dir)
@@ -694,7 +842,7 @@ def instrument_cases(
                 comp_syms.setdefault(mod, {}).setdefault(type_name, {}).update(comps_)
         result.reports[name] = InstrumentReport(
             path, fut.driver_sites.module, bounds[names.tag], tag=names.tag,
-            case_dir=Path(fut.case_dir),
+            case_dir=Path(fut.case_dir), subset=subsets.get(name),
         )
 
     # Accessibility edits keep line counts, so recorded call lines stay valid.
@@ -767,7 +915,9 @@ def instrument_cases(
         for f in CASE_IO_MODULES:
             out = dest / f"{names.io_module(f.removesuffix('.F90'))}.F90"
             out.write_text(rename_io_modules((case_dir / f).read_text(), names))
-        capture = generate_capture_module(names, capture_instances(fut), freq=freq)
+        capture = generate_capture_module(
+            names, capture_instances(fut), freq=freq, subset=subsets.get(fut.case_name)
+        )
         (dest / f"{names.module}.F90").write_text(capture)
         (case_dir / CAPTURE_DIR).mkdir(exist_ok=True)
         (case_dir / CAPTURE_DIR / f"{names.module}.F90").write_text(capture)
@@ -782,9 +932,13 @@ def instrument_elm(
     freq: int = DEFAULT_FREQ,
     dry_run: bool = False,
     mods_dir: Optional[Path] = None,
+    subset: Optional[SubsetSpec] = None,
 ) -> InstrumentReport:
     """Instrument ELM for a single case."""
-    result = instrument_cases([fut], srcroot, freq=freq, dry_run=dry_run, mods_dir=mods_dir)
+    result = instrument_cases(
+        [fut], srcroot, freq=freq, dry_run=dry_run, mods_dir=mods_dir,
+        subsets={fut.case_name: subset} if subset else None,
+    )
     if fut.case_name in result.failures:
         raise InstrumentError(result.failures[fut.case_name])
     return result.reports[fut.case_name]
@@ -874,8 +1028,10 @@ def _stream(cmd: list[str], cwd: Optional[Path] = None) -> tuple[int, Optional[s
     """Run cmd echoing its output; (exit code, CASEDIR it printed)."""
     print("Running:", " ".join(cmd))
     casedir = None
+    # no stdin: mpiexec (hydra) forwards it and aborts if it is e.g. `yes | spel ...`
     with subprocess.Popen(
-        cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        cmd, cwd=cwd, stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     ) as proc:
         for line in proc.stdout:
             print(line, end="")
@@ -930,14 +1086,15 @@ def collect_outputs(rundir: Path, dest: Path, prefix: str = "") -> list[Path]:
     return copied
 
 
-def write_reference_meta(dest: Path, case_name: str) -> Path:
-    """Record which E3SM checkout produced the reference data in dest."""
+def write_reference_meta(dest: Path, case_name: str, subset: Optional[SubsetSpec] = None) -> Path:
+    """Record which E3SM checkout (and gridcell subset) produced the reference data in dest."""
     from spel.scripts.analysis_cache import current_meta
     from spel.scripts.config import REFERENCE_META_FILENAME
 
     meta = {
         "case_name": case_name,
         "captured_at": datetime.now(timezone.utc).isoformat(),
+        "subset": subset.to_json() if subset else None,
     } | current_meta()
     dest.mkdir(parents=True, exist_ok=True)
     path = dest / REFERENCE_META_FILENAME
@@ -951,6 +1108,7 @@ def instrument_case(
     run: bool = False,
     case_args: Optional[list[str]] = None,
     dry_run: bool = False,
+    subset: Optional[SubsetSpec] = None,
 ) -> InstrumentReport:
     """`spel instrument`: instrument ELM for a unit-test case, optionally run it."""
     from spel.scripts.config import (
@@ -961,10 +1119,14 @@ def instrument_case(
     )
 
     fut = load_case(case)
-    report = instrument_elm(fut, E3SM_SRCROOT, freq=freq, dry_run=dry_run, mods_dir=spel_mods_dir)
+    report = instrument_elm(
+        fut, E3SM_SRCROOT, freq=freq, dry_run=dry_run, mods_dir=spel_mods_dir, subset=subset
+    )
 
     verb = "Would instrument" if dry_run else "Instrumented"
     print(f"{verb} {report.call_site} ({report.module}, bounds={report.bounds})")
+    if subset:
+        print(f"  gridcell subset: {subset.description}")
     for path, names in report.made_public.items():
         print(f"  public/unprotected in {path.name}: {', '.join(names)}")
     print(f"  IO modules -> {report.copied[0].parent}")
@@ -978,6 +1140,6 @@ def instrument_case(
     copied = collect_outputs(rundir, Path(input_data_dir) / fut.case_name, prefix)
     if not copied:
         raise InstrumentError(f"No {prefix}spel-*.nc files were written to {rundir}")
-    write_reference_meta(copied[0].parent, fut.case_name)
+    write_reference_meta(copied[0].parent, fut.case_name, subset)
     print(f"Copied {len(copied)} files from {rundir} to {copied[0].parent}")
     return report

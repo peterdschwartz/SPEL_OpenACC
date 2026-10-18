@@ -1,6 +1,7 @@
 #!/bin/bash
-# Create (and optionally build/run) a single-site uELM case.
-# Defaults reproduce the original hard-coded setup; see --help.
+# Create (and optionally build/run) an ELM case.
+# Defaults reproduce the original single-site uELM setup; --preset crop-perf
+# gives the Perlmutter crop-model performance setup. See --help.
 set -euo pipefail
 
 parent_dir=${HOME}/climate-projects
@@ -23,6 +24,18 @@ clean_lnd=0
 submit=0
 refcase=""
 start_date=""
+ntasks=""
+rest_n=""
+rest_option=""
+queue=""
+wallclock="0:10:00"
+auto_name=0
+share=0
+compressed_cft=0
+remove_zero_weight_urban=0
+compressed_cft_dir=${COMPRESSED_CFT_DIR:-/pscratch/sd/g/gbisht/crop_reduced_inputdata}
+compressed_cft_paramfile=$compressed_cft_dir/clm_params_31pfts_c261015.nc
+compressed_cft_fsurdat=$compressed_cft_dir/surfdata_t-oi6to18-lr25_31pfts_simyr1850_c261015.nc
 
 usage() {
    cat <<USAGE
@@ -32,15 +45,41 @@ Usage: $(basename "$0") [options]
   --scratch DIR        scratch root              (default: $scratch)
   --srcroot DIR        E3SM source root          (default: $E3SM_SRCROOT)
   --mach NAME          machine                   (default: $mach)
-  --compiler NAME      compiler                  (default: $compiler)
+  --compiler NAME      compiler, '' for the machine default (default: $compiler)
   --compset NAME       compset                   (default: $compset)
-  --res NAME           resolution                (default: $res)
+  --with-crops         --compset I1850GSWCNPCROPTOP
+  --no-crops           --compset I1850GSWCNPTOP
+  --res NAME           resolution; u01 and t-lr25 expand to u01_u01 and
+                       t-lr25_t-lr25             (default: $res)
   --user-mods DIR      testmods dir, relative to elm testmods_dirs or absolute ('' for none)
                                                  (default: $user_mods)
-  --config NAME        cn | fates | test         (default: $config)
+  --config NAME        cn | fates | test | none  (default: $config)
   --stop-n N           STOP_N                    (default: $stop_n)
   --stop-option OPT    STOP_OPTION               (default: $stop_option)
+  --rest-n N           REST_N                    (default: unchanged)
+  --rest-option OPT    REST_OPTION               (default: unchanged)
+  --ntasks N           NTASKS                    (default: unchanged)
+  --queue NAME         JOB_QUEUE                 (default: unchanged)
+  --wallclock T        JOB_WALLCLOCK_TIME and USER_REQUESTED_WALLTIME
+                                                 (default: $wallclock)
   --no-debug           DEBUG=FALSE
+  --compressed-cft     t-lr25 only: use the paramfile and surface dataset reduced
+                       to the 16 CFTs unique in mergetoclmpft (from
+                       \$COMPRESSED_CFT_DIR, default $compressed_cft_dir)
+                       and append '.compressed_cft' to an --auto-name case name
+  --remove-zero-weight-urban
+                       add 'run_zero_weight_urban = .false.' to user_nl_elm
+                       (older E3SM hashes lack this namelist option)
+  --auto-name          name the case <date>.<res>.<compset>.<mach>.NTASKS<n>.<git hash>
+                       (overrides --case)
+  --share              chmod -R og+rX the case directory when done
+  --preset crop-perf   ELM crop-model performance case on Perlmutter: --mach pm-cpu
+                       --compiler '' --user-mods '' --config none --no-debug
+                       --ntasks 1024 --rest-n 10 --rest-option ndays --stop-n 5
+                       --stop-option ndays --queue debug --wallclock 00:20:00
+                       --scratch \$SCRATCH --group E3SM_testings --auto-name --share
+                       --build. Options after it override it; combine with
+                       --res and --with-crops/--no-crops.
   --refcase DIR        hybrid start from a refcase saved by save_refcase.sh
                        (e.g. \$DIN_LOC_ROOT/spel-refcases/<compset>/<case>/<date>)
   --start-date DATE    RUN_STARTDATE for --refcase (default: the refcase date)
@@ -59,14 +98,42 @@ while [ $# -gt 0 ]; do
       --group) case_group=$2; shift ;;
       --scratch) scratch=$2; shift ;;
       --srcroot) E3SM_SRCROOT=$2; shift ;;
+      --preset)
+         case "$2" in
+            crop-perf)
+               mach=pm-cpu; compiler=""; user_mods=""; config=none; debug=FALSE
+               ntasks=1024; rest_n=10; rest_option=ndays; stop_n=5; stop_option=ndays
+               queue=debug; wallclock=00:20:00
+               scratch=${SCRATCH:?SCRATCH is not set}; case_group=E3SM_testings
+               auto_name=1; share=1; build=1 ;;
+            *) echo "Unknown preset: $2" >&2; exit 1 ;;
+         esac
+         shift ;;
       --mach) mach=$2; shift ;;
       --compiler) compiler=$2; shift ;;
       --compset) compset=$2; shift ;;
-      --res) res=$2; shift ;;
+      --with-crops) compset=I1850GSWCNPCROPTOP ;;
+      --no-crops) compset=I1850GSWCNPTOP ;;
+      --res)
+         case "$2" in
+            u01) res=u01_u01 ;;
+            t-lr25) res=t-lr25_t-lr25 ;;
+            *) res=$2 ;;
+         esac
+         shift ;;
       --user-mods) user_mods=$2; shift ;;
       --config) config=$2; shift ;;
       --stop-n) stop_n=$2; shift ;;
       --stop-option) stop_option=$2; shift ;;
+      --rest-n) rest_n=$2; shift ;;
+      --rest-option) rest_option=$2; shift ;;
+      --ntasks) ntasks=$2; shift ;;
+      --queue) queue=$2; shift ;;
+      --wallclock) wallclock=$2; shift ;;
+      --compressed-cft) compressed_cft=1 ;;
+      --remove-zero-weight-urban) remove_zero_weight_urban=1 ;;
+      --auto-name) auto_name=1 ;;
+      --share) share=1 ;;
       --no-debug) debug=FALSE ;;
       --refcase) refcase=$(realpath "$2"); shift ;;
       --start-date) start_date=$2; shift ;;
@@ -81,6 +148,29 @@ while [ $# -gt 0 ]; do
 done
 
 src_path=$(realpath "$E3SM_SRCROOT")
+
+case "$config" in
+   cn|fates|test|none) ;;
+   *) echo "Unknown config: $config" >&2; exit 1 ;;
+esac
+
+if [ "$compressed_cft" -eq 1 ]; then
+   if [ "$res" != t-lr25_t-lr25 ]; then
+      echo "--compressed-cft is only supported with --res t-lr25" >&2; exit 1
+   fi
+   for f in "$compressed_cft_paramfile" "$compressed_cft_fsurdat"; do
+      [ -f "$f" ] || { echo "--compressed-cft input file not found: $f" >&2; exit 1; }
+   done
+fi
+
+if [ "$auto_name" -eq 1 ]; then
+   git_hash=$(git -C "$src_path" log -n 1 --format=%h)
+   casename=$(date +%Y%m%d).$res.$compset.$mach.NTASKS${ntasks:-default}.$git_hash
+   if [ "$compressed_cft" -eq 1 ]; then
+      casename=$casename.compressed_cft
+   fi
+fi
+
 casedir="$scratch/$case_group/$casename"
 output=$scratch/$case_group/output/$casename
 
@@ -94,7 +184,7 @@ if [ "$keep" -eq 0 ] || [ ! -d "$casedir" ]; then
 
    "$src_path"/cime/scripts/create_newcase --case "${casedir}" \
       --output-root "$output" \
-      --mach "$mach" --compiler "$compiler" \
+      --mach "$mach" ${compiler:+--compiler "$compiler"} \
       --compset "$compset" \
       --res "$res" \
       --handle-preexisting-dirs r \
@@ -102,9 +192,10 @@ if [ "$keep" -eq 0 ] || [ ! -d "$casedir" ]; then
       ${user_mods:+--user-mods-dir "$user_mods"}
 
    cd "${casedir}"
-   ./xmlchange JOB_WALLCLOCK_TIME="0:10:00"
-   ./xmlchange USER_REQUESTED_WALLTIME="0:10:00"
    ./xmlchange DEBUG=$debug
+   if [ -n "$ntasks" ]; then
+      ./xmlchange NTASKS="$ntasks"
+   fi
 
    if [ "$config" == "fates" ]; then
       ./xmlchange ELM_BLDNML_OPTS=" -bgc fates -no-megan -no-drydep -nutrient cnp -nutrient_comp_pathway eca -soil_decomp century"
@@ -138,11 +229,33 @@ if [ "$keep" -eq 0 ] || [ ! -d "$casedir" ]; then
       fsnowoptics                   = '\$DIN_LOC_ROOT/lnd/clm2/snicardata/snicar_optics_5bnd_mam_c211006.nc'
       " > user_nl_elm
    fi
+
+   if [ "$remove_zero_weight_urban" -eq 1 ]; then
+      echo "run_zero_weight_urban = .false." >> user_nl_elm
+   fi
+
+   if [ "$compressed_cft" -eq 1 ]; then
+      echo "
+      paramfile = '$compressed_cft_paramfile'
+      fsurdat = '$compressed_cft_fsurdat'
+      " >> user_nl_elm
+   fi
 fi
 
 cd "${casedir}"
 ./xmlchange STOP_N="$stop_n"
 ./xmlchange STOP_OPTION="$stop_option"
+./xmlchange JOB_WALLCLOCK_TIME="$wallclock"
+./xmlchange USER_REQUESTED_WALLTIME="$wallclock"
+if [ -n "$rest_n" ]; then
+   ./xmlchange REST_N="$rest_n"
+fi
+if [ -n "$rest_option" ]; then
+   ./xmlchange REST_OPTION="$rest_option"
+fi
+if [ -n "$queue" ]; then
+   ./xmlchange JOB_QUEUE="$queue"
+fi
 
 if [ -n "$refcase" ]; then
    # refuse a refcase saved from an incompatible configuration
@@ -177,6 +290,10 @@ if [ "$build" -eq 1 ]; then
       ./case.build --clean lnd
    fi
    ./case.build
+fi
+
+if [ "$share" -eq 1 ]; then
+   chmod -R og+rX "$casedir"
 fi
 
 if [ "$submit" -eq 1 ]; then

@@ -31,6 +31,7 @@ def create(args):
             keep=args.keep,
             db_mode=args.db_mode,
             reanalyze=args.reanalyze,
+            capture_for=args.capture_for,
         )
     if (args.instrument or args.run_case) and not args.db_mode:
         from spel.scripts.instrument_elm import instrument_case
@@ -40,9 +41,53 @@ def create(args):
             freq=args.freq,
             run=args.run_case,
             case_args=shlex.split(args.case_args),
+            subset=_subset_spec(args),
         )
         if args.run_case:
             _run_and_validate(unit_test.case_dir)
+
+
+def acc2omp(args):
+    from spel.scripts.analysis_cache import load_analysis
+    from spel.transforms.acc_to_omp import TranslationError, case_modules, translate_modules
+
+    case_dir = Path(f"{SPEL_ROOT}/unit-tests/{args.case}") if args.case else None
+    if case_dir is not None and not case_dir.is_dir():
+        raise SystemExit(f"no unit-test case {case_dir}")
+    fut = load_analysis(reanalyze=args.reanalyze)
+    modules = args.modules or (case_modules(fut, case_dir) if case_dir else [])
+    if not modules:
+        raise SystemExit("acc2omp: name the modules to translate, or give --case")
+
+    failed = False
+    for tr in translate_modules(fut, modules):
+        print(tr.report())
+        failed |= any(n.level == "error" for n in tr.notes)
+        if case_dir is not None:
+            dest = case_dir / tr.path.name
+            target = dest.read_text().splitlines(keepends=True)
+        else:
+            dest = Path(args.output) / tr.path.name if args.output else None
+            target = None
+        try:
+            new_lines = tr.apply(target)
+        except TranslationError as err:
+            if target is not None and not any("!$acc" in l.lower() for l in target):
+                print(f"  {dest} has no OpenACC directives left (already translated?)")
+            else:
+                print(f"  ERROR {err}")
+            failed = True
+            continue
+        if args.diff:
+            print(tr.diff(target))
+        if dest is not None and not args.dry_run:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text("".join(new_lines))
+            print(f"  wrote {dest}")
+    if case_dir is not None and not args.dry_run:
+        print(f"Build with OpenMP: SPEL_ACC=OPENMP OMP_NUM_THREADS=<n> spel run {args.case}")
+    if failed:
+        raise SystemExit(1)
 
 
 def analyze(args):
@@ -60,6 +105,20 @@ def _run_and_validate(case_dir) -> None:
         raise SystemExit(code)
 
 
+def _subset_spec(args):
+    """The --subset/--subset-max gridcell subset, or None."""
+    from spel.scripts.subset import SubsetError, SubsetSpec
+
+    if not args.subset:
+        if args.subset_max is not None:
+            raise SystemExit("--subset-max needs --subset")
+        return None
+    try:
+        return SubsetSpec.parse(args.subset, args.subset_max)
+    except SubsetError as err:
+        raise SystemExit(f"--subset: {err}")
+
+
 def instrument(args):
     from spel.scripts.instrument_elm import instrument_case, undo_instrumentation
 
@@ -74,16 +133,18 @@ def instrument(args):
         run=args.run_case,
         case_args=shlex.split(args.case_args),
         dry_run=args.dry_run,
+        subset=_subset_spec(args),
     )
     if args.run_case and not args.dry_run:
         _run_and_validate(report.case_dir)
 
 
 def validate(args):
-    from spel.scripts.validate import parse_request, validate as run_validate
+    from spel.scripts.validate import parse_request, parse_subsets, validate as run_validate
 
     try:
         request = parse_request(args.subs, args.list_file)
+        subsets = parse_subsets(request, args.list_file, args.subset, args.subset_max)
     except (ValueError, OSError) as err:
         raise SystemExit(f"spel validate: error: {err}")
     report = run_validate(
@@ -96,9 +157,34 @@ def validate(args):
         skip_create=args.skip_create,
         keep_instrumentation=args.keep_instrumentation,
         dry_run=args.dry_run,
+        subsets=subsets,
     )
     if not report.ok and not args.dry_run:
         raise SystemExit(1)
+
+
+def subset(args):
+    from spel.scripts.config import REFERENCE_META_FILENAME, input_data_dir
+    from spel.scripts.subset import SubsetError, subset_files
+
+    src, dst = Path(input_data_dir) / args.src, Path(input_data_dir) / args.dst
+    if not src.is_dir():
+        raise SystemExit(f"spel subset: no reference data in {src}")
+    if dst.resolve() == src.resolve():
+        raise SystemExit("spel subset: the destination must differ from the source")
+    try:
+        gridcells = sorted({int(g) for g in args.gridcells.split(",")})
+        files = subset_files(src, dst, gridcells)
+    except (SubsetError, ValueError) as err:
+        raise SystemExit(f"spel subset: {err}")
+    meta_src = src / REFERENCE_META_FILENAME
+    if meta_src.is_file():
+        import json
+
+        meta = json.loads(meta_src.read_text())
+        meta["subset"] = {"gridcells": gridcells, "from": args.src}
+        (dst / REFERENCE_META_FILENAME).write_text(json.dumps(meta, indent=2) + "\n")
+    print(f"Wrote {len(files)} files with gridcells {gridcells} of {src} to {dst}")
 
 
 def export(args):
@@ -298,6 +384,26 @@ def add_capture_args(parser: argparse.ArgumentParser, standalone: bool) -> None:
         default="",
         help="Extra casegen script options, e.g. \"--stop-n 10 --stop-option ndays --keep\"",
     )
+    add_subset_args(parser)
+
+
+def add_subset_args(parser: argparse.ArgumentParser) -> None:
+    from spel.scripts.subset import DEFAULT_MAX_CELLS, PRESETS
+
+    parser.add_argument(
+        "--subset",
+        metavar="MASK",
+        help="capture only the gridcells matching MASK: "
+        f"{', '.join(PRESETS)} (comma-separated: any of them), or "
+        "'<level>: <Fortran expression>' with level gridcell/topounit/landunit/column/patch "
+        "and index g/t/l/c/p, e.g. 'landunit: lun_pp%%itype(l) == istsoil'",
+    )
+    parser.add_argument(
+        "--subset-max",
+        type=int,
+        metavar="N",
+        help=f"keep at most N matching gridcells, evenly spaced (default: {DEFAULT_MAX_CELLS})",
+    )
 
 
 def main():
@@ -345,6 +451,14 @@ def main():
         help="Don't make Unit Test",
     )
     create_parser.add_argument(
+        "--capture-for",
+        action="append",
+        default=[],
+        metavar="CASE",
+        help="also capture the fields and constants unit-test CASE reads (e.g. the same "
+        "routine created from a development branch), so CASE can run on this case's data",
+    )
+    create_parser.add_argument(
         "--reanalyze",
         action="store_true",
         help="Rebuild the cached elm_drv analysis first (e.g. after switching "
@@ -352,6 +466,28 @@ def main():
     )
     add_capture_args(create_parser, standalone=False)
     create_parser.set_defaults(func=create)
+
+    acc2omp_parser = subparsers.add_parser(
+        "acc2omp",
+        help="translate modules' OpenACC directives to OpenMP (clauses from SPEL's analysis)",
+    )
+    acc2omp_parser.add_argument(
+        "modules", nargs="*", help="modules to translate (default with --case: those with compute loops)"
+    )
+    acc2omp_parser.add_argument(
+        "--case", help="rewrite the module copies in unit-tests/<case> in place"
+    )
+    acc2omp_parser.add_argument(
+        "-o", "--output", help="write translated copies of the analyzed sources to this directory"
+    )
+    acc2omp_parser.add_argument("--diff", action="store_true", help="print the changes")
+    acc2omp_parser.add_argument(
+        "--dry-run", dest="dry_run", action="store_true", help="report only, write nothing"
+    )
+    acc2omp_parser.add_argument(
+        "--reanalyze", action="store_true", help="rebuild the cached elm_drv analysis first"
+    )
+    acc2omp_parser.set_defaults(func=acc2omp)
 
     analyze_parser = subparsers.add_parser(
         "analyze",
@@ -418,7 +554,19 @@ def main():
         "--case-args", default="",
         help="Extra casegen script options, e.g. \"--stop-n 10 --stop-option ndays\"",
     )
+    add_subset_args(validate_parser)
     validate_parser.set_defaults(func=validate)
+
+    subset_parser = subparsers.add_parser(
+        "subset",
+        help="Write some gridcells of a case's reference data (spel-*.nc) as a new case's",
+    )
+    subset_parser.add_argument("src", help="case in unit-tests/input-data to read")
+    subset_parser.add_argument("dst", help="case in unit-tests/input-data to write")
+    subset_parser.add_argument(
+        "--gridcells", required=True, help="1-based gridcells to keep, e.g. 3,5,7"
+    )
+    subset_parser.set_defaults(func=subset)
 
     # Parser for 'spel export'
     export_parser = subparsers.add_parser("export", help="Run the export command")

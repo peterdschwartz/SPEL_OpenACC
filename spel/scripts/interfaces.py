@@ -220,7 +220,7 @@ def get_interface_procedures(iname: str) -> list[str]:
 
 
 def _find_interface_procedures(iname: str) -> list[str]:
-    cmd = f'grep -rin --exclude-dir=external_models -E "^[[:space:]]+(interface {iname})" {ELM_SRC}*'
+    cmd = f'grep -rin --exclude-dir=external_models -E "^[[:space:]]+(interface {iname})([[:space:]!]|$)" {ELM_SRC}*'
     output = sp.getoutput(cmd)
 
     # Get file and line number for interface
@@ -240,8 +240,10 @@ def _find_interface_procedures(iname: str) -> list[str]:
     ifile = open(fn, "r")
     lines = ifile.readlines()
     ifile.close()
-    # Get list of possible procedures within the interface
-    lpairs = [LineTuple(line=line,ln=i) for i, line in enumerate(lines)]
+    # Get list of possible procedures within this interface only: modules like
+    # subgridAveMod have several (p2c, p2g, c2g, ...), and collecting all of them
+    # resolved `call c2g(...)` to p2g_1d_gpu (same argument types)
+    lpairs = [LineTuple(line=line, ln=i) for i, line in enumerate(lines) if i >= ln - 1]
     line_iter = LogicalLineIterator(lines=lpairs)
 
     regex_start = re.compile(r"^\s*(interface)\s*")
@@ -261,5 +263,6 @@ def _find_interface_procedures(iname: str) -> list[str]:
                     subname = ltuple.line.replace(m_proc.group(), "").strip().lower()
                     subnames = subname.split('::')[-1]
                     interface_sub_names.extend([f"{module}::{s.strip()}" for s in subnames.split(",")])
+            break
 
     return interface_sub_names

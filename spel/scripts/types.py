@@ -57,6 +57,8 @@ class RoutineFrame:
     cpp_contains_ln: Optional[int] = None
     # locals of an unavailable type, banned only until the routine ends
     bad_locals: set[str] = field(default_factory=set)
+    # locals/dummies of a header type (see edit_files.header_types)
+    opaque_locals: set[str] = field(default_factory=set)
     dummy_args: set[str] = field(default_factory=set)
 
 
@@ -447,6 +449,8 @@ class ParseState:
     # Names that must be commented out of this file (global bad symbols plus
     # file-local ones, e.g. locals bound to unavailable imports)
     bad_names: set[str] = field(default_factory=set)
+    # Objects of a header type: kept, but their component references are commented out
+    opaque_names: set[str] = field(default_factory=set)
     # original line number of an edited `use` statement -> local names removed
     pruned_uses: dict[int, set[str]] = field(default_factory=dict)
 
@@ -915,6 +919,27 @@ class Dependence:
         self.var: str = cascade_var
         self.trigger: str = trigger
         self.pairs = val_pairs
+
+    @property
+    def trigger_name(self) -> str:
+        return self.trigger.split("::")[-1]
+
+    def trigger_constraint(self, cascade_constraint: str) -> str | None:
+        """
+        Constraint ("True"/"False") on the trigger implied by a logical cascade
+        variable's constraint, or None if it implies nothing: the trigger can't
+        take a value whose pair forces the cascade variable to the other value.
+        """
+        values = {"True": ".true.", "False": ".false."}
+        wanted = values.get(cascade_constraint)
+        if wanted is None:
+            return None
+        allowed = {".true.", ".false."} - {
+            p.nml_val for p in self.pairs if p.cascade_val != wanted
+        }
+        if len(allowed) != 1:
+            return None
+        return "True" if allowed == {".true."} else "False"
 
 
 class PassManager:
