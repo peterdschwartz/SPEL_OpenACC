@@ -63,12 +63,6 @@ modules aren't recorded here yet; add them when working there.
 ```bash
 python -m pytest -q
 ```
-
-On the laptop the whole suite passes (2026-10-18). These tests have failed on other machines,
-mostly from missing local fixtures; don't chase them unless asked: `test_sample_and_compress`,
-`test_sub_parse`, `test_use_statements_drop_unavailable_names`,
-`test_resolver_use_stmts_follow_pruned_imports`, `test_pickle_roundtrip_matches_fut`.
-
 Tests that need a whole-ELM analysis use the session fixture `elm_drv_analysis` (root
 `conftest.py`). It loads the frozen copy `.pytest-fixtures/elm_drv_analysis.pkl`, which is gitignored
 and seeded once from the `E3SM_SRCROOT` cache, so tests never re-analyze. Delete the frozen copy to
