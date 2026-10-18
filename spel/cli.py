@@ -41,6 +41,7 @@ def create(args):
             freq=args.freq,
             run=args.run_case,
             case_args=shlex.split(args.case_args),
+            subset=_subset_spec(args),
         )
         if args.run_case:
             _run_and_validate(unit_test.case_dir)
@@ -104,6 +105,20 @@ def _run_and_validate(case_dir) -> None:
         raise SystemExit(code)
 
 
+def _subset_spec(args):
+    """The --subset/--subset-max gridcell subset, or None."""
+    from spel.scripts.subset import SubsetError, SubsetSpec
+
+    if not args.subset:
+        if args.subset_max is not None:
+            raise SystemExit("--subset-max needs --subset")
+        return None
+    try:
+        return SubsetSpec.parse(args.subset, args.subset_max)
+    except SubsetError as err:
+        raise SystemExit(f"--subset: {err}")
+
+
 def instrument(args):
     from spel.scripts.instrument_elm import instrument_case, undo_instrumentation
 
@@ -118,16 +133,18 @@ def instrument(args):
         run=args.run_case,
         case_args=shlex.split(args.case_args),
         dry_run=args.dry_run,
+        subset=_subset_spec(args),
     )
     if args.run_case and not args.dry_run:
         _run_and_validate(report.case_dir)
 
 
 def validate(args):
-    from spel.scripts.validate import parse_request, validate as run_validate
+    from spel.scripts.validate import parse_request, parse_subsets, validate as run_validate
 
     try:
         request = parse_request(args.subs, args.list_file)
+        subsets = parse_subsets(request, args.list_file, args.subset, args.subset_max)
     except (ValueError, OSError) as err:
         raise SystemExit(f"spel validate: error: {err}")
     report = run_validate(
@@ -140,9 +157,34 @@ def validate(args):
         skip_create=args.skip_create,
         keep_instrumentation=args.keep_instrumentation,
         dry_run=args.dry_run,
+        subsets=subsets,
     )
     if not report.ok and not args.dry_run:
         raise SystemExit(1)
+
+
+def subset(args):
+    from spel.scripts.config import REFERENCE_META_FILENAME, input_data_dir
+    from spel.scripts.subset import SubsetError, subset_files
+
+    src, dst = Path(input_data_dir) / args.src, Path(input_data_dir) / args.dst
+    if not src.is_dir():
+        raise SystemExit(f"spel subset: no reference data in {src}")
+    if dst.resolve() == src.resolve():
+        raise SystemExit("spel subset: the destination must differ from the source")
+    try:
+        gridcells = sorted({int(g) for g in args.gridcells.split(",")})
+        files = subset_files(src, dst, gridcells)
+    except (SubsetError, ValueError) as err:
+        raise SystemExit(f"spel subset: {err}")
+    meta_src = src / REFERENCE_META_FILENAME
+    if meta_src.is_file():
+        import json
+
+        meta = json.loads(meta_src.read_text())
+        meta["subset"] = {"gridcells": gridcells, "from": args.src}
+        (dst / REFERENCE_META_FILENAME).write_text(json.dumps(meta, indent=2) + "\n")
+    print(f"Wrote {len(files)} files with gridcells {gridcells} of {src} to {dst}")
 
 
 def export(args):
@@ -342,6 +384,26 @@ def add_capture_args(parser: argparse.ArgumentParser, standalone: bool) -> None:
         default="",
         help="Extra casegen script options, e.g. \"--stop-n 10 --stop-option ndays --keep\"",
     )
+    add_subset_args(parser)
+
+
+def add_subset_args(parser: argparse.ArgumentParser) -> None:
+    from spel.scripts.subset import DEFAULT_MAX_CELLS, PRESETS
+
+    parser.add_argument(
+        "--subset",
+        metavar="MASK",
+        help="capture only the gridcells matching MASK: "
+        f"{', '.join(PRESETS)} (comma-separated: any of them), or "
+        "'<level>: <Fortran expression>' with level gridcell/topounit/landunit/column/patch "
+        "and index g/t/l/c/p, e.g. 'landunit: lun_pp%%itype(l) == istsoil'",
+    )
+    parser.add_argument(
+        "--subset-max",
+        type=int,
+        metavar="N",
+        help=f"keep at most N matching gridcells, evenly spaced (default: {DEFAULT_MAX_CELLS})",
+    )
 
 
 def main():
@@ -492,7 +554,19 @@ def main():
         "--case-args", default="",
         help="Extra casegen script options, e.g. \"--stop-n 10 --stop-option ndays\"",
     )
+    add_subset_args(validate_parser)
     validate_parser.set_defaults(func=validate)
+
+    subset_parser = subparsers.add_parser(
+        "subset",
+        help="Write some gridcells of a case's reference data (spel-*.nc) as a new case's",
+    )
+    subset_parser.add_argument("src", help="case in unit-tests/input-data to read")
+    subset_parser.add_argument("dst", help="case in unit-tests/input-data to write")
+    subset_parser.add_argument(
+        "--gridcells", required=True, help="1-based gridcells to keep, e.g. 3,5,7"
+    )
+    subset_parser.set_defaults(func=subset)
 
     # Parser for 'spel export'
     export_parser = subparsers.add_parser("export", help="Run the export command")

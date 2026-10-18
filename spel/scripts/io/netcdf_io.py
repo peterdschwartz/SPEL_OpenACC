@@ -950,6 +950,26 @@ def generate_nc_io():
     {tabs}! Set once the input buffers are on the device (spel_inbuf_to_device):
     {tabs}! buffer loads then update the device and copies run on the device.
     {tabs}logical, public :: spel_buf_on_device = .false.
+    {tabs}! Gridcell subset (instrumented ELM only, see spel/scripts/subset.py).
+    {tabs}! While a subset is active (nc_subset_activate), writes keep only the
+    {tabs}! selected gridcells and their topounits, landunits, columns and
+    {tabs}! patches, and renumber the subgrid index fields, so the files look
+    {tabs}! like a capture of a smaller domain.
+    {tabs}integer, parameter :: spel_nlev = 5  ! gridcell, topo, landunit, column, patch
+    {tabs}type, public :: spel_subset_level
+    {tabs}{tabs}integer :: beg = 1    ! lower bound of the full (process) arrays
+    {tabs}{tabs}integer :: nfull = 0  ! their length
+    {tabs}{tabs}integer, allocatable :: pos(:)     ! kept positions in the full arrays
+    {tabs}{tabs}integer, allocatable :: newidx(:)  ! new index of each position, 0 if dropped
+    {tabs}end type spel_subset_level
+    {tabs}type, public :: spel_subset_type
+    {tabs}{tabs}type(spel_subset_level) :: lev(spel_nlev)
+    {tabs}{tabs}character(len=512) :: mask = ''
+    {tabs}{tabs}! provenance of the kept gridcells, written as global attributes
+    {tabs}{tabs}integer, allocatable :: gindex(:)
+    {tabs}{tabs}real(8), allocatable :: latdeg(:), londeg(:)
+    {tabs}end type spel_subset_type
+    {tabs}type(spel_subset_type), pointer, public :: spel_subset => null()
     """)
     lines.append(header)
     lines.append(f"{tabs}interface nc_write_var_array\n")
@@ -990,6 +1010,11 @@ def generate_nc_io():
     lines.append(f"{tabs}module procedure nc_select_set1_r8, nc_select_set1_int\n")
     tabs = hio.indent(hio.Tab.unshift)
     lines.append(f"{tabs}end interface\n")
+    lines.append(f"{tabs}interface nc_subset_select\n")
+    tabs = hio.indent(hio.Tab.shift)
+    lines.append(f"{tabs}module procedure nc_subset_select_r8, nc_subset_select_int\n")
+    tabs = hio.indent(hio.Tab.unshift)
+    lines.append(f"{tabs}end interface\n")
     for iface, kinds in (
         ("nc_buf_load", ("double", "integer")),
         ("nc_buf_copy", ("double", "integer", "logical")),
@@ -1008,6 +1033,7 @@ def generate_nc_io():
     nc_check = gen_check()
     lines.append(nc_check)
     lines.append(gen_nsets_helpers())
+    lines.append(gen_subset_helpers())
     # nc_create_or_open_file
     nc_file = gen_nc_file()
     lines.append(nc_file)
@@ -1147,6 +1173,20 @@ SUBGRID_INDEX_FIELDS: dict[str, dict[str, str]] = {
 }
 
 
+# Subgrid levels in nc_io's order (spel_subset_type%lev, nc_subgrid_level)
+SUBGRID_LEVELS = ("g", "t", "l", "c", "p")
+
+
+def index_field_levels() -> dict[str, str]:
+    """{field: level it indexes}; a field name means the same level in every type."""
+    levels: dict[str, str] = {}
+    for fields in SUBGRID_INDEX_FIELDS.values():
+        for field, level in fields.items():
+            if levels.setdefault(field, level) != level:
+                raise ValueError(f"index field {field} refers to levels {levels[field]} and {level}")
+    return levels
+
+
 def gen_nsets_helpers() -> str:
     """Fortran helpers for spel_nsets (duplicated input sites in one clump)."""
     select_set1 = ""
@@ -1189,49 +1229,84 @@ def gen_nsets_helpers() -> str:
         end subroutine nc_select_set1_{suffix}
         """)
 
-    index_fields = sorted({f for fields in SUBGRID_INDEX_FIELDS.values() for f in fields})
-    index_cases = ", ".join(f"'{f}'" for f in index_fields)
-    is_index_field = textwrap.dedent(f"""
-    logical function nc_is_index_field(varname)
-       ! Subgrid index fields (<inst>_pp__<field>) are offset per set by duplicateMod
+    by_level: dict[str, list[str]] = {}
+    for field, level in sorted(index_field_levels().items()):
+        by_level.setdefault(level, []).append(field)
+    cases = "".join(
+        f"       case ({', '.join(repr(f) for f in by_level[lev])})\n"
+        f"          ilev = {SUBGRID_LEVELS.index(lev) + 1}\n"
+        for lev in SUBGRID_LEVELS
+        if lev in by_level
+    )
+    is_index_field = textwrap.dedent("""
+    integer function nc_index_level(varname) result(ilev)
+       ! Subgrid level (1-5: g, t, l, c, p) a subgrid index field (<inst>_pp__<field>)
+       ! refers to, 0 for other variables
        character(len=*), intent(in) :: varname
        integer :: i
-       nc_is_index_field = .false.
+       ilev = 0
        i = index(varname, '_pp__', back=.true.)
        if (i == 0) return
        select case (trim(varname(i+5:)))
-       case ({index_cases})
-          nc_is_index_field = .true.
+    """) + cases + textwrap.dedent("""\
        end select
+    end function nc_index_level
+
+    logical function nc_is_index_field(varname)
+       ! Subgrid index fields are offset per set by duplicateMod
+       character(len=*), intent(in) :: varname
+       nc_is_index_field = nc_index_level(varname) > 0
     end function nc_is_index_field
     """)
 
     return (
         is_index_field
         + textwrap.dedent("""
-    logical function nc_is_subgrid(name)
+    integer function nc_subgrid_level(name) result(ilev)
+       ! Subgrid level (1-5: g, t, l, c, p) of a dimension name, 0 if not subgrid
        character(len=*), intent(in) :: name
        select case (trim(name))
-       case ('gridcell', 'topo', 'landunit', 'column', 'patch')
-          nc_is_subgrid = .true.
+       case ('gridcell')
+          ilev = 1
+       case ('topo')
+          ilev = 2
+       case ('landunit')
+          ilev = 3
+       case ('column')
+          ilev = 4
+       case ('patch')
+          ilev = 5
        case default
-          nc_is_subgrid = .false.
+          ilev = 0
        end select
+    end function nc_subgrid_level
+
+    logical function nc_is_subgrid(name)
+       character(len=*), intent(in) :: name
+       nc_is_subgrid = nc_subgrid_level(name) > 0
     end function nc_is_subgrid
 
-    integer function nc_subgrid_dim(ndim, dim_names) result(sd)
-       ! First subgrid dimension of a variable, or 0 when not duplicating.
+    integer function nc_first_subgrid_dim(ndim, dim_names) result(sd)
+       ! First subgrid dimension of a variable, or 0 if it has none.
        integer, intent(in) :: ndim
        character(len=*), dimension(:), intent(in) :: dim_names
        integer :: i
        sd = 0
-       if (spel_nsets <= 1) return
        do i = 1, min(ndim, size(dim_names))
           if (nc_is_subgrid(dim_names(i))) then
              sd = i
              return
           end if
        end do
+    end function nc_first_subgrid_dim
+
+    integer function nc_subgrid_dim(ndim, dim_names) result(sd)
+       ! First subgrid dimension of a variable, or 0 when not duplicating.
+       integer, intent(in) :: ndim
+       character(len=*), dimension(:), intent(in) :: dim_names
+       sd = 0
+       if (spel_nsets <= 1) return
+       sd = nc_first_subgrid_dim(ndim, dim_names)
     end function nc_subgrid_dim
 
     subroutine nc_file_subgrid(ncid, var_id, ndim, sd, nfile)
@@ -1267,19 +1342,149 @@ def gen_nsets_helpers() -> str:
     end function nc_set_ub
 
     subroutine nc_put_bounds_att(ncid, varid, ndim, dim_names, lbs, ubs)
-       ! Write l/ubounds attributes, as set 1's bounds when duplicating.
+       ! Write l/ubounds attributes, as set 1's bounds when duplicating and
+       ! as 1:n along the subgrid dimension of a gridcell subset.
        integer, intent(in) :: ncid, varid, ndim
        character(len=*), dimension(:), intent(in) :: dim_names
        integer, intent(in) :: lbs(ndim), ubs(ndim)
-       integer :: ub1(ndim), sd
+       integer :: lb1(ndim), ub1(ndim), sd
+       lb1 = lbs
        ub1 = ubs
        sd = nc_subgrid_dim(ndim, dim_names)
        if (sd > 0) ub1(sd) = nc_set_ub(lbs(sd), ubs(sd))
-       call check(nf90_put_att(ncid, varid, 'lbounds', lbs))
+       if (associated(spel_subset)) then
+          sd = nc_first_subgrid_dim(ndim, dim_names)
+          if (sd > 0) then
+             lb1(sd) = 1
+             ub1(sd) = nc_subset_n(dim_names(sd), ubs(sd) - lbs(sd) + 1, 'bounds attribute')
+          end if
+       end if
+       call check(nf90_put_att(ncid, varid, 'lbounds', lb1))
        call check(nf90_put_att(ncid, varid, 'ubounds', ub1))
     end subroutine nc_put_bounds_att
     """)
         + select_set1
+    )
+
+
+def gen_subset_helpers() -> str:
+    """
+    Fortran helpers for writing a gridcell subset (spel_subset_type).
+
+    The capture module (spel/scripts/subset.py) selects the gridcells and
+    sets each level with nc_subset_set_level; while the subset is active,
+    nc_subset_select reduces every write buffer to the kept positions along
+    its subgrid dimension and renumbers the subgrid index fields.
+    """
+    select = ""
+    for suffix, ftype, as_int in (("r8", "real(8)", "nint(buffer(i))"), ("int", "integer", "buffer(i)")):
+        select += textwrap.dedent(f"""
+        subroutine nc_subset_select_{suffix}(ndim, dims, dim_names, buffer, varname)
+           ! Keep the subset's positions along the subgrid dimension of a flattened
+           ! write buffer and renumber subgrid index fields.
+           integer, intent(in) :: ndim
+           integer, intent(inout) :: dims(ndim)
+           character(len=*), dimension(:), intent(in) :: dim_names
+           {ftype}, allocatable, intent(inout) :: buffer(:)
+           character(len=*), intent(in) :: varname
+           {ftype}, allocatable :: b3(:,:,:)
+           integer :: sd, ilev, pre, post, n, i, k
+           sd = nc_first_subgrid_dim(ndim, dim_names)
+           if (sd > 0) then
+              ilev = nc_subgrid_level(dim_names(sd))
+              n = nc_subset_n(dim_names(sd), dims(sd), varname)
+              pre = product(dims(1:sd-1))
+              post = product(dims(sd+1:ndim))
+              b3 = reshape(buffer, [pre, dims(sd), post])
+              buffer = reshape(b3(:, spel_subset%lev(ilev)%pos, :), [pre*n*post])
+              dims(sd) = n
+           end if
+           ilev = nc_index_level(varname)
+           if (ilev == 0) return
+           if (varname(index(varname, '_pp__', back=.true.)+5:) == 'gindex') then
+              ! global index of the kept gridcells: the subset is its own domain
+              buffer = [(i, i = 1, size(buffer))]
+              return
+           end if
+           associate (lev => spel_subset%lev(ilev))
+              do i = 1, size(buffer)
+                 k = {as_int} - lev%beg + 1
+                 if (k < 1 .or. k > lev%nfull) cycle  ! e.g. ispval: not an index
+                 if (lev%newidx(k) > 0) then
+                    buffer(i) = lev%newidx(k)
+                 else
+                    buffer(i) = fill_int  ! refers to a dropped gridcell
+                 end if
+              end do
+           end associate
+        end subroutine nc_subset_select_{suffix}
+        """)
+
+    return (
+        textwrap.dedent("""
+    subroutine nc_subset_set_level(sub, ilev, beg, keep)
+       ! Level ilev (1-5: g, t, l, c, p) keeps the positions where keep is true;
+       ! keep spans the full (process) arrays, which start at index beg.
+       type(spel_subset_type), intent(inout) :: sub
+       integer, intent(in) :: ilev, beg
+       logical, intent(in) :: keep(:)
+       integer :: i
+       associate (lev => sub%lev(ilev))
+          lev%beg = beg
+          lev%nfull = size(keep)
+          lev%pos = pack([(i, i = 1, size(keep))], keep)
+          if (allocated(lev%newidx)) deallocate (lev%newidx)
+          allocate (lev%newidx(size(keep)))
+          lev%newidx = 0
+          lev%newidx(lev%pos) = [(i, i = 1, size(lev%pos))]
+       end associate
+    end subroutine nc_subset_set_level
+
+    subroutine nc_subset_activate(sub)
+       ! Writes keep only sub's gridcells until nc_subset_deactivate
+       type(spel_subset_type), target, intent(in) :: sub
+       spel_subset => sub
+    end subroutine nc_subset_activate
+
+    subroutine nc_subset_deactivate()
+       nullify (spel_subset)
+    end subroutine nc_subset_deactivate
+
+    integer function nc_subset_count(sub, ilev) result(n)
+       type(spel_subset_type), intent(in) :: sub
+       integer, intent(in) :: ilev
+       n = 0
+       if (allocated(sub%lev(ilev)%pos)) n = size(sub%lev(ilev)%pos)
+    end function nc_subset_count
+
+    integer function nc_subset_n(dim_name, nfull, varname) result(n)
+       ! Length of a subgrid dimension in the active subset. A variable whose
+       ! subgrid dimension doesn't span the process arrays can't be subset.
+       character(len=*), intent(in) :: dim_name, varname
+       integer, intent(in) :: nfull
+       integer :: ilev
+       ilev = nc_subgrid_level(dim_name)
+       if (nfull /= spel_subset%lev(ilev)%nfull) then
+          print *, 'ERROR (spel subset): ', trim(varname), ' has ', nfull, ' ', trim(dim_name), &
+             ' entries, the process has ', spel_subset%lev(ilev)%nfull
+          error stop 'spel subset: subgrid dimension does not match the process bounds'
+       end if
+       n = nc_subset_count(spel_subset, ilev)
+    end function nc_subset_n
+
+    subroutine nc_subset_put_atts(ncid)
+       ! Record the subset in a new file's global attributes
+       integer, intent(in) :: ncid
+       call check(nf90_put_att(ncid, nf90_global, 'spel_subset_mask', trim(spel_subset%mask)))
+       if (allocated(spel_subset%gindex)) &
+          call check(nf90_put_att(ncid, nf90_global, 'spel_subset_gindex', spel_subset%gindex))
+       if (allocated(spel_subset%latdeg)) &
+          call check(nf90_put_att(ncid, nf90_global, 'spel_subset_latdeg', spel_subset%latdeg))
+       if (allocated(spel_subset%londeg)) &
+          call check(nf90_put_att(ncid, nf90_global, 'spel_subset_londeg', spel_subset%londeg))
+    end subroutine nc_subset_put_atts
+    """)
+        + select
     )
 
 
@@ -1671,6 +1876,7 @@ def gen_nc_file() -> str:
     {tabs}      call check(nf90_open(trim(fn), nf90_write + nf90_netcdf4, ncid))
     {tabs}   else
     {tabs}      call check(nf90_create(trim(fn), nf90_clobber + nf90_netcdf4, ncid))
+    {tabs}      if (associated(spel_subset)) call nc_subset_put_atts(ncid)
     {tabs}   end if
     {tabs}end function nc_create_or_open_file
 
@@ -1701,6 +1907,10 @@ def gen_nc_define_var() -> str:
     {tabs}   sd = nc_subgrid_dim(ndim, dim_names)
     {tabs}   if (sd > 0) then
     {tabs}      if (mod(ldims(sd), spel_nsets) == 0) ldims(sd) = ldims(sd)/spel_nsets
+    {tabs}   end if
+    {tabs}   if (associated(spel_subset)) then
+    {tabs}      sd = nc_first_subgrid_dim(ndim, dim_names)
+    {tabs}      if (sd > 0) ldims(sd) = nc_subset_n(dim_names(sd), ldims(sd), varname)
     {tabs}   end if
 
     {tabs}   total_dims = ndim
@@ -1789,6 +1999,7 @@ def gen_nc_write_numeric_array() -> list[str]:
     {tabs}   buffer = var
     {tabs}   ldims = dims
     {tabs}   if (spel_nsets > 1) call nc_select_set1(ndim, ldims, dim_names, buffer, varname)
+    {tabs}   if (associated(spel_subset)) call nc_subset_select(ndim, ldims, dim_names, buffer, varname)
     {tabs}   if(timestep > 0) then 
     {tabs}      unlim = .true.
     {tabs}      allocate(start(ndim+1), count(ndim+1))
@@ -1864,6 +2075,7 @@ def gen_nc_write_logical() -> str:
     {tabs}   int_buf = merge(1, 0, var)  ! logical → int (1=true, 0=false)
     {tabs}   ldims = dims
     {tabs}   if (spel_nsets > 1) call nc_select_set1(ndim, ldims, dim_names, int_buf, varname)
+    {tabs}   if (associated(spel_subset)) call nc_subset_select(ndim, ldims, dim_names, int_buf, varname)
     {tabs}   if(timestep > 0) then 
     {tabs}      unlim = .true.
     {tabs}      allocate(start(ndim+1), count(ndim+1))

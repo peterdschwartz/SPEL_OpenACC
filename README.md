@@ -105,6 +105,7 @@ All commands are subcommands of `spel`. Run `spel <command> --help` for the auth
 | [`spel create`](#spel-create) | Extract subroutines from the cached analysis and generate a functional unit test |
 | [`spel instrument`](#spel-instrument) | Instrument ELM to capture reference data; optionally build/run a CIME case |
 | [`spel validate`](#spel-validate) | Create, capture (one ELM run) and validate many unit tests in parallel |
+| [`spel subset`](#gridcell-subsets) | Write some gridcells of a case's reference data as a new case's |
 | [`spel run`](#spel-run) | Configure, build, and run a generated unit test, then validate it against ELM's data |
 | [`spel profile`](#spel-profile) | Build and run a unit test without outputs under Nsight Systems/Compute |
 | [`spel acc2omp`](#spel-acc2omp) | Translate modules' OpenACC directives to OpenMP (to run multithreaded with gfortran) |
@@ -169,6 +170,7 @@ spel create -s <subroutine> [<subroutine> ...] [-c <casename>] [-u] [--db]
 | `--instrument` | no | off | Afterwards run [`spel instrument`](#spel-instrument) for the case |
 | `--run-case` | no | off | Also create/build/run the CIME case, collect its `spel-*.nc`, then [`spel run`](#spel-run) the unit test (implies `--instrument`) |
 | `--freq`, `--case-args` | no | `9`, `""` | See [`spel instrument`](#spel-instrument) |
+| `--subset`, `--subset-max` | no | all gridcells | Capture a [gridcell subset](#gridcell-subsets) |
 
 Without `-u`, an existing case directory is cleared, and stale `.pkl` and `script-output/*.F90`
 files are removed before the run.
@@ -265,7 +267,49 @@ either `case: sub1 sub2` or just `sub`, with `#` comments. To split up an enormo
 | `ELM_RUN_FAILED` | the CIME build or run failed |
 
 `--skip-create` reuses existing cases. `--dry-run` creates the cases and reports what would be
-instrumented without touching ELM.
+instrumented without touching ELM. `--subset MASK` captures a [gridcell subset](#gridcell-subsets)
+for every case; in a list file, `case[MASK]: subs` (optionally `[MASK; max=N]`) sets it per case.
+
+### Gridcell subsets
+
+`spel instrument`, `spel create --instrument/--run-case` and `spel validate` take
+`--subset MASK [--subset-max N]`: the capture then writes only up to `N` (default 100) gridcells
+matching `MASK`, with all their topounits, landunits, columns and patches. The subgrid index
+fields (`lun_pp%gridcell`, `col_pp%landunit`, `grc_pp%coli`, ...) and the bounds are renumbered
+from 1, so the files look like the capture of a smaller domain and the unit test runs on them
+unchanged. Use it to pull a small, targeted test out of a large simulation.
+
+| `MASK` | A gridcell matches if it has ... |
+|--------|-----------------------------------|
+| `urban`, `lake`, `crop`, `glacier`, `wetland` | a landunit of that type with weight > 0 (`crop` is `istcrop`) |
+| `all` | (every gridcell) |
+| `urban,lake` | any of the listed presets |
+| `<level>: <expr>` | a `<level>` entry (gridcell, topounit, landunit, column, patch) for which the Fortran expression is true |
+
+Custom expressions use the index `g`, `t`, `l`, `c` or `p` of their level, the instances
+`grc_pp`, `top_pp`, `lun_pp`, `col_pp`, `veg_pp`, and anything public in `landunit_varcon`,
+`column_varcon` and `pftvarcon`; the ELM build is what checks them. The presets require a weight
+because zero-weight landunits exist (every gridcell has urban landunits when
+`run_zero_weight_urban` is on).
+
+```bash
+spel instrument urbanfluxes --subset urban --run-case
+spel validate --list cases.txt          # e.g. a line `soil_tall[patch: veg_pp%itype(p) == ndllf_evr_tmp_tree; max=20]: canopyfluxes`
+spel validate -s canopyfluxes --subset "gridcell: grc_pp%latdeg(g) > 60._r8" --subset-max 10
+```
+
+The selection runs in ELM at the first capture (`spel_select_subset` in `SpelCapture_<tag>`), so
+masks can use fields the unit test never reads. Matches are taken evenly spaced when there are more
+than `N`. With several MPI ranks, the rank with the most matches writes the capture and the others
+write nothing, so the subset holds at most that rank's matches. The run's `e3sm.log` has a
+`SPEL subset` line with the counts, and each file records the mask and the kept gridcells'
+global index, latitude and longitude as global attributes (`spel_subset_*`).
+`spel_reference.json` records the mask and `spel run` prints it.
+
+`spel subset SRC DST --gridcells 3,5,7` does the same offline: it writes those gridcells (1-based
+positions in SRC's files) of `unit-tests/input-data/SRC` to `unit-tests/input-data/DST`, using
+the same rules (`spel/scripts/subset.py`). Masks need ELM fields that the capture usually lacks, so
+offline subsets take explicit gridcells.
 
 ### `spel run`
 

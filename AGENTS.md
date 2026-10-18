@@ -3,12 +3,36 @@
 Notes for AI agents working on SPEL. Read `README.md` for the CLI and the
 reference-vs-development workflow; this file only covers what the README doesn't.
 
-## Environment (local workstation)
+## Environment
 
-- `spel` is on `PATH` from `~/python-envs/py3.12` (there is no `~/climate-projects/py12env`).
-- nvfortran lives in `/opt/nvidia/hpc_sdk/Linux_x86_64/25.9`. Its netcdf-fortran build is
-  `~/.local/netcdf-fortran` (+ `~/.local/netcdf-c`, `~/.local/hdf5`); the default `PKG_CONFIG_PATH`
-  points at the gfortran/mpich builds in `~/.local/gcc/`. There is no `~/.local/nvhpc-libs/env.sh`;
+The user works on several machines with this repo, and this file is shared between them.
+**Find out which one you're on** (`lscpu`, `nvidia-smi`, `ls ~/climate-projects/py12env`) and
+edit only that machine's notes. Don't replace another machine's section with what you find
+locally. Earlier edits made that mistake.
+
+Common to all: the gfortran netcdf/mpich builds live in `~/.local/gcc/` (the default
+`PKG_CONFIG_PATH`). Production profiling runs on Perlmutter; only test locally unless the user
+asks otherwise.
+
+### Laptop (Ryzen AI 5 340, 6 cores / 12 threads, no NVIDIA GPU)
+
+- `spel` comes from `~/climate-projects/py12env`.
+- nvfortran (NVHPC 26.5) is `~/.local/nvhpc/Linux_x86_64/26.5`, and its netcdf-fortran build is
+  `~/.local/nvhpc-libs/netcdf-fortran`. Run `source ~/.local/nvhpc-libs/env.sh` before any
+  nvfortran build; pass the same file to `profile_compare.sh --env`.
+- No GPU: `ACC=GPU` builds can't run here; use `ACC=MULTICORE` / `OPENMP`.
+- CIME machine `mylaptop` (gnu); the macro `cime_config/machines/cmake_macros/mylaptop_gnu.cmake`
+  is untracked in each E3SM checkout. A one-year run of the 21-gridcell refcase
+  (`~/climate-projects/input-data/spel-refcases/I1850GSWCNPRDCTCBC/canflux/0081-01-01`) takes
+  about 4 minutes.
+
+### GPU workstation (Ryzen 5 3600, 6 cores / 12 threads, RTX 4070)
+
+As recorded on 2026-10-16; not re-checked since.
+
+- `spel` comes from `~/python-envs/py3.12`.
+- nvfortran is `/opt/nvidia/hpc_sdk/Linux_x86_64/25.9`; its netcdf-fortran build is
+  `~/.local/netcdf-fortran` (+ `~/.local/netcdf-c`, `~/.local/hdf5`). There is no `env.sh`;
   before any nvfortran build set:
 
   ```bash
@@ -18,8 +42,11 @@ reference-vs-development workflow; this file only covers what the README doesn't
   ```
 
   Put that in a file and pass it to `profile_compare.sh --env`.
-- Hardware: Ryzen 5 3600 (6 cores / 12 threads), RTX 4070. Production profiling runs on
-  Perlmutter; only test locally unless the user asks otherwise.
+
+### Perlmutter
+
+Production profiling and large (e.g. crop, `--preset crop-perf`) reference runs. Its paths and
+modules aren't recorded here yet; add them when working there.
 
 ## Generated vs. hand-edited files
 
@@ -37,10 +64,10 @@ reference-vs-development workflow; this file only covers what the README doesn't
 python -m pytest -q
 ```
 
-Known failures that predate current work (don't chase them unless asked):
-`test_sample_and_compress`, `test_sub_parse` (missing fixture file),
-`test_use_statements_drop_unavailable_names`, `test_resolver_use_stmts_follow_pruned_imports`,
-`test_pickle_roundtrip_matches_fut` (error).
+On the laptop the whole suite passes (2026-10-18). These tests have failed on other machines,
+mostly from missing local fixtures; don't chase them unless asked: `test_sample_and_compress`,
+`test_sub_parse`, `test_use_statements_drop_unavailable_names`,
+`test_resolver_use_stmts_follow_pruned_imports`, `test_pickle_roundtrip_matches_fut`.
 
 Tests that need a whole-ELM analysis use the session fixture `elm_drv_analysis` (root
 `conftest.py`). It loads the frozen copy `.pytest-fixtures/elm_drv_analysis.pkl`, which is gitignored
@@ -53,11 +80,13 @@ For analysis features, test on small snippets instead: `walk()` in
 pattern in `spel/scripts/tests/test_record_access.py` (or `Sub` in
 `spel/transforms/tests/test_acc_to_omp.py`) feeds it to `AccessMapper`.
 
-Compile-check Fortran templates with both compilers (netcdf-fortran `.mod` files are compiler specific):
+Compile-check Fortran templates with both compilers (netcdf-fortran `.mod` files are compiler
+specific; the nvfortran include path is per machine, see Environment):
 
 ```bash
 gfortran -c -ffree-line-length-none -I$HOME/.local/gcc/netcdf-fortran/include SourceFiles/nc_io.F90 SourceFiles/nc_allocMod.F90
-nvfortran -c -I$HOME/.local/netcdf-fortran/include SourceFiles/nc_io.F90 SourceFiles/nc_allocMod.F90
+nvfortran -c -I$HOME/.local/nvhpc-libs/netcdf-fortran/include SourceFiles/nc_io.F90 SourceFiles/nc_allocMod.F90  # laptop
+nvfortran -c -I$HOME/.local/netcdf-fortran/include SourceFiles/nc_io.F90 SourceFiles/nc_allocMod.F90             # GPU workstation
 ```
 
 Do this in a scratch directory so `.mod`/`.o` files don't land in the repo.
@@ -147,6 +176,53 @@ Do this in a scratch directory so `.mod`/`.o` files don't land in the repo.
 - `nsets=N` must give output bit-identical to `nsets=1` and print no `WARNING (spel_nsets)` lines.
 - After changing line-number handling, `spel instrument <case> --dry-run` checks that call sites
   and declarations are still found (it reports only).
+
+## Gridcell subsets
+
+Purpose: extract reference data for a few gridcells (up to `--subset-max`, default 100) of a
+large simulation, e.g. the urban, lake or crop gridcells, without capturing the whole domain.
+Usage is in the README ("Gridcell subsets"): `--subset MASK` on `spel instrument`, `spel create
+--instrument/--run-case` and `spel validate`, or `case[MASK; max=N]: subs` in a validate list file;
+`spel subset SRC DST --gridcells 3,5,7` cuts existing data offline.
+
+Design (keep these properties when changing it):
+
+- The subset files must look like the capture of a smaller domain: whole gridcells with all their
+  topounits/landunits/columns/patches, in their original order, renumbered from 1 (bounds,
+  `lbounds`/`ubounds` attributes and index fields). The unit-test side has no subset code;
+  don't add any.
+- Selection runs in ELM at the first capture (`spel_select_subset`, generated by
+  `capture_select_routine` in `spel/scripts/subset.py` into `SpelCapture_<tag>`), so masks may
+  use any ELM field, e.g. `lun_pp%wtgcell`, which captures usually lack. Presets need weight > 0:
+  every gridcell has zero-weight urban landunits when `run_zero_weight_urban` is on.
+  Presets live in `PRESETS`; custom masks are `<level>: <Fortran expression>` with index g/t/l/c/p.
+- `nc_io` does the writing while a `spel_subset_type` is active (`nc_subset_activate`, one subset
+  per case, so several cases in one ELM build can use different masks): `nc_subset_select`
+  gathers along the first subgrid dimension and renumbers the fields of `SUBGRID_INDEX_FIELDS`
+  (`netcdf_io.py`), which `duplicateMod` also uses. A new subgrid index field must go there, or
+  subsets and `nsets` copies point at the wrong entries. A variable whose subgrid extent isn't the
+  process's stops the run (`nc_subset_n`).
+- Without `--subset` the capture module is byte-identical to before; keep it that way.
+- MPI: the rank with the most matches writes, the others write nothing. Merging ranks into one
+  subset is not implemented.
+- Provenance: global attributes `spel_subset_mask/gindex/latdeg/londeg` in every file, `subset` in
+  `spel_reference.json` (printed by `spel run`), and `SPEL subset` lines in the run's `e3sm.log`.
+
+Testing:
+
+- `spel/scripts/tests/test_subset.py`: mask parsing, capture-module generation, and a gfortran
+  program writing a synthetic capture (non-unit process bounds) through `nc_io`, compared
+  bit-for-bit with the offline subsetter (`subset_dataset`, `diff_datasets`).
+- End to end (done on the laptop on 2026-10-18, all PASS): one `spel validate` run with a full
+  case and a subset case of the same routine (e.g. `urb_full: urbanfluxes` and
+  `urb_sub[urban]: urbanfluxes`), then check that `subset_dataset` of the full files at the
+  `spel_subset_gindex` gridcells is bit-for-bit the subset files, and that `[all]` reproduces the
+  full capture. On the 21-gridcell case, urban = gridcells 3, 5, 7 and lakes = 1-9 (from
+  `PCT_URBAN`/`PCT_LAKE` in its surface dataset). That case has no crops: the `crop` preset
+  (`lun_pp%itype(l) == istcrop`) still needs a test on a crop configuration (Perlmutter).
+- To instrument E3SM master without touching uncommitted work in it, use a scratch `git worktree`
+  of its HEAD, rsync the submodule trees and the untracked `mylaptop_gnu.cmake` into it, and pass
+  `--srcroot` (its analysis takes about 45 s). Remove the worktree and its `.spel-cache` entry after.
 
 ## Don'ts
 

@@ -11,6 +11,9 @@
     6. `spel run` every case in parallel (build, run, bit-for-bit diff and
        access validation)
     7. Print a summary and write unit-tests/validate-report.json
+
+A case can capture a gridcell subset (spel.scripts.subset): `--subset` for
+every case, or `case[mask]: subs` in a list file.
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from spel.scripts.instrument_elm import (
     DEFAULT_FREQ,
@@ -40,6 +43,9 @@ from spel.scripts.instrument_elm import (
     undo_instrumentation,
     write_reference_meta,
 )
+
+if TYPE_CHECKING:
+    from spel.scripts.subset import SubsetSpec
 
 REPORT_FILE = "validate-report.json"
 DEFAULT_RUN_NAME = "spel-validate"
@@ -91,7 +97,8 @@ def parse_request(subs: Optional[list[str]] = None, list_file: Optional[Path] = 
     """
     {case name: routines}. `-s a b` gives one case per routine (named after
     it); a list file has one case per line, `case: sub1 sub2` or just `sub`,
-    with `#` comments.
+    with `#` comments. `case[mask]: subs` captures a gridcell subset (see
+    parse_subsets).
     """
     request: dict[str, list[str]] = {}
 
@@ -112,7 +119,9 @@ def parse_request(subs: Optional[list[str]] = None, list_file: Optional[Path] = 
             line = raw.split("#", 1)[0].strip()
             if not line:
                 continue
-            if ":" in line:
+            if m := _SUBSET_LINE.match(line):
+                add(m.group("case"), m.group("subs").split())
+            elif ":" in line:
                 case, rest = line.split(":", 1)
                 add(case, rest.split())
             elif len(line.split()) == 1:
@@ -122,6 +131,29 @@ def parse_request(subs: Optional[list[str]] = None, list_file: Optional[Path] = 
     if not request:
         raise ValueError("no cases requested (use -s or --list)")
     return request
+
+
+_SUBSET_LINE = re.compile(r"^(?P<case>[^\[:]+)\[(?P<mask>[^\]]*)\]\s*:(?P<subs>.*)$")
+
+
+def parse_subsets(
+    request: dict[str, list[str]],
+    list_file: Optional[Path] = None,
+    default: Optional[str] = None,
+    max_cells: Optional[int] = None,
+) -> dict[str, SubsetSpec]:
+    """
+    {case name: gridcell subset} for the cases of `request`: `case[mask]:` in
+    the list file (mask as for --subset, optionally `; max=N`), else `default`.
+    """
+    from spel.scripts.subset import SubsetSpec
+
+    masks = {case: default for case in request} if default else {}
+    if list_file is not None:
+        for raw in Path(list_file).read_text().splitlines():
+            if m := _SUBSET_LINE.match(raw.split("#", 1)[0].strip()):
+                masks[m.group("case").strip()] = m.group("mask")
+    return {case: SubsetSpec.parse(mask, max_cells) for case, mask in masks.items() if mask}
 
 
 # --------------------------------------------------------------------------
@@ -221,6 +253,7 @@ def validate(
     skip_create: bool = False,
     keep_instrumentation: bool = False,
     dry_run: bool = False,
+    subsets: Optional[dict[str, SubsetSpec]] = None,
 ) -> ValidateReport:
     from spel.scripts.analysis_cache import ANALYSIS_PICKLE, build_analysis, cache_dir
     from spel.scripts.config import (
@@ -260,13 +293,18 @@ def validate(
             futs.append(load_case(case))
         except InstrumentError as err:
             r.status, r.detail = INSTRUMENT_FAILED, str(err)
-    multi = instrument_cases(futs, E3SM_SRCROOT, freq=freq, dry_run=dry_run, mods_dir=spel_mods_dir)
+    subsets = subsets or {}
+    multi = instrument_cases(
+        futs, E3SM_SRCROOT, freq=freq, dry_run=dry_run, mods_dir=spel_mods_dir, subsets=subsets
+    )
     for case, msg in multi.failures.items():
         report.cases[case].status, report.cases[case].detail = INSTRUMENT_FAILED, msg
     report.made_public = {str(p): v for p, v in multi.made_public.items()}
     verb = "Would instrument" if dry_run else "Instrumented"
     for case, rep in multi.reports.items():
         print(f"{verb} {case}: {rep.call_site.name} ({rep.module}, bounds={rep.bounds})")
+        if rep.subset:
+            print(f"  gridcell subset: {rep.subset.description}")
     for path, names in multi.made_public.items():
         print(f"  public/unprotected in {path.name}: {', '.join(names)}")
     if dry_run or not multi.reports:
@@ -307,7 +345,7 @@ def validate(
                 old.unlink()
             copied = collect_outputs(rundir, dest, CaptureNames(rep.tag).file_prefix)
             if copied:
-                write_reference_meta(dest, case)
+                write_reference_meta(dest, case, subsets.get(case))
             r = report.cases[case]
             r.files = len(copied)
             if lnd_in.is_file():
@@ -319,6 +357,11 @@ def validate(
                     f"no {rep.tag}.spel-*.nc in {rundir}: {rep.call_site.name} never called "
                     "it at a capture step (inactive for this configuration? see lnd_in)"
                 )
+                if rep.subset:
+                    r.detail += (
+                        f", or no gridcell matched the subset {rep.subset.mask!r} "
+                        "('SPEL subset' in the run's e3sm.log)"
+                    )
 
     # 6. unit tests
     ready = [c for c, r in report.cases.items() if not r.status]

@@ -474,6 +474,9 @@ def provenance(case_dir: Path, data_dir: Path) -> list[str]:
                 "NOTE: different E3SM checkouts -- diffs are differences between "
                 "the two branches, and the access check uses this unit test's analysis"
             )
+        if sub := ref.get("subset"):
+            what = sub.get("mask") or f"gridcells {sub.get('gridcells')} of {sub.get('from')}"
+            lines.append(f"Gridcell subset:          {what}")
     else:
         lines.append(f"Reference data from:      {data_dir} (origin not recorded)")
     return lines
