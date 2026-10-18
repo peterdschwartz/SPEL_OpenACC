@@ -172,6 +172,12 @@ def generate_elmtypes_io_netcdf(unit_test: FunctionalUnitTest) -> None:
             if condition is not None:
                 guards[new_var.name] = condition
 
+    # elm_drv arguments the routines take (nextsw_cday, declinp1): one value per step
+    drv_args = getattr(unit_test, "driver_args", {})
+    for name, typ in drv_args.items():
+        drv_var = Variable(typ, f"spel_drv_{name}", "?", 0, 1, bounds="(1)")
+        dtype_vars[drv_var.name] = drv_var
+
     lines: list[str] = [
         f"module {mod_name}\n",
         f"{tabs}!!! Auto-generated Fortran code for netcdf-fortran I/O\n",
@@ -206,6 +212,10 @@ def generate_elmtypes_io_netcdf(unit_test: FunctionalUnitTest) -> None:
         ]
     )
     lines.extend(create_inbuf_decls(dtype_vars))
+    # set by the ELM capture module from elm_drv's arguments, read by the unit test
+    for name, typ in drv_args.items():
+        ftype = "real(8)" if typ == "real" else "integer"
+        lines.append(f"{tabs}{ftype}, public :: spel_drv_{name}(1) = 0\n")
     lines.append("contains\n")
     lines.extend(create_inbuf_to_device(dtype_vars))
 
@@ -319,9 +329,38 @@ def generate_constants_io_netcdf(
     )
 
     lines.append(f"end module {mod_name}\n")
+    lines = add_derived_constants(lines, getattr(unit_test, "derived_constants", {}))
 
     with open(case_dir / filename, "w") as ofile:
         ofile.writelines(lines)
+
+
+def add_derived_constants(lines: list[str], derived: Mapping) -> list[str]:
+    """
+    Write-only constants for another case (`spel create --capture-for`): defined and
+    written as their expression of this ELM's variables, never read back here.
+    """
+    if not derived:
+        return lines
+    nc_type = {"integer": "nf90_int", "real": "nf90_double", "logical": "nf90_int"}
+    out: list[str] = []
+    in_write = False
+    for line in lines:
+        text = line.strip().lower()
+        if text == "end subroutine define_vars":
+            out.extend(
+                f"    call nc_define_var(ncid, 0, [0], dim_names, '{dc.name}', {nc_type[dc.type]}, varid, .false.)\n"
+                for dc in derived.values()
+            )
+        in_write = in_write or text.startswith("subroutine write_constants")
+        if in_write and text == "call check(nf90_close(ncid))":
+            out.extend(
+                f"    call nc_write_var_scalar(ncid, {dc.fortran}, '{dc.name}')  ! for {dc.source}-derived constant\n"
+                for dc in derived.values()
+            )
+            in_write = False
+        out.append(line)
+    return out
 
 
 def create_constants_io_routine(
@@ -777,7 +816,8 @@ def create_nc_read_buffered(
         n = index[id(var)]
         if var.dim == 0 and var.ptrscalar:
             var_load.append(f"{t2}if (.not. associated({var.name})) allocate({var.name})\n")
-        if var.dim > 0:
+        # explicit-shape arrays (spel_drv_<arg>(1)) are already sized
+        if var.dim > 0 and is_deferred_shape(var):
             var_load.append(
                 f'{t2}call nc_alloc(ncid, "{varname}", {var.dim}, {var.name})\n'
             )

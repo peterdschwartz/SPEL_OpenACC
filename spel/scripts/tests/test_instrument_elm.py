@@ -527,3 +527,31 @@ def test_nc_def_character_scalar_has_one_dim():
     text = "".join(lines)
     assert "dim_names(1:1) = [character(len=32) :: 'urban_hac_str']" in text
     assert "call nc_define_var(ncid, 1, [len(urban_hac)], dim_names" in text
+
+
+def test_instrument_lines_calls_in_different_branches():
+    # elm_drv calls HydrologyDrainage in both branches of the pflotran if
+    driver = DRIVER.replace(
+        "       call t_stopf('canflux')\n",
+        "       call t_stopf('canflux')\n"
+        "       if (use_pflotran) then\n"
+        "         call HydrologyDrainage(bounds_clump, a)\n"
+        "       else\n"
+        "         call HydrologyDrainage(bounds_clump, b)\n"
+        "       end if\n",
+    )
+    hd = "hydrologydrainagemod::hydrologydrainage"
+    calls = {hd: [DriverCall(hd, CALL_LN + 5, "bounds_clump"), DriverCall(hd, CALL_LN + 7, "bounds_clump")]}
+    out, _ = ie.instrument_lines(lines_of(driver), one(sites(calls)))
+    for i in (i for i, ln in enumerate(out) if "call HydrologyDrainage" in ln):
+        assert "spel_capture_inputs" in out[i - 1]
+        assert "spel_capture_outputs" in out[i + 1]
+    assert ie.strip_instrumentation(out) == lines_of(driver)
+
+
+def test_same_block():
+    lines = lines_of("call a()\nif (x) then\n  call b()\nend if\ncall c()\nelse\n")
+    assert ie._same_block(lines, 0, 4)
+    assert not ie._same_block(lines, 2, 4)  # leaves the if
+    assert not ie._same_block(lines, 4, 5)  # crosses an else
+    assert not ie._same_block(lines, 0, 2)  # ends inside the if

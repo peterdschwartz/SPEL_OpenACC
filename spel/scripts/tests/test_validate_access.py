@@ -335,3 +335,20 @@ def test_constants_file_for_later_sets(tmp_path):
     assert constants_file_for(tmp_path / "spel-inputs0001.nc").name == "spel-constants0001.nc"
     assert constants_file_for(tmp_path / "spel-inputs0003.nc").name == "spel-constants0001.nc"
     assert constants_file_for(tmp_path / "fut-outputs0001.nc") is None
+
+
+def test_not_bit_for_bit_lists_roundoff(tmp_path):
+    import netCDF4
+
+    from spel.scripts.validate_access import not_bit_for_bit
+
+    def write(path, endwb):
+        with netCDF4.Dataset(path, "w") as d:
+            d.createDimension("time", None)
+            d.createDimension("column", 2)
+            d.createVariable("col_ws__endwb", "f8", ("time", "column"))[:] = [endwb]
+            d.createVariable("col_wf__qflx_drain", "f8", ("time", "column"))[:] = [[1.0, 2.0]]
+
+    write(tmp_path / "ref.nc", [1.0, 3.0])
+    write(tmp_path / "fut.nc", [1.0, 3.0 + 4.4e-16])  # 1 ulp: within relerror's tolerance
+    assert not_bit_for_bit(tmp_path / "ref.nc", tmp_path / "fut.nc") == ["col_ws__endwb"]

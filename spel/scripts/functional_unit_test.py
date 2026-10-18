@@ -159,10 +159,12 @@ class FunctionalUnitTest:
         self,
         variable: Variable,
     ) -> tuple[ConditionExpectation, ...]:
+        # identity: Variable.__eq__ compares name/type/rank only, so col_pp%gridcell
+        # would match veg_pp%gridcell's guard
         return tuple(
             condition
             for condition, variables in self.guarded_usage_dict.items()
-            if variable in variables
+            if any(v is variable for v in variables)
         )
 
     def guard_for_variable(
@@ -280,6 +282,135 @@ class FunctionalUnitTest:
     # main.F90 preparation
     # ------------------------------------------------------------------
 
+    def _branched_driver_calls(self, sub: Subroutine):
+        """
+        elm_drv calls `sub` in different branches of an if construct (e.g.
+        HydrologyDrainage with and without pflotran): (the construct's
+        if/else lines with only the calls to `sub`, those calls, driver file,
+        its unwrapped lines, index of the first call); None otherwise.
+        """
+        from spel.scripts.instrument_elm import _same_block, statement_end
+
+        sites = getattr(self, "driver_sites", None)
+        found = sites.calls.get(sub.id, []) if sites is not None else []
+        if len(found) < 2:
+            return None
+        path = Path(cfg.E3SM_SRCROOT) / sites.path
+        raw = path.read_text().splitlines(keepends=True)
+        lns = sorted(c.ln for c in found)
+        if _same_block(raw, lns[0], statement_end(raw, lns[-1])):
+            return None
+        mod_lines = unwrap_section(raw, startln=0)
+        index = {el.ln: i for i, el in enumerate(mod_lines)}
+        if any(ln not in index for ln in lns):
+            return None
+
+        if_then = re.compile(r"^(\w+\s*:\s*)?if\s*\(.*\)\s*then$")
+        end_if = re.compile(r"^end\s*if\b")
+        branch = re.compile(r"^else\b")
+        depth, start = 0, None
+        for i in range(index[lns[0]] - 1, -1, -1):
+            text = mod_lines[i].line.strip().lower()
+            if end_if.match(text):
+                depth += 1
+            elif if_then.match(text):
+                if depth == 0:
+                    start = i
+                    break
+                depth -= 1
+        if start is None:
+            return None
+
+        block: list[str] = []
+        call_lines: list[str] = []
+        depth = 0
+        for el in mod_lines[start:]:
+            text = el.line.strip().lower()
+            if if_then.match(text):
+                depth += 1
+                if depth == 1:
+                    block.append(el.line)
+            elif end_if.match(text):
+                depth -= 1
+                if depth == 0:
+                    block.append(el.line)
+                    break
+            elif depth == 1 and branch.match(text):
+                block.append(el.line)
+            elif el.ln in lns:
+                if depth != 1:
+                    return None
+                block.append(el.line)
+                call_lines.append(el.line)
+        if len(call_lines) != len(lns):
+            return None
+        return block, call_lines, path, mod_lines, index[lns[0]]
+
+    def _driver_scalar_dummies(self) -> dict[str, str]:
+        """Scalar real/integer dummy arguments of the driver routine (elm_drv), by name."""
+        sites = getattr(self, "driver_sites", None)
+        if sites is None:
+            return {}
+        text = (Path(cfg.E3SM_SRCROOT) / sites.path).read_text().lower()
+        m = re.search(rf"^\s*subroutine\s+{sites.routine}\s*\(([^)]*)\)", text, re.M)
+        if not m:
+            return {}
+        names = {a.strip() for a in m.group(1).replace("&", " ").split(",")}
+        body = text[m.end():]
+        body = body[: re.search(rf"^\s*end\s+subroutine", body, re.M).start()]
+        found = {}
+        for decl in re.finditer(r"^\s*(real|integer)\b[^:\n]*::([^!\n]*)", body, re.M):
+            for name in decl.group(2).split(","):
+                name = name.strip()
+                if name in names and "(" not in name:
+                    found[name] = decl.group(1)
+        return found
+
+    def _use_driver_args(self, call_lines: list[str]) -> tuple[list[str], set[str]]:
+        """
+        Replace actuals that are elm_drv dummies (nextsw_cday, declinp1) by the
+        captured spel_drv_<name>(1) from ReadWriteMod; records them in driver_args.
+        """
+        dummies = self._driver_scalar_dummies()
+        used: set[str] = set()
+        out = []
+        for line in call_lines:
+            for name, typ in dummies.items():
+                pattern = rf"(?<![\w%])({name})\b(?!\s*=(?!=))"
+                if re.search(pattern, line, re.I):
+                    line = re.sub(pattern, f"spel_drv_{name}(1)", line, flags=re.I)
+                    self.driver_args[name] = typ
+                    used.add(name)
+            out.append(line)
+        return out, used
+
+    def _first_driver_call(self, sub: Subroutine) -> Optional[tuple[Path, int]]:
+        """(driver file, line) of elm_drv's first call to `sub`, if recorded."""
+        sites = getattr(self, "driver_sites", None)
+        found = sites.calls.get(sub.id, []) if sites is not None else []
+        if not found:
+            return None
+        return Path(cfg.E3SM_SRCROOT) / sites.path, min(c.ln for c in found)
+
+    def _capture_condition_globals(self, block: list[str]) -> list[str]:
+        """
+        Use statements for the globals (namelist variables) in the if/else
+        conditions of `block`; they are added to the captured constants so
+        the unit test takes the branch ELM took.
+        """
+        mods: list[str] = []
+        for line in block:
+            if line.strip().lower().startswith("call "):
+                continue
+            for name in dict.fromkeys(re.findall(r"(?<![.%\w])([a-z_]\w*)\b(?!\.)", line.lower())):
+                for mod, fm in self.module_dict.items():
+                    var = fm.global_vars.get(name)
+                    if var is not None and not var.parameter:
+                        self.active_global_vars.setdefault(name, var)
+                        mods.append(f"use {mod}, only : {name}\n")
+                        break
+        return mods
+
     def _find_parent_subroutine_call(
         self,
         instance_to_type: InstToDTypeMap,
@@ -288,38 +419,58 @@ class FunctionalUnitTest:
         mods_to_add: list[str] = []
         var_decl_to_add: list[str] = []
         calls: list[str] = []
+        self.driver_args = {}
 
         for sub in self.primary_subroutines.values():
             name = sub.name
-            cmd = (
-                f'grep -rin -E "^[[:space:]]*(call[[:space:]]* {name})\\b" '
-                f"{ELM_SRC} | head -1"
-            )
-            output = sp.getoutput(cmd).split(":")
-            assert (
-                len(output) > 1
-            ), f"Couldn't find caller for {name}:\noutput - {output}"
-            filename = output[0]
-            call_ln = int(output[1]) - 1
+            branched = self._branched_driver_calls(sub)
+            if branched is not None:
+                block, call_lines, filename, mod_lines, idx = branched
+                calls.extend(block)
+                args = list(dict.fromkeys(a for c in call_lines for a in getArguments(c)))
+                mods_to_add.extend(
+                    m for m in self._capture_condition_globals(block) if m not in mods_to_add
+                )
+            elif (first := self._first_driver_call(sub)) is not None:
+                filename, call_ln = first
+                with open(filename, "r") as ifile:
+                    raw_lines = ifile.readlines()
+                mod_lines = unwrap_section(raw_lines, startln=0)
+                idx, call_string = next(
+                    (i, el) for i, el in enumerate(mod_lines) if el.ln == call_ln
+                )
+                calls.append(call_string.line)
+                args = getArguments(call_string.line)
+            else:
+                cmd = (
+                    f'grep -rin -E "^[[:space:]]*(call[[:space:]]* {name})\\b" '
+                    f"{ELM_SRC} | head -1"
+                )
+                output = sp.getoutput(cmd).split(":")
+                assert (
+                    len(output) > 1
+                ), f"Couldn't find caller for {name}:\noutput - {output}"
+                filename = output[0]
+                call_ln = int(output[1]) - 1
 
-            with open(filename, "r") as ifile:
-                raw_lines = ifile.readlines()
-            mod_lines = unwrap_section(raw_lines, startln=0)
+                with open(filename, "r") as ifile:
+                    raw_lines = ifile.readlines()
+                mod_lines = unwrap_section(raw_lines, startln=0)
+
+                idx, call_string = next(
+                    ((i, el) for i, el in enumerate(mod_lines) if el.ln == call_ln),
+                    (None, None),
+                )
+                if idx is None or call_string is None or call_ln != mod_lines[idx].ln:
+                    self.logger.error(
+                        f"Couldn't match call_string for {name}. Expected call_ln {call_ln}",
+                    )
+                    raise RuntimeError(f"Could not find parent call for {name}")
+
+                calls.append(call_string.line)
+                args = getArguments(call_string.line)
 
             _, mod_name = get_module_name_from_file(filename)
-
-            idx, call_string = next(
-                ((i, el) for i, el in enumerate(mod_lines) if el.ln == call_ln),
-                (None, None),
-            )
-            if idx is None or call_string is None or call_ln != mod_lines[idx].ln:
-                self.logger.error(
-                    f"Couldn't match call_string for {name}. Expected call_ln {call_ln}",
-                )
-                raise RuntimeError(f"Could not find parent call for {name}")
-
-            calls.append(call_string.line)
-            args = getArguments(call_string.line)
 
             subname = None
             for ln in range(idx, -1, -1):
@@ -358,6 +509,15 @@ class FunctionalUnitTest:
 
             args_as_vars: dict[str, Variable] = {}
             args_as_instances: dict[str, Variable] = {}
+            # actuals of keyword arguments (`aerosol_vars=aerosol_vars`)
+            args = [re.sub(r"^\s*\w+\s*=(?!=)\s*", "", arg) for arg in args]
+            # elm_drv's own arguments come from the captured inputs
+            calls[:], drv_used = self._use_driver_args(calls)
+            args = [arg for arg in args if arg.strip().lower() not in drv_used]
+            if drv_used:
+                use = f"use ReadWriteMod, only : {', '.join(f'spel_drv_{n}' for n in sorted(drv_used))}\n"
+                if use not in mods_to_add:
+                    mods_to_add.append(use)
             for arg in args:
                 argname = arg.split("%")[0]
                 if argname in instance_to_type:
@@ -523,6 +683,12 @@ class FunctionalUnitTest:
                     inst = self.type_dict[instance_to_type[base]].instances[base]
                     inst.active = True
                     mods.append(f"use {inst.declaration}, only : {base}\n")
+        # builders copied into SpelFilterBuildersMod, e.g. BuildSnowFilter for
+        # filter(nc)%lakesnowc (built inside LakeHydrology in ELM)
+        for builder, text in getattr(self, "nested_filter_builders", []):
+            calls.append(f"{text}\n")
+            if (use := f"use SpelFilterBuildersMod, only : {builder.name}\n") not in mods:
+                mods.append(use)
         return calls, mods
 
     def prepare_main(
@@ -571,7 +737,25 @@ class FunctionalUnitTest:
         )
         modules_to_add.extend(m for m in builder_mods if m not in modules_to_add)
 
+        # initialization routines (init_hooks), once after elm_init
+        hooks = getattr(self, "init_hooks", [])
+        modules_to_add.extend(
+            f"use {hook.split('::')[0]}, only : {hook.split('::')[1]}\n" for hook, _ in hooks
+        )
+        if hooks:
+            lines = insert_at_token(lines, "!#INIT", [f"{call}\n" for _, call in hooks])
         lines = insert_at_token(lines, "!#USE_START", modules_to_add)
+        # main.F90 already declares some actuals (declin, declinp1)
+        declared = {
+            name.strip().lower()
+            for line in lines[: next(i for i, ln in enumerate(lines) if "!#VAR_DECL" in ln)]
+            if "::" in line and not line.lstrip().startswith("!")
+            for name in re.sub(r"\([^)]*\)", "", line.split("::", 1)[1]).split(",")
+        }
+        adjusted_vars = [
+            decl for decl in adjusted_vars
+            if decl.split("::", 1)[-1].split("(")[0].strip().lower() not in declared
+        ]
         lines = insert_at_token(lines, "!#VAR_DECL", adjusted_vars)
         lines = insert_at_token(
             lines, "!#CALL_SUB", with_prof_ranges(adjusted_calls)
@@ -1236,7 +1420,11 @@ def adjust_call_sig(args, calls, num_filter_members):
         if re.search("\b(bounds)\b", adj_calls[i]):
             adj_calls[i] = adj_calls[i].replace("bounds", "bounds_clump")
         if regex_filter.search(adj_calls[i]):
-            adj_calls[i] = adj_calls[i].replace("filter_", "filter(nc)")
+            # not keyword names (`filter_on=filter(nc)%snowc`)
+            # nor elm_drv's global filter_inactive_and_active(nc)
+            adj_calls[i] = re.sub(
+                r"(?<![\w%])filter_(?!inactive_and_active\b)(?!\w*\s*=(?!=))", "filter(nc)", adj_calls[i]
+            )
 
     return adj_args, adj_calls
 

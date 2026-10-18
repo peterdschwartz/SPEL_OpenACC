@@ -31,6 +31,7 @@ def create(args):
             keep=args.keep,
             db_mode=args.db_mode,
             reanalyze=args.reanalyze,
+            capture_for=args.capture_for,
         )
     if (args.instrument or args.run_case) and not args.db_mode:
         from spel.scripts.instrument_elm import instrument_case
@@ -386,6 +387,14 @@ def main():
         dest="db_mode",
         action="store_true",
         help="Don't make Unit Test",
+    )
+    create_parser.add_argument(
+        "--capture-for",
+        action="append",
+        default=[],
+        metavar="CASE",
+        help="also capture the fields and constants unit-test CASE reads (e.g. the same "
+        "routine created from a development branch), so CASE can run on this case's data",
     )
     create_parser.add_argument(
         "--reanalyze",

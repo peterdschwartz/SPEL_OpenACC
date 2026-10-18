@@ -1018,6 +1018,18 @@ def get_used_mods(
     if module_head:
         fort_mod.end_of_head_ln = len(lines) - 1
 
+    # Only declarations the preprocessor keeps: SnowSnicarMod declares
+    # ss_alb_bc1(numrad_snw, idx_bc_nclrds_max) under MODAL_AER and
+    # ss_alb_bc1(numrad_snw) under #else; the later (inactive) one used to win
+    active_lns = None
+    if any(re.match(r"^\s*#\s*if", line) for line in lines[: fort_mod.end_of_head_ln]):
+        cpp_lines = apply_preprocessor(Path(fn))
+        # cpp blanks short inactive blocks instead of dropping them
+        active_lns = {
+            lt.ln for lt in remove_cpp_directives(cpp_lines, str(fn), None) if lt.line.strip()
+        }
+        var_decls_lines = [lt for lt in var_decls_lines if lt.ln in active_lns]
+
     if module_name in DECLARATION_ONLY_MODULES:
         # the contained routines (and their dependencies) are never used
         fort_mod.use_stmts = use_stmts = [
@@ -1040,7 +1052,9 @@ def get_used_mods(
                 needed_mods.append(mod)
 
     head_lines = [
-        LineTuple(line=lines[i], ln=i) for i in range(0, fort_mod.end_of_head_ln)
+        LineTuple(line=lines[i], ln=i)
+        for i in range(0, fort_mod.end_of_head_ln)
+        if active_lns is None or i in active_lns or not lines[i].strip()
     ]
     parsed_type_dict = parse_derived_type_definition(head_lines, module_name, ifile)
     fort_mod.defined_types.update(parsed_type_dict)

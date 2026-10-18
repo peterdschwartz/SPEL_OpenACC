@@ -479,6 +479,24 @@ def provenance(case_dir: Path, data_dir: Path) -> list[str]:
     return lines
 
 
+def not_bit_for_bit(ref: Path, fut: Path) -> list[str]:
+    """Numeric variables of `ref` that `fut` doesn't reproduce exactly (over their common timesteps)."""
+    import netCDF4
+
+    names = []
+    with netCDF4.Dataset(ref) as a, netCDF4.Dataset(fut) as b:
+        for name, var in a.variables.items():
+            if name not in b.variables or not np.issubdtype(var.dtype, np.number):
+                continue
+            x, y = np.ma.filled(var[:], np.nan), np.ma.filled(b[name][:], np.nan)
+            if "time" in var.dimensions and x.shape != y.shape:
+                n = min(x.shape[0], y.shape[0])
+                x, y = x[:n], y[:n]
+            if x.shape != y.shape or not np.array_equal(x, y, equal_nan=x.dtype.kind == "f"):
+                names.append(name)
+    return names
+
+
 def validate_case(case_dir: Path, data_dir: Path, ostream=None) -> int:
     """
     After `spel run`: for every captured file set
@@ -496,18 +514,28 @@ def validate_case(case_dir: Path, data_dir: Path, ostream=None) -> int:
         ostream.write(f"FAIL: no spel-inputs/spel-outputs pairs in {data_dir}\n")
         return 1
     failures: list[str] = []
+    inexact: list[str] = []
     for f in files:
         ostream.write(f"\n=== {f.ref.name} ===\n")
         if f.fut is None:
             failures.append(f"{f.ref.name}: no fut-outputs{f.num}.nc")
         elif ndiffs := find_diffs(refn=str(f.ref), compfn=str(f.fut), ostream=ostream):
             failures.append(f"{f.fut.name}: {ndiffs} variable(s) differ from {f.ref.name}")
+        else:
+            inexact += not_bit_for_bit(f.ref, f.fut)
         if run_validation(f.inputs, f.ref, case_dir, ostream=ostream):
             failures.append(f"{f.inputs.name}: static analysis violations")
     ostream.write("\n")
     for msg in failures:
         ostream.write(f"FAIL: {msg}\n")
-    if not failures:
+    if not failures and inexact:
+        from spel.scripts.relerror import ERROR
+
+        ostream.write(
+            f"PASS: {len(files)} file set(s) within relative {ERROR:g} (not bit-for-bit: "
+            f"{', '.join(sorted(set(inexact)))}), access analysis consistent\n"
+        )
+    elif not failures:
         ostream.write(f"PASS: {len(files)} file set(s) bit-for-bit, access analysis consistent\n")
     if ostream in (sys.stdout, sys.stderr):
         ostream.flush()

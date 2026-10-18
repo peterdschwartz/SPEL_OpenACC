@@ -137,7 +137,13 @@ def check_subs_for_nml_guarded_vars(
 
     temp = defaultdict(list)
     for v, cond in var_dict.items():
-        var = get_component(instance_dict,*v.split('%'))
+        # the type's own component (get_component returns a copy): guards are
+        # looked up by identity (FunctionalUnitTest.guards_for_variable)
+        inst, field = v.split('%')
+        dtype = instance_dict.get(inst)
+        var = dtype.components.get(field) if dtype is not None else None
+        if var is None:
+            var = get_component(instance_dict, inst, field)
         if var is None:
             raise ValueError(f"Error: expected derived type of the for inst%field, Got {v}")
         temp[cond].append(var)

@@ -1,6 +1,7 @@
 import logging
 import re
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 from pprint import pprint
 
@@ -66,6 +67,7 @@ def create_unit_test(
     db_mode: bool,
     reanalyze: bool = False,
     direct: bool = False,
+    capture_for: Iterable[str] = (),
 ) -> FunctionalUnitTest:
     """
     Create a Functional Unit Test in unittests_dir/{casename} for the
@@ -75,6 +77,9 @@ def create_unit_test(
     elm_drv analysis (built first if missing, or when `reanalyze`), and the
     requested routines are extracted from it. `direct` analyzes only the
     requested routines instead (no cache; used by tests).
+    `capture_for`: other unit-test cases (e.g. the same routine generated from
+    a development branch) whose fields and constants this case also captures,
+    so their unit tests can run on this case's data (see add_capture_for).
     """
     logger = get_logger("SPEL", level=logging.INFO)
 
@@ -99,7 +104,10 @@ def create_unit_test(
         unit_test = extract_unit_test(analysis, sub_name_list, case_dir, logger)
         unit_test.write_meta_file()
 
-    finalize_unit_test(unit_test, db_mode)
+    from spel.scripts.instrument_elm import load_case
+
+    others = [load_case(name) for name in capture_for]
+    finalize_unit_test(unit_test, db_mode, capture_for=others)
     return unit_test
 
 
@@ -214,7 +222,11 @@ def analyze_unit_test(
     process_subroutines_for_unit_test(unit_test, keep_going=roots_from is not None)
 
 
-def finalize_unit_test(unit_test: FunctionalUnitTest, db_mode: bool) -> None:
+def finalize_unit_test(
+    unit_test: FunctionalUnitTest,
+    db_mode: bool,
+    capture_for: Iterable[FunctionalUnitTest] = (),
+) -> None:
     """
     Root-dependent steps after analysis: namelist guards, active variables,
     and the generated files of the case; then pickle the unit test.
@@ -236,18 +248,14 @@ def finalize_unit_test(unit_test: FunctionalUnitTest, db_mode: bool) -> None:
         for instance in dtype.instances.values():
             instance_dict[instance.name] = dtype
 
-    fut_subs: set[str] = {
-        sub.id
-        for sub in unit_test.primary_subroutines.values()
-        if sub.unit_test_function and sub.name != "setfilters"
-    }
-    # merged over all roots (a field is guarded only if every root using it guards it)
+    # merged over all roots (a field is guarded only if every root using it guards it).
+    # The filter builders are roots too: setFilters reads e.g. lun_pp%lakpoi every
+    # step even if the routines under test only read it under a namelist if.
     unit_test.guarded_usage_dict = check_subs_for_nml_guarded_vars(
         root_subs=[
-            sub_obj
-            for sub_id in sorted(fut_subs)
-            if (sub_obj := unit_test.subroutine_dict[sub_id]).abstract_call_tree
-            and "filter" not in sub_obj.name
+            sub
+            for sub in sorted(unit_test.subroutine_dict.values(), key=lambda s: s.id)
+            if sub.unit_test_function and sub.abstract_call_tree
         ],
         instance_dict=instance_dict,
     )
@@ -279,10 +287,40 @@ def finalize_unit_test(unit_test: FunctionalUnitTest, db_mode: bool) -> None:
             name for cond in unit_test.guarded_usage_dict for name in cond.variable_names()
         )
     )
+    for other in capture_for:
+        add_capture_for(unit_test, other)
+    # what the copied filter builders read (col_pp%snl for BuildSnowFilter)
+    from spel.scripts.aggregate import set_active_variables
+
+    # initialization routines main.F90 calls (init_hooks.INIT_HOOKS): capture what
+    # they read; what they allocate is built by the unit test, not captured
+    from spel.scripts.init_hooks import INIT_HOOKS, hook_reads_and_allocs, hook_routines
+
+    unit_test.init_hooks = []
+    for hook, call in INIT_HOOKS.items():
+        if hook not in unit_test.subroutine_dict:
+            continue
+        reads, allocs = hook_reads_and_allocs(hook_routines(unit_test.subroutine_dict, hook))
+        from spel.scripts.types import ReadWrite
+
+        set_active_variables(
+            type_dict,
+            instance_to_user_type,
+            {r: ReadWrite(status="r", ln=-1, line=None) for r in reads},
+        )
+        for name in allocs:
+            unit_test.active_global_vars.pop(name, None)
+        unit_test.init_hooks.append((hook, call))
+        logger.info(f"main.F90 calls {hook} after elm_init; not captured: {sorted(allocs)}")
+
+    for builder, _ in getattr(unit_test, "nested_filter_builders", []):
+        set_active_variables(type_dict, instance_to_user_type, builder.elmtype_access_summary)
 
     if not db_mode:
         # Create a makefile for the unit test
         file_list = [get_filename_from_module(m) for m in ordered_mods]
+        if builders_file := write_filter_builders_module(unit_test):
+            file_list.append(builders_file)
         unit_test.generate_cmake(files=file_list)
 
         # Generate/modify FORTRAN files needed to initialize and run Unit Test
@@ -332,6 +370,138 @@ def finalize_unit_test(unit_test: FunctionalUnitTest, db_mode: bool) -> None:
         ),
     )
     pickle_unit_test(unit_test)
+
+
+FILTER_BUILDERS_MODULE = "SpelFilterBuildersMod"
+
+
+def write_filter_builders_module(unit_test: FunctionalUnitTest) -> str | None:
+    """
+    Copies of the filter builders other elm_drv callees call (see
+    analysis_cache.nested_filter_builders), so main.F90 can rebuild those
+    filters each step. Returns the file name, or None if there are none.
+    """
+    builders = getattr(unit_test, "nested_filter_builders", [])
+    if not builders:
+        return None
+    inst_mods = {
+        inst.name: inst.declaration
+        for dtype in unit_test.type_dict.values()
+        for inst in dtype.instances.values()
+    }
+    uses: dict[str, None] = {}
+    bodies: list[str] = []
+    # one copy per routine (BuildSnowFilter builds the lake and the soil snow filters)
+    builders = list({b.id: (b, t) for b, t in builders}.values())
+    for builder, _ in builders:
+        path = Path(builder.filepath)
+        if not path.is_absolute():
+            path = Path(cfg.E3SM_SRCROOT) / path
+        lines = path.read_text().splitlines(keepends=True)
+        bodies.append("".join(lines[builder.startline : builder.endline + 1]))
+        for key in builder.elmtype_access_summary:
+            inst = key.split("%")[0]
+            if inst in inst_mods:
+                uses[f"  use {inst_mods[inst]}, only : {inst}\n"] = None
+    text = (
+        f"module {FILTER_BUILDERS_MODULE}\n"
+        "  !!! Auto-generated by SPEL: filter builders copied from ELM\n"
+        "  use shr_kind_mod, only : r8 => shr_kind_r8\n"
+        "  use decompMod, only : bounds_type\n"
+        + "".join(uses)
+        + "  implicit none\n  private\n"
+        + "".join(f"  public :: {b.name}\n" for b, _ in builders)
+        + "contains\n"
+        + "".join(bodies)
+        + f"end module {FILTER_BUILDERS_MODULE}\n"
+    )
+    name = f"{FILTER_BUILDERS_MODULE}.F90"
+    (Path(unit_test.case_dir) / name).write_text(text)
+    return name
+
+
+def active_fields(type_dict) -> dict[str, tuple[str, Variable]]:
+    """inst%field -> (type name, component) of the fields ReadWriteMod reads and writes."""
+    from spel.scripts.io.helper import get_active_instances
+
+    active = get_active_instances(type_dict)
+    fields: dict[str, tuple[str, Variable]] = {}
+    for type_name, dtype in type_dict.items():
+        for inst in dtype.instances.values():
+            if inst.name not in active:
+                continue
+            for comp in dtype.components.values():
+                if comp.active and not comp.pointer:
+                    fields[f"{inst.name}%{comp.name.split('%')[-1]}"] = (type_name, comp)
+    return fields
+
+
+def add_capture_for(unit_test: FunctionalUnitTest, other: FunctionalUnitTest) -> None:
+    """
+    Also capture the fields and constants `other` reads that exist in this
+    case's ELM, under `other`'s guards, so `other`'s unit test can run on this
+    case's data. A field this case already uses keeps the union of the guards
+    (unguarded if either case uses it unguarded).
+    """
+    from spel.scripts.aggregate import check_inst_active_consistency, set_active_variables
+    from spel.scripts.types import ReadWrite
+
+    mine = active_fields(unit_test.type_dict)
+    added, widened = [], []
+    for name, (type_name, other_comp) in active_fields(other.type_dict).items():
+        inst, field = name.split("%")
+        dtype = unit_test.type_dict.get(type_name)
+        comp = next(
+            (c for c in dtype.components.values() if c.name.split("%")[-1] == field), None
+        ) if dtype is not None and inst in dtype.instances else None
+        if comp is None:
+            unit_test.logger.warning(f"--capture-for {other.case_name}: {name} not in this ELM")
+            continue
+        other_guards = other.guards_for_variable(other_comp)
+        if name not in mine:
+            added.append(name)
+            set_active_variables(
+                unit_test.type_dict,
+                unit_test.instance_to_type_map(),
+                {name: ReadWrite(status="r", ln=-1, line=None)},
+            )
+        elif unit_test.guards_for_variable(comp):
+            widened.append(name)
+            if not other_guards:
+                for cond, variables in unit_test.guarded_usage_dict.items():
+                    unit_test.guarded_usage_dict[cond] = [v for v in variables if v is not comp]
+                continue
+        else:
+            continue
+        for cond in other_guards:
+            unit_test.guarded_usage_dict.setdefault(cond, []).append(comp)
+    check_inst_active_consistency(unit_test.type_dict)
+
+    # constants (namelist variables, guard variables) `other` reads
+    from spel.scripts.nml.namelist_cascade import DERIVED_CONSTANTS
+
+    derived = getattr(unit_test, "derived_constants", {})
+    for name, var in other.active_global_vars.items():
+        if var.parameter or name in unit_test.active_global_vars:
+            continue
+        mod = unit_test.module_dict.get(var.declaration)
+        if mod is not None and name in mod.global_vars:
+            unit_test.active_global_vars[name] = mod.global_vars[name]
+        elif (dc := DERIVED_CONSTANTS.get(name)) is not None:
+            src_mod, src = dc.source.split("::")
+            if src_mod in unit_test.module_dict and src in unit_test.module_dict[src_mod].global_vars:
+                unit_test.active_global_vars.setdefault(src, unit_test.module_dict[src_mod].global_vars[src])
+                derived[name] = dc
+            else:
+                unit_test.logger.warning(f"--capture-for {other.case_name}: no {dc.source} for {name}")
+        else:
+            unit_test.logger.warning(f"--capture-for {other.case_name}: constant {name} not in this ELM")
+    unit_test.derived_constants = derived
+    unit_test.captured_for = [*getattr(unit_test, "captured_for", []), other.case_name]
+    unit_test.logger.info(
+        f"--capture-for {other.case_name}: {len(added)} fields added, "
+        f"{len(widened)} guards widened"
+    )
 
 
 def process_subroutines_for_unit_test(

@@ -233,8 +233,10 @@ def test_sub_parse(subtests, tmp_path):
                 f"  ALLOCATABLE  : {var.allocatable}"
             )
 
+        # includes nlevdecomp, used only in local declarations (a_tri(...,0:nlevdecomp+1))
+        assert "nlevdecomp" in active_vars
         assert (
-            len(active_vars) == 7
+            len(active_vars) == 8
         ), f"Didn't correctly find the active global variables:\n{active_vars}"
 
         finalize_unit_test(unit_test,db_mode=False)

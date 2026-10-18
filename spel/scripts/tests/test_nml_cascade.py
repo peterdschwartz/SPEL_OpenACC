@@ -95,3 +95,50 @@ def test_callee_guard_propagates_through_call_site():
         "col_ws%iwp_microrel": polygon,
         "veg_wf%qflx_supply_patch": irrigate,
     }
+
+
+def test_if_condition_line_is_not_guarded_by_the_if():
+    from types import SimpleNamespace
+
+    from spel.scripts.analyze_subroutines import Subroutine
+
+    polygon_if = SimpleNamespace(
+        start_ln=10, end_ln=20, nml_vars={}, nml_cascades={"ispolygon": None}, copy=lambda: "if"
+    )
+    sub = SimpleNamespace(flat_ifs=[polygon_if])
+    assert Subroutine.namelist_if_at(sub, 10) is None  # the condition reads lun_pp%ispolygon
+    assert Subroutine.namelist_if_at(sub, 11) == "if"
+
+
+def test_ifs_inside_loops_are_flattened():
+    # CH4Mod: if (.not. lake) > do fp > if (.not. col_pp%is_fates(c)) ... else
+    from spel.scripts.fortran_parser.spel_ast import BlockStatement, DoLoop, IfConstruct
+    from spel.scripts.nml.analyze_ifs import nested_ifs
+
+    inner = IfConstruct.__new__(IfConstruct)
+    body = BlockStatement(tok)
+    body.statements = [inner]
+    loop = DoLoop.__new__(DoLoop)
+    loop.body = body
+    assert nested_ifs([loop]) == [inner]
+
+
+def test_guarded_vars_are_the_types_own_components():
+    # guards are looked up by identity, so they must hold dtype.components[...] itself
+    from types import SimpleNamespace
+
+    from spel.scripts.nml.analyze_namelist import check_subs_for_nml_guarded_vars
+    from spel.scripts.utilityFunctions import Variable
+
+    fates = Expectation("use_fates", "True")
+    comp = Variable("logical", "is_bareground", "patch", 0, 1, bounds="begp:endp")
+    dtype = SimpleNamespace(components={"is_bareground": comp}, procedures={})
+    root = SimpleNamespace(
+        id="ch4mod::ch4",
+        sub_call_desc={},
+        child_subroutines={},
+        elmtype_access_by_ln={"veg_pp%is_bareground": [SimpleNamespace(ln=5)]},
+        namelist_if_at=lambda ln: SimpleNamespace(condtional_expectation=fates),
+    )
+    guards = check_subs_for_nml_guarded_vars([root], {"veg_pp": dtype})
+    assert guards[fates][0] is comp

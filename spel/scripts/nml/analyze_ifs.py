@@ -28,6 +28,33 @@ def AND(a, b):
     )
 
 
+def nested_ifs(statements) -> list[IfConstruct]:
+    """
+    If constructs in `statements`, also inside loops, associate, where and
+    select case blocks (not inside other ifs: flatten_if recurses into those),
+    e.g. CH4Mod's `if (.not. lake)` > `do fp` > `if (.not. col_pp%is_fates(c))`.
+    """
+    found: list[IfConstruct] = []
+    for stmt in statements or []:
+        if isinstance(stmt, IfConstruct):
+            found.append(stmt)
+            continue
+        for attr in ("body", "statements"):
+            child = getattr(stmt, attr, None)
+            if child is not None and child is not statements:
+                found.extend(nested_ifs(getattr(child, "statements", child)))
+        for case in getattr(stmt, "cases", None) or []:
+            for attr in ("body", "statements"):
+                child = getattr(case, attr, None)
+                if child is not None:
+                    found.extend(nested_ifs(getattr(child, "statements", child)))
+        for other in getattr(stmt, "elsewheres", None) or []:
+            child = getattr(other, "body", None)
+            if child is not None:
+                found.extend(nested_ifs(getattr(child, "statements", child)))
+    return found
+
+
 def flatten_if(
     if_node: IfConstruct,
     context_guard: Optional[Expression] = None,
@@ -45,9 +72,8 @@ def flatten_if(
     end_ln = if_node.end_ln
     flat_blocks.append(FlatIfs(start=start_ln, end=end_ln, cond=g_if, kind=IfType.IF))
 
-    for stmt in if_node.consequence.statements:
-        if isinstance(stmt, IfConstruct):
-            flat_blocks.extend(flatten_if(stmt, g_if))
+    for stmt in nested_ifs(if_node.consequence.statements):
+        flat_blocks.extend(flatten_if(stmt, g_if))
 
     # ELSEIFs (use the guarded conditions)
     for idx, elif_node in enumerate(if_node.else_ifs, start=1):
@@ -55,18 +81,16 @@ def flatten_if(
         flat_blocks.append(
             FlatIfs(start=elif_node.lineno, end=elif_node.end_ln, cond=g_elif, kind=IfType.ELSEIF)
         )
-        for stmt in elif_node.consequence.statements:
-            if isinstance(stmt, IfConstruct):
-                flat_blocks.extend(flatten_if(stmt, g_elif))
+        for stmt in nested_ifs(elif_node.consequence.statements):
+            flat_blocks.extend(flatten_if(stmt, g_elif))
     # ELSE
     if if_node.else_ and else_guard is not None:
         g_else = AND(context_guard, else_guard)
         flat_blocks.append(
             FlatIfs(start=if_node.else_.lineno, end=if_node.else_.end_ln, cond=g_else, kind=IfType.ELSE)
         )
-        for stmt in if_node.else_.alternative.statements:
-            if isinstance(stmt, IfConstruct):
-                flat_blocks.extend(flatten_if(stmt, g_else))
+        for stmt in nested_ifs(if_node.else_.alternative.statements):
+            flat_blocks.extend(flatten_if(stmt, g_else))
 
     return flat_blocks
 

@@ -664,11 +664,15 @@ class Subroutine(object):
         return self.ptr_vars.get(pot_ptr, [pot_ptr])
 
     def namelist_if_at(self, ln: int) -> Optional[FlatIfs]:
-        """Innermost namelist-gated flat if containing line `ln`, if any."""
+        """
+        Innermost namelist-gated flat if whose body contains line `ln`, if any.
+        The if's own condition (start_ln) runs whether or not it holds, e.g.
+        `if (lun_pp%ispolygon(l))` reads ispolygon without use_polygonal_tundra.
+        """
         enclosing = [
             (ln - x_if.start_ln, x_if)
             for x_if in self.flat_ifs
-            if (x_if.nml_vars or x_if.nml_cascades) and x_if.start_ln <= ln < x_if.end_ln
+            if (x_if.nml_vars or x_if.nml_cascades) and x_if.start_ln < ln < x_if.end_ln
         ]
         if enclosing:
             return min(enclosing, key=lambda x: x[0])[1].copy()

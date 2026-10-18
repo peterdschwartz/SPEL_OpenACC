@@ -437,6 +437,102 @@ def filter_builders(
     return [(callee, text) for _, callee, text in sorted(out)]
 
 
+def _writes(intent: str | None) -> bool:
+    """intent(out)/(inout) dummy; the analysis records them as 'w'/'rw'."""
+    intent = (intent or "").lower()
+    return intent in ("w", "rw") or "out" in intent
+
+
+def nested_filter_builders(
+    fut: FunctionalUnitTest,
+    selected: dict,
+    bindings: list[ArgBinding],
+    builders: list[tuple[str, str]],
+    logger: logging.Logger,
+) -> "list[tuple[Subroutine, str]]":
+    """
+    (builder, call statement) for filter members the selected routines use
+    that neither setFilters nor an elm_drv filterMod call sets, because an
+    earlier elm_drv callee builds them: e.g. LakeHydrology's last
+    `call BuildSnowFilter(bounds, num_lakec, filter_lakec, num_shlakesnowc, ...)`
+    sets filter%lakesnowc for SnowAge_grain. The builder must only read
+    derived-type fields and call nothing, so main.F90 can call a copy of it
+    (SpelFilterBuildersMod) with elm_drv's actuals.
+    """
+    sub_dict = fut.subroutine_dict
+    direct = fut.driver_sites.calls if getattr(fut, "driver_sites", None) else {}
+    entry_lns = [c.ln for s in selected for c in direct.get(s, [])]
+    if not entry_lns:
+        return []
+    first_ln = min(entry_lns)
+
+    def written(sub) -> set[str]:
+        return {
+            k for k, a in sub.elmtype_access_summary.items()
+            if k.startswith("filter%") and a.status in ("w", "rw")
+        }
+
+    used = {b.actual for b in bindings if b.actual.startswith("filter%")}
+    covered: set[str] = set()
+    for sid in ("filtermod::setfilters", *(b for b, _ in builders)):
+        if sid in sub_dict:
+            covered |= written(sub_dict[sid])
+
+    drv = fut.driver_bindings
+    out: dict = {}
+    for member in sorted(used - covered):
+        writers = sorted(
+            (b for b in drv if b.actual == member and b.ln < first_ln and b.callee not in selected),
+            key=lambda b: b.ln,
+        )
+        for w in reversed(writers):
+            callee = sub_dict.get(w.callee)
+            maps = callee.record_access if callee is not None else None
+            if maps is None:
+                continue
+            candidates = []
+            for ib in maps.bindings:
+                bsub = sub_dict.get(ib.callee)
+                arg = bsub.arguments.get(ib.dummy) if bsub is not None else None
+                if ib.actual != w.dummy or arg is None or not _writes(arg.intent):
+                    continue
+                if bsub.sub_call_desc or any(
+                    a.status != "r" for a in bsub.elmtype_access_summary.values()
+                ):
+                    continue
+                candidates.append(ib)
+            if not candidates:
+                continue
+            last = max(candidates, key=lambda b: b.ln)
+            bsub = sub_dict[last.callee]
+            at_call = {b.dummy: b.actual for b in drv if b.callee == w.callee and b.ln == w.ln}
+            args = []
+            for b in sorted(
+                (b for b in maps.bindings if b.callee == last.callee and b.ln == last.ln),
+                key=lambda b: b.argn,
+            ):
+                if bsub.arguments[b.dummy].type == "bounds_type":
+                    args.append(f"{b.dummy}=bounds_clump")
+                elif b.actual in at_call:
+                    actual = at_call[b.actual]
+                    if actual.startswith("filter%"):
+                        actual = "filter(nc)%" + actual.removeprefix("filter%")
+                    args.append(f"{b.dummy}={actual}")
+                else:
+                    args = None
+                    break
+            if args is None:
+                continue
+            text = f"call {bsub.name}({', '.join(args)})"
+            if text not in out:
+                logger.info(f"main.F90 calls {bsub.id} (as {callee.id} does) for {member}")
+                out[text] = (bsub, text)
+            break
+        else:
+            logger.warning(f"no builder found for {member}: main.F90 leaves it unset")
+    return list(out.values())
+
+
 def extract_unit_test(
     analysis: FunctionalUnitTest,
     sub_name_list: list[str],
@@ -471,6 +567,7 @@ def extract_unit_test(
     first_ln = {s: min((c.ln for c in sites.calls.get(s, [])), default=sys.maxsize) for s in selected}
     selected = dict(sorted(selected.items(), key=lambda kv: first_ln[kv[0]]))
     builders =filter_builders(fut, selected, bindings, logger)
+    nested = nested_filter_builders(fut, selected, bindings, builders, logger)
     builder_ids = {b for b, _ in builders}
     builder_bindings = [b for b in fut.driver_bindings if b.callee in builder_ids]
 
@@ -499,6 +596,8 @@ def extract_unit_test(
     for b in builder_ids:
         fut.subroutine_dict[b].unit_test_function = True
     fut.filter_builder_calls = [text for _, text in builders]
+    # copied into SpelFilterBuildersMod (their modules aren't part of the unit test)
+    fut.nested_filter_builders = nested
     fut.driver_sites = sites
     fut.driver_bindings = bindings
     fut.case_dir = case_dir

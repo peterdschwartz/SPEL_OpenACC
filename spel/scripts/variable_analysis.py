@@ -120,18 +120,28 @@ def check_global_vars(regex_variables, sub: Subroutine) -> set[str]:
     """
     func_name = "check_global_vars"
     sub_lines = sub.sub_lines
-    fileinfo = sub.get_file_info()
+    # from the subroutine statement, not the end of the associate block: globals
+    # in local declarations count too, e.g. SnowAge_grain's cdz(-nlevsno+1:0)
+    fileinfo = sub.get_file_info(all=True)
+    regex_use = re.compile(r"^\s*use\b", re.IGNORECASE)
 
-    lines = [lpair for lpair in sub_lines if lpair.ln >= fileinfo.startln]
+    lines = [
+        lpair
+        for lpair in sub_lines
+        if lpair.ln >= fileinfo.startln and not regex_use.match(lpair.line)
+    ]
 
     matched_lines: list[LineTuple] = [
         lpair for lpair in filter(lambda x: regex_variables.search(x.line), lines)
     ]
 
-    # Loop through subroutine line by line starting after the associate clause
+    # Loop through subroutine line by line; type specs (real(r8)) aren't uses
+    regex_type_spec = re.compile(
+        r"\b(real|integer|logical|complex|character)\s*\([^)]*\)", re.IGNORECASE
+    )
     active_vars: set[str] = set()
     for lpair in matched_lines:
-        match_var = regex_variables.findall(lpair.line)
+        match_var = regex_variables.findall(regex_type_spec.sub("", lpair.line))
         for var in match_var:
             if var not in active_vars:
                 active_vars.add(var)

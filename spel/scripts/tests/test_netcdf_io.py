@@ -36,3 +36,24 @@ def test_component_with_dimension_name_bounds_is_allocated():
     active = Variable("logical", "top_pp%active", "?", 0, 1, bounds="topo")
     lines = "".join(create_nc_read({active.name: active}, True))
     assert 'nc_alloc(ncid, "top_pp__active", 1, top_pp%active)' in lines
+
+
+def test_derived_constants_are_written_not_read():
+    from spel.scripts.io.netcdf_io import add_derived_constants
+    from spel.scripts.nml.namelist_cascade import DERIVED_CONSTANTS
+
+    lines = [
+        "  subroutine define_vars(ncid)\n",
+        "  end subroutine define_vars\n",
+        "  subroutine read_constants(io_inst)\n",
+        "    call check(nf90_close(ncid))\n",
+        "  end subroutine read_constants\n",
+        "  subroutine write_constants(io_inst)\n",
+        "    call check(nf90_close(ncid))\n",
+        "  end subroutine write_constants\n",
+    ]
+    out = "".join(add_derived_constants(lines, {"urban_hac_int": DERIVED_CONSTANTS["urban_hac_int"]}))
+    assert out.count("'urban_hac_int', nf90_int") == 1
+    write = out[out.index("subroutine write_constants"):]
+    assert "nc_write_var_scalar(ncid, merge(1, merge(2, 0, trim(urban_hac) == 'ON_WASTEHEAT')" in write
+    assert "nc_write_var_scalar" not in out[: out.index("subroutine write_constants")]
