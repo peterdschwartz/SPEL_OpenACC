@@ -51,12 +51,21 @@ def get_module_name_from_file(fpath: str) -> tuple[int, str]:
     return linenumber, module_name
 
 
+# modules SPEL provides to the unit tests that edited ELM sources may use
+SPEL_PROVIDED_MODULES = {"spel_timemod": Path(__file__).parents[2] / "SourceFiles" / "spel_timeMod.F90"}
+
+
 def get_filename_from_module(module_name: str, verbose: bool = False):
     """
     Given a module name, returns the file path of the module
     """
     if module_name in dg.map_module_name_to_fpath:
         return dg.map_module_name_to_fpath[module_name]
+    if module_name.lower() in SPEL_PROVIDED_MODULES:
+        # SPEL's own stand-ins (spel_timeMod), which edited sources may use
+        file_path = str(SPEL_PROVIDED_MODULES[module_name.lower()])
+        dg.map_module_name_to_fpath[module_name] = file_path
+        return file_path
 
     cmd = rf'grep -rin --exclude-dir=external_models/ "^\s*module\s* {module_name}" {ELM_SRC}*'
     elm_output = sp.getoutput(cmd)

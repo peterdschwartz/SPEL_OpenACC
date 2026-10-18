@@ -47,6 +47,85 @@ def create(args):
             _run_and_validate(unit_test.case_dir)
 
 
+def compact(args):
+    from spel.scripts.analysis_cache import load_analysis
+    from spel.transforms.compact.inventory import (
+        FLUX_TYPES,
+        build_inventory,
+        detail,
+        summary,
+        write_json,
+    )
+
+    fut = load_analysis(reanalyze=args.reanalyze)
+    if args.action == "rewrite":
+        return compact_rewrite(fut, args)
+    instances = args.instances.split(",") if args.instances else None
+    reports, tracer = build_inventory(
+        fut, types=FLUX_TYPES, instances=instances, unpack_after=args.unpack_after
+    )
+    print(summary(reports))
+    for r in reports:
+        if r.field in (args.field or []) or r.verdict in (args.verdict or []):
+            print()
+            print(detail(r))
+    if args.output:
+        write_json(reports, Path(args.output))
+        print(f"\nwrote {args.output}")
+    if tracer.unwalked:
+        print(f"\nnot followed (no analysis): {', '.join(sorted(tracer.unwalked))}")
+
+
+def compact_rewrite(fut, args):
+    from spel.scripts.analysis_cache import git_state
+    from spel.scripts.config import E3SM_SRCROOT
+    from spel.transforms.compact.rewrite import RewriteError, Rewriter, manifest
+    from spel.transforms.compact.select import select_fields
+
+    sels = []
+    for dtype in [] if args.loops_only else args.type:
+        sel = select_fields(fut, dtype, unpack_after=args.unpack_after)
+        sels.append(sel)
+        print(f"{dtype}: {len(sel.components)} fields, {len(sel.sites)} access sites")
+        for comp, zc in sel.components.items():
+            print(f"  {comp:32s} zeroed: {zc:20s} unpack: {sel.unpack[comp]}")
+        if args.excluded:
+            for comp, why in sorted(sel.excluded.items()):
+                print(f"  excluded {comp:32s} {why}")
+        else:
+            print(f"  ({len(sel.excluded)} fields excluded; --excluded lists them)")
+        if sel.untraced:
+            print("  uses outside the elm_drv trace (text search; fields with a use of this type are excluded):")
+            for u in sel.untraced:
+                print(f"    {u}")
+    rewriter = Rewriter(fut, sels)
+    from spel.transforms.compact.inventory import FLUX_TYPES
+
+    try:
+        rewriter.build(args.unpack_after, loop_types=FLUX_TYPES if args.setvalues_loops else ())
+    except RewriteError as err:
+        raise SystemExit(f"compact rewrite: {err}")
+    for note in rewriter.notes:
+        print(note)
+    if args.diff:
+        print(rewriter.diff())
+    if args.dry_run:
+        return
+    spel_commit = git_state(Path(SPEL_ROOT)).get("commit")
+    e3sm = git_state(Path(E3SM_SRCROOT))
+    try:
+        written = rewriter.apply(
+            manifest(rewriter, args.unpack_after, spel_commit, e3sm),
+            output=Path(args.output) if args.output else None,
+            replace=args.replace,
+        )
+    except RewriteError as err:
+        raise SystemExit(f"compact rewrite: {err}")
+    print("wrote:")
+    for path in written:
+        print(f"  {path}")
+
+
 def acc2omp(args):
     from spel.scripts.analysis_cache import load_analysis
     from spel.transforms.acc_to_omp import TranslationError, case_modules, translate_modules
@@ -488,6 +567,70 @@ def main():
         "--reanalyze", action="store_true", help="rebuild the cached elm_drv analysis first"
     )
     acc2omp_parser.set_defaults(func=acc2omp)
+
+    compact_parser = subparsers.add_parser(
+        "compact",
+        help="inventory of the per-step zeroed flux fields for a compact subgrid layout",
+    )
+    compact_parser.add_argument(
+        "action",
+        choices=["inventory", "rewrite"],
+        help="inventory: report the fields; rewrite: give the selected fields of --type compact storage in the E3SM sources",
+    )
+    compact_parser.add_argument(
+        "--type",
+        nargs="+",
+        default=["vegetation_carbon_flux", "vegetation_nitrogen_flux", "vegetation_phosphorus_flux"],
+        help="rewrite: the derived types (default: the patch-level C/N/P flux types)",
+    )
+    compact_parser.add_argument("--diff", action="store_true", help="rewrite: print the changes")
+    compact_parser.add_argument(
+        "--dry-run", dest="dry_run", action="store_true", help="rewrite: report only, write nothing"
+    )
+    compact_parser.add_argument("--excluded", action="store_true", help="rewrite: list the excluded fields")
+    compact_parser.add_argument(
+        "--loops-only",
+        dest="loops_only",
+        action="store_true",
+        help="rewrite: only the SetValues loops, no compact layout (to measure the two separately)",
+    )
+    compact_parser.add_argument(
+        "--no-setvalues-loops",
+        dest="setvalues_loops",
+        action="store_false",
+        help="rewrite: keep the blocked associate loops in the flux types' SetValues "
+        "(default: make them do concurrent loops, also for types not compacted)",
+    )
+    compact_parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="rewrite -o: remove the files of the earlier rewrite in the output directory (by its manifest) first",
+    )
+    compact_parser.add_argument(
+        "--instances",
+        default="veg_cf,veg_nf,veg_pf,col_cf,col_nf,col_pf",
+        help="comma-separated instances (default: the C12 flux instances)",
+    )
+    compact_parser.add_argument(
+        "--unpack-after",
+        dest="unpack_after",
+        default="ecosystemdynleaching",
+        help="elm_drv call after which compact fields are unpacked (default: ecosystemdynleaching)",
+    )
+    compact_parser.add_argument("--field", nargs="*", help="print the details of these instance%%fields")
+    compact_parser.add_argument(
+        "--verdict", nargs="*", help="print the details of fields with these verdicts (e.g. blocked)"
+    )
+    compact_parser.add_argument(
+        "-o",
+        "--output",
+        help="inventory: write the full inventory as JSON; rewrite: write the rewritten files "
+        "(by basename, e.g. a case's SourceMods/src.elm) here instead of in place",
+    )
+    compact_parser.add_argument(
+        "--reanalyze", action="store_true", help="rebuild the cached elm_drv analysis first"
+    )
+    compact_parser.set_defaults(func=compact)
 
     analyze_parser = subparsers.add_parser(
         "analyze",

@@ -275,12 +275,37 @@ def finalize_unit_test(
     unittest_subs = {
         sub for sub in unit_test.subroutine_dict.values() if sub.unit_test_function
     }
+    reached: dict[str, Subroutine] = {}
     for sub in unittest_subs:
         if not sub.abstract_call_tree:
             continue
         for subnode in sub.abstract_call_tree.traverse_preorder():
             childsub = unit_test.subroutine_dict[subnode.node.subname]
-            unit_test.active_global_vars.update(childsub.active_global_vars)
+            reached[childsub.id] = childsub
+    # the call tree has subroutines only: also the functions they reference
+    # (get_subgrid_weights_updated reads a module flag), and what those call
+    from spel.scripts.record_access import AccessMapper
+
+    mapper = AccessMapper(unit_test.subroutine_dict)
+    todo = list(reached.values())
+    while todo:
+        sub = todo.pop()
+        rec = sub.record
+        if rec is None:
+            continue
+        for event in rec.function_calls:
+            if event.intrinsic:
+                continue
+            callee = mapper.callee(sub, rec, event)
+            if callee is not None and callee.id not in reached:
+                reached[callee.id] = callee
+                todo.append(callee)
+                todo.extend(
+                    c for c in callee.child_subroutines.values() if c.id not in reached
+                )
+                reached.update({c.id: c for c in callee.child_subroutines.values()})
+    for childsub in reached.values():
+        unit_test.active_global_vars.update(childsub.active_global_vars)
     # namelist triggers of cascade variables (see cascade_to_triggers) appear only in guards
     unit_test.active_global_vars.update(
         cascade_trigger_variables(
@@ -316,6 +341,12 @@ def finalize_unit_test(
     for builder, _ in getattr(unit_test, "nested_filter_builders", []):
         set_active_variables(type_dict, instance_to_user_type, builder.elmtype_access_summary)
 
+    # run-time structures the unit test builds itself (compact layout buffers)
+    from spel.transforms.compact.unit_test import deactivate_runtime_components
+
+    if dropped := deactivate_runtime_components(type_dict):
+        logger.info(f"Built at run time, not captured: {dropped}")
+
     if not db_mode:
         # Create a makefile for the unit test
         file_list = [get_filename_from_module(m) for m in ordered_mods]
@@ -348,6 +379,7 @@ def finalize_unit_test(
             f"cp {spel_mods_dir}/nc_io.F90 {case_dir}",
             f"cp {spel_mods_dir}/nc_allocMod.F90 {case_dir}",
             f"cp {spel_mods_dir}/spel_profMod.F90 {case_dir}",
+            f"cp {spel_mods_dir}/spel_timeMod.F90 {case_dir}",
             f"cp {spel_mods_dir}/unittest_defs.h {case_dir}",
             f"cp {spel_mods_dir}/decompInitMod.F90 {case_dir}",
             f"cp {spel_mods_dir}/check_config.sh {case_dir}",

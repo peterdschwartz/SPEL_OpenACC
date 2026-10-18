@@ -520,6 +520,33 @@ def apply_comments(lines: list[LineTuple]) -> list[LineTuple]:
     return [commentize(lt) for lt in lines]
 
 
+def shim_use(state: ParseState, module: str, full_line: str, start_index: int) -> list[str] | None:
+    """
+    `use elm_time_manager, only : is_first_step, get_step_size, ...`: the
+    names with a unit-test stand-in (spel.scripts.io.time_scalars.TIME_SHIMS)
+    are imported from its module instead, so the code that calls them stays.
+    Line numbers are kept: the statement's first line becomes the stand-in's
+    use, its continuation lines are commented. Returns the other names (to be
+    banned as usual), or None if there is nothing to shim.
+    """
+    from spel.scripts.io.time_scalars import TIME_SHIMS
+
+    if module.lower() != "elm_time_manager":
+        return None
+    names = [n.strip().lower() for n in full_line.split(":", 1)[1].split(",") if n.strip()]
+    shimmed = [n for n in names if n in TIME_SHIMS]
+    if not shimmed or "=>" in full_line or len({TIME_SHIMS[n] for n in shimmed}) != 1:
+        return None
+    first = state.line_it.lines[start_index]
+    indent = re.match(r"\s*", first.line).group(0)
+    first.line = f"{indent}use {TIME_SHIMS[shimmed[0]]}, only : {', '.join(shimmed)}\n"
+    # files with preprocessor directives are written from orig_lines
+    state.orig_lines[first.ln].line = first.line
+    for ln in range(start_index + 1, state.line_it.i):
+        state.line_it.lines[ln].commented = True
+    return [n for n in names if n not in TIME_SHIMS]
+
+
 def parse_bad_modules(
     state: ParseState,
     logger: Logger,
@@ -545,6 +572,15 @@ def parse_bad_modules(
         if not m:
             continue
         known = bad_module_imports.setdefault(m.group(1).lower(), set())
+        rest = shim_use(state, m.group(1), full_line, start_index) if ":" in full_line else None
+        if rest is not None:
+            for el in rest:
+                if el.split("|")[0] in header_types or regex_hack.search(el):
+                    continue
+                state.bad_names.add(el)
+                imported.setdefault(orig_ln, set()).add(el)
+                known.add(el)
+            continue
         if ":" in full_line:
             # If there are explicit component lists after ':'
             comps = full_line.split(":", 1)[1].rstrip("\n")

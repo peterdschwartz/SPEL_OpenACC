@@ -349,9 +349,8 @@ def resolve_class_method(
         New arg_desc is added for class var, and the argn's are incremented
     """
     assert sub.environment
-    if subname.count("%") > 1:
-        print(subname)
-    inst_name, method = subname.split("%")
+    # the object may be a component (this%cbuf%zero): its expanded path is in inst_dict
+    inst_name, method = subname.rsplit("%", 1)
     dtype = _lookup(
         sub.environment.inst_dict, inst_name, "instance", sub_name=sub.id
     )

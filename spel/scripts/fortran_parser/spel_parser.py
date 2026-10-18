@@ -512,6 +512,10 @@ class Parser:
                 stmt = self.parse_type_def()
             case Tok.PROC:
                 stmt = self.parse_procedure_stmt()
+            case Tok.IDENT if self.cur_token.literal.lower() == "generic" and (
+                self.peekTokenIs(Tok.COMMA) or self.peekTokenIs(Tok.DOUBLE_COLON)
+            ):
+                stmt = self.parse_generic_binding()
             case Tok.USE:
                 stmt = self.parse_use_statement()
             case Tok.NAMELIST:
@@ -1455,6 +1459,8 @@ class Parser:
             step = None
             self.next_token()  # cur token is newline
 
+        elif self.peekTokenIs(Tok.IDENT) and self.peek_token.literal.lower() == "concurrent":
+            return self.parse_do_concurrent(tok)
         elif self.peekTokenIs(Tok.IDENT):
             self.next_token()  # Ident = index
             index = self.cur_token
@@ -1476,6 +1482,51 @@ class Parser:
         self.skip_construct_name()
         loop = DoLoop(tok, index, start_expr, end_expr, block, step)
         loop.end_ln = end_ln
+        return loop
+
+    def parse_do_concurrent(self, tok: Token) -> Statement:
+        """
+        `do concurrent (i = a:b[:s], j = ..., [mask])`: one DoLoop per index,
+        nested in header order, the innermost holding the body. The mask (and
+        F2018 locality specs, ignored) is kept on the outer loop as `mask`.
+        Upon function call, cur_token = 'DO', peek_token = 'CONCURRENT'
+        """
+        do_ln = self.lineno
+        self.next_token()  # cur token: concurrent
+        header = self.parse_expression(Precedence.LOWEST)
+        if not isinstance(header, FuncExpression):
+            self.fatal(msg=f"Couldn't parse do concurrent header @{self.lineno}")
+        controls = []
+        mask = None
+        for arg in header.args:
+            if isinstance(arg, InfixExpression) and arg.operator == "=" and isinstance(
+                arg.right_expr, BoundsExpression
+            ):
+                bounds = arg.right_expr
+                start, end, step = bounds.start, bounds.end, None
+                if isinstance(end, BoundsExpression):
+                    end, step = end.start, end.end
+                controls.append((arg.left_expr.token, start, end, step))
+            elif isinstance(arg, FuncExpression) and str(arg.function).lower() in (
+                "local", "local_init", "shared", "default", "reduce"
+            ):
+                continue
+            else:
+                mask = arg
+        if not controls:
+            self.fatal(msg=f"do concurrent without an index @{self.lineno}")
+        self.next_token()  # end of the header
+        block = self.parse_block_statement(tok, [Token(Tok.ENDDO, "ENDDO")])
+        end_ln = self.lineno
+        self.skip_construct_name()
+        for index, start, end, step in reversed(controls):
+            loop = DoLoop(tok, index, start, end, block, step)
+            loop.lineno = do_ln
+            loop.end_ln = end_ln
+            loop.concurrent = True
+            block = BlockStatement(tok)
+            block.statements = [loop]
+        loop.mask = mask
         return loop
 
     def skip_construct_name(self) -> None:
@@ -1878,12 +1929,20 @@ class Parser:
         else:
             # statement is of form write(logunit) expr
             fmt = IOExpression(Token(Tok.ASTERISK, "*"))
+        # further control specifiers (iostat=..., iomsg=..., advance=...)
+        controls: list[Expression] = []
+        while self.peekTokenIs(Tok.COMMA):
+            self.next_token()
+            self.next_token()
+            controls.append(self.parse_expression(Precedence.LOWEST))
 
         self.expect_peek_and_advance(Tok.RPAREN)
         # parse expressions (none for namelist output)
         exprs: list[Expression] = []
         if self.peek_ends_statement():
-            return WriteStatement(tok, unit, fmt, exprs)
+            stmt = WriteStatement(tok, unit, fmt, exprs)
+            stmt.controls = controls
+            return stmt
         self.next_token()
         exprs.append(self.parse_expression(Precedence.LOWEST))
         while self.peekTokenIs(Tok.COMMA):
@@ -1891,7 +1950,9 @@ class Parser:
             self.next_token()
             exprs.append(self.parse_expression(Precedence.LOWEST))
 
-        return WriteStatement(tok, unit, fmt, exprs)
+        stmt = WriteStatement(tok, unit, fmt, exprs)
+        stmt.controls = controls
+        return stmt
 
     def parse_print_statement(self) -> PrintStatement:
         tok = self.cur_token
@@ -1948,6 +2009,25 @@ class Parser:
             end_expr=end_expr,
             step_expr=step,
         )
+
+    def parse_generic_binding(self) -> Statement:
+        """
+        `generic[, access] :: spec => proc[, proc ...]` in a type's contains part
+        (spec: a name, operator(...), assignment(=), read/write(formatted), ...).
+        Kept as a ProcedureStatement binding `spec` to the first procedure.
+        Upon function call, cur_token = 'GENERIC'
+        """
+        tok = self.cur_token
+        text: list[str] = []
+        while not (self.peekTokenIs(Tok.NEWLINE) or self.peekTokenIs(Tok.EOF)):
+            self.next_token()
+            text.append(self.cur_token.literal)
+        line = " ".join(text)
+        if "::" not in line or "=>" not in line:
+            self.fatal(msg=f"Couldn't parse generic binding @{self.lineno}: generic {line}")
+        spec, procs = line.split("::", 1)[1].split("=>", 1)
+        names = [n.strip() for n in procs.split(",") if n.strip()]
+        return ProcedureStatement(tok=tok, attr_spec=None, name=names[0], alias=spec.replace(" ", "").lower())
 
     @Trace.trace_decorator("parse_procedure_stmt")
     def parse_procedure_stmt(self) -> Statement:

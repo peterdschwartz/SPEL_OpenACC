@@ -109,6 +109,7 @@ All commands are subcommands of `spel`. Run `spel <command> --help` for the auth
 | [`spel run`](#spel-run) | Configure, build, and run a generated unit test, then validate it against ELM's data |
 | [`spel profile`](#spel-profile) | Build and run a unit test without outputs under Nsight Systems/Compute |
 | [`spel acc2omp`](#spel-acc2omp) | Translate modules' OpenACC directives to OpenMP (to run multithreaded with gfortran) |
+| [`spel compact`](#spel-compact) | Inventory flux fields for a compact subgrid layout, and rewrite a type's fields to use it |
 | [`spel diff`](#spel-diff) | Compare two netCDF files and report relative error |
 | [`spel export`](#spel-export) | Turn a pickled unit test into database CSVs |
 | [`spel config`](#spel-config) | Print the resolved E3SM/ELM source paths |
@@ -481,6 +482,22 @@ With `--case` and no module names, every analyzed module of the case with OpenAC
 loops is translated. Edits are located by content, so they apply to the case copies even
 though `spel create` shifted their lines. `spel create` regenerates the case without them.
 The analysis must include loop-nest information (rebuild an older cache with `spel analyze`).
+
+### `spel compact`
+
+Stores subgrid fields on the elements of their filter (contiguous per clump) instead of the
+whole `begp:endp` range. `inventory` traces one time step from `elm_drv` and reports, for every
+field the per-step `SetValues` zeroes, how each access indexes it, whether its value lives across
+steps (history, restart), and whether it can use the compact index directly, needs maps, or is
+blocked. `rewrite` gives the fields of one type that qualify compact storage in the E3SM sources
+(or writes the rewritten files to `-o DIR`, e.g. a case's `SourceMods/src.elm`). The design,
+rules and open items are in `spel/transforms/compact/DESIGN.md`.
+
+```bash
+spel compact inventory --verdict blocked -o inventory.json
+spel compact rewrite --type vegetation_carbon_flux --dry-run --diff
+spel compact rewrite --type vegetation_carbon_flux -o $CASE/SourceMods/src.elm
+```
 
 ### `spel diff`
 

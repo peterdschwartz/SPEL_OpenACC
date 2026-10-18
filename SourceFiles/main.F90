@@ -72,8 +72,11 @@ block
 end block
 
 call elm_init(nsets, dtime_mod, year_curr, bounds_proc, nclumps)
+! the time step of the inputs elm_init read (spel.scripts.io.time_scalars)
+!#TIME_SYNC_INIT
 
 !#INIT
+!#COMPACT_INIT
 
 declin = -0.4030289369547867
 
@@ -123,6 +126,7 @@ block
           call spel_prof_push('read_inputs')
           bounds_io = bounds_proc
           !#IO_READ
+          !#TIME_SYNC_STEP
           call spel_prof_pop()
 
           ! read_elmtypes leaves bounds_io at one set's bounds. The inputs
@@ -142,6 +146,9 @@ block
       ! The 'compute' range is the wall time of all clumps. The clump loop is
       ! elm_drv's; it is only active with several clumps, so that with one
       ! clump the routines' own OpenMP loops (spel acc2omp) are not nested.
+      ! compact layout (spel compact rewrite): the IO uses the full layout, the
+      ! routines the compact storage of the clumps' filters
+      !#COMPACT_BEFORE
       call spel_prof_push('compute')
       !$OMP PARALLEL DO PRIVATE (nc, bounds_clump) IF (nclumps > 1)
       do nc = 1, nclumps
@@ -151,6 +158,7 @@ block
       end do
       !$OMP END PARALLEL DO
       call spel_prof_pop()
+      !#COMPACT_AFTER
 
        if (.not. spel_profile) then
           call spel_prof_push('update_host')

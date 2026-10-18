@@ -115,6 +115,8 @@ class Access:
     via:    associate name used to reach path (None if accessed directly)
     context: "expr" | "assign" | "do" | "ptr-assign" | "allocate" | "deallocate"
              | "stat" | "errmsg" | "arg" | "nullify" | "read" | "iostat" | "iomsg" | "size"
+    subscripts: subscript expressions of the last component (x%y(i, j) -> (i, j));
+             empty if it has none
     """
 
     path: str
@@ -124,6 +126,29 @@ class Access:
     origin: Origin
     via: Optional[str] = None
     context: str = "expr"
+    subscripts: tuple = field(default=(), compare=False, repr=False)
+
+    @property
+    def subs(self) -> tuple[str, ...]:
+        """The subscripts as lower-case source text, spaces removed."""
+        return tuple(str(s).replace(" ", "").lower() for s in self.subscripts)
+
+
+@dataclass(frozen=True)
+class AssignEvent:
+    """
+    An assignment statement, recorded after its accesses.
+
+    lhs:   the Access writing the left-hand side
+    reads: the accesses of the right-hand side, in evaluation order (a
+           designator's subscripts come before the designator itself)
+    rhs:   the right-hand-side expression
+    """
+
+    ln: int
+    lhs: Access
+    reads: tuple[Access, ...]
+    rhs: Expression = field(compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -461,8 +486,14 @@ class _Walker:
             case ExpressionStatement():
                 self.walk_statement(stmt.classify(self.scope))
             case AssignmentStatement():
+                first = len(self.rec.events)
                 self.walk_expr(stmt.right, ln)
+                reads = tuple(
+                    e for e in self.rec.events[first:] if isinstance(e, Access)
+                )
                 self.walk_designator(stmt.left, "w", ln, context="assign")
+                lhs = self.rec.events[-1]
+                self.rec.events.append(AssignEvent(ln, lhs, reads, stmt.right))
             case PointerAssignment():
                 self.walk_pointer_assignment(stmt)
             case SubCallStatement():
@@ -474,6 +505,8 @@ class _Walker:
                 for e in (stmt.start, stmt.end, stmt.step):
                     if e is not None:
                         self.walk_expr(e, ln)
+                # do concurrent's mask, read each iteration (walked with the bounds)
+                mask = getattr(stmt, "mask", None)
                 bound_paths = frozenset(
                     e.path for e in self.rec.events[first:] if isinstance(e, Access)
                 )
@@ -494,6 +527,8 @@ class _Walker:
                 (parent.children if parent else self.rec.loop_nest).append(info)
                 self.loop_stack.append(info)
                 try:
+                    if mask is not None:
+                        self.walk_expr(mask, ln)
                     self.walk_block(stmt.body)
                 finally:
                     self.loop_stack.pop()
@@ -551,7 +586,7 @@ class _Walker:
                 if stmt.code is not None:
                     self.walk_expr(stmt.code, ln)
             case WriteStatement():
-                for e in (stmt.unit, stmt.fmt):
+                for e in (stmt.unit, stmt.fmt, *getattr(stmt, "controls", ())):
                     if e is not None:
                         self.walk_io_control(e, ln, is_read=False)
                 for e in stmt.exprs:
@@ -831,7 +866,10 @@ class _Walker:
         self, expr: Expression, status: str, ln: int, context: str = "expr"
     ) -> str:
         path, base, origin, via = self.resolve_designator(expr, ln)
-        self.rec.events.append(Access(path, base, status, ln, origin, via, context))
+        subscripts = tuple(flatten_designator(expr)[-1][1])
+        self.rec.events.append(
+            Access(path, base, status, ln, origin, via, context, subscripts)
+        )
         return path
 
 
