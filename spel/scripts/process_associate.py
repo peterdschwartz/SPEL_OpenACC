@@ -1,78 +1,112 @@
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
+from spel.scripts.fortran_parser.spel_ast import (
+    AssociateConstruct,
+    BlockStatement,
+    Expression,
+    FuncExpression,
+    Statement,
+)
+
 if TYPE_CHECKING:
-    from analyze_subroutines import Subroutine
+    from spel.scripts.analyze_subroutines import Subroutine
 
-import re
-import sys
 
-from spel.scripts.types import LineTuple
+def associate_constructs(block: BlockStatement | None) -> list[AssociateConstruct]:
+    """
+    Every associate construct in `block`, in source order, also those nested in
+    loops, if/select/where blocks and other associate constructs.
+    """
+    found: list[AssociateConstruct] = []
+    if block is None:
+        return found
+    for stmt in block.statements:
+        found.extend(_constructs_in(stmt))
+    return found
+
+
+def _constructs_in(stmt: Statement) -> list[AssociateConstruct]:
+    found: list[AssociateConstruct] = []
+    if isinstance(stmt, AssociateConstruct):
+        found.append(stmt)
+    if isinstance(stmt, BlockStatement):
+        return found + associate_constructs(stmt)
+    # blocks of the constructs the scope walker descends into (scope_walk.walk_statement)
+    for attr in ("body", "consequence"):
+        child = getattr(stmt, attr, None)
+        if isinstance(child, BlockStatement):
+            found.extend(associate_constructs(child))
+    else_ = getattr(stmt, "else_", None)
+    if else_ is not None:
+        found.extend(associate_constructs(getattr(else_, "alternative", None)))
+    for attr in ("else_ifs", "cases", "elsewheres", "branches"):
+        for part in getattr(stmt, attr, None) or []:
+            for inner in ("consequence", "body"):
+                child = getattr(part, inner, None)
+                if isinstance(child, BlockStatement):
+                    found.extend(associate_constructs(child))
+    return found
+
+
+_regex_remove_index = re.compile(r"\(.*\)")
+
+
+def selector_name(selector: Expression) -> str:
+    """
+    The variable a selector refers to: `this%hr` for `this%hr`, `filter_column`
+    for an array element or section such as `filter_column(fi:min(fi+n-1,num))`.
+    """
+    if isinstance(selector, FuncExpression):
+        selector = selector.function
+    return _regex_remove_index.sub("", str(selector)).strip().lower()
 
 
 def getAssociateClauseVars(sub: Subroutine, verbose=False):
     """
-    Funtion to extract the associated variables in a subroutine
+    Associate names of the subroutine (from its syntax tree) and the variables
+    they refer to, with the line of its first associate statement and of the
+    first line after it.
+
+    All associate constructs of the routine's own body count (not those of its
+    internal subprograms), including block-local ones nested in loops such as
+    `associate (idx => filter_column(fi:...))` in col_cf_setvalues. Their names
+    are merged; the scope walker (scope_walk.walk_associate) keeps each
+    construct's own frame for the access analysis.
     """
-    func_name = "getAssociateClauseVars::"
-
-    subroutine_name = sub.name
-    lines = sub.sub_lines
-
-    associate_vars = {}
+    associate_vars: dict[str, str] = {}
     associate_start = 0
     associate_end = 0
-    regex_associate = re.compile(r"\b(associate)\s*(?=\()")
-    matches: list[LineTuple] = [
-        line for line in filter(lambda x: regex_associate.search(x.line), lines)
-    ]
 
-    if len(matches) > 1:
-        print(f"{func_name}:: multiple associate clauses founds! {sub.name}")
-        print(matches)
-        sys.exit(1)
-    if not matches:
+    tree = sub.syntax_tree
+    constructs = associate_constructs(tree.body if tree is not None else None)
+    if not constructs:
         return associate_vars, associate_start, associate_end
 
-    if verbose:
-        sub.logger.info(f"associate matches {matches}")
-        sub.logger.info(
-            f"{func_name}::associate start {associate_start} {sub.cpp_startline}"
-        )
+    constructs.sort(key=lambda node: node.lineno)
+    for node in constructs:
+        for name, selector in node.associations.items():
+            name = name.lower()
+            target = selector_name(selector)
+            if associate_vars.get(name, target) != target:
+                sub.logger.warning(
+                    f"associate name {name} => {target} (line {node.lineno + 1}) "
+                    f"differs from an earlier {name} => {associate_vars[name]}; keeping it"
+                )
+                continue
+            associate_vars[name] = target
 
-    associate_line = matches[0]
-    associate_start = associate_line.ln
-
-    associate_end = next((l.ln for l in lines if l.ln > associate_start), None)
-    regex_str = re.compile(r"(?<=\()(.+)(?=\))")
-    associate_string = regex_str.search(associate_line.line).group(0)
-
-    if verbose:
-        sub.logger.info(f"{func_name}::{associate_string}")
-
-    regex_remove_index = re.compile(r"(\()(.+)(\))")
-    for pair in associate_string.split(","):
-        parsed = pair.split("=>")
-        # find_ex = the ptr name to find in routine
-        # repl_ex = the variable to replace it with
-        find_ex = parsed[0].strip()
-        repl_ex = parsed[1].strip()
-        repl_ex = regex_remove_index.sub("", repl_ex)
-        find_ex = find_ex.lower().strip()
-        repl_ex = repl_ex.lower().strip()
-        if find_ex in associate_vars:
-            print(
-                f"{func_name}::Error! Multiple associations for {find_ex} in {subroutine_name}"
-            )
-            sys.exit(1)
-        associate_vars[find_ex] = repl_ex
+    # the first associate statement ends the specification part (get_file_info)
+    associate_start = constructs[0].lineno
+    associate_end = next(
+        (lt.ln for lt in sub.sub_lines if lt.ln > associate_start), associate_start
+    )
 
     if verbose:
-        sub.logger.info(
-            f"{func_name}:: Found associate variables for {subroutine_name}"
-        )
-        for key in associate_vars:
-            sub.logger.info(f"{key} => {associate_vars[key]}")
+        sub.logger.info(f"associate variables of {sub.name}:")
+        for key, value in associate_vars.items():
+            sub.logger.info(f"  {key} => {value}")
 
     return associate_vars, associate_start, associate_end
