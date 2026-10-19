@@ -48,9 +48,26 @@ def test_find_directives():
     assert par.collapse() == 2
     assert par.var_list("private") == ["c", "k_vals"]
     assert par.reductions() == [("+", ["s1", "s2"])]
+
     assert ds[2].construct_args == "foo" and [c.name for c in ds[2].clauses] == ["seq"]
     assert ds[3].var_list("delete") == ["a", "b"]
     assert next_code_line(lines, par.end_ln) == 2
+
+
+def test_find_directives_comment_between_continuations():
+    # a commented-out entry of a clause list (LakeTemperatureMod) and a blank line
+    src = """
+      !$acc enter data create(&
+      !! ! $acc   beta(1:num_lakec), &
+      !$acc   a(1:n,1:m) ,&
+
+      !$acc   b(1:n))
+      x = 1
+"""
+    lines = src.split("\n")[1:]
+    ds = find_directives(lines)
+    assert [(d.start_ln, d.end_ln, d.construct) for d in ds] == [(0, 4, "enter data")]
+    assert ds[0].var_list("create") == ["a", "b"]
 
 
 def test_format_directive_wraps():

@@ -267,6 +267,8 @@ def find_directives(
     OpenACC directives starting on lines first_ln..last_ln (0-based, inclusive)
     of `lines`. A directive continues while its line ends with `&`;
     continuation lines start with `!$acc` (an optional leading `&` is dropped).
+    Blank and comment lines between continuation lines are skipped, as in
+    Fortran (e.g. a commented-out `!! !$acc ...` entry of a clause list).
     """
     last_ln = len(lines) - 1 if last_ln is None else last_ln
     out: list[AccDirective] = []
@@ -280,6 +282,11 @@ def find_directives(
         start = ln
         parts: list[str] = []
         while True:
+            if ln < len(lines) and ln > start and not SENTINEL_RE.match(lines[ln]):
+                stripped = lines[ln].strip()
+                if not stripped or stripped.startswith("!"):
+                    ln += 1
+                    continue
             if ln >= len(lines) or not (m := SENTINEL_RE.match(lines[ln])):
                 raise DirectiveError(f"expected a `!$acc` continuation on line {ln + 1}")
             line = lines[ln]

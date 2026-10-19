@@ -1035,6 +1035,25 @@ def get_delta_from_dim(dim, delta):
     return newdim
 
 
+# ELM sources compiled without OpenACC in nvfortran OpenACC builds, as in the ELM build
+# (case Depends.*.nvidia.cmake): with -acc, SnowSnicarMod gives wrong snow albedos even on
+# one multicore thread, with or without its directives. Their routines are called from host code.
+NOACC_FILES = ["SnowSnicarMod.F90", "SurfaceAlbedoMod.F90"]
+
+
+def noacc_block(files: list[str]) -> str:
+    """CMake lines adding -noacc to the NOACC_FILES among `files` (OpenACC builds only)."""
+    names = {f.split("/")[-1] for f in files}
+    present = [f for f in NOACC_FILES if f in names]
+    if not present:
+        return ""
+    return (
+        'if (ACC_MODE MATCHES "^(MULTICORE|GPU)$")\n'
+        f'        set_source_files_properties({" ".join(present)} PROPERTIES COMPILE_OPTIONS "-noacc")\n'
+        "    endif()"
+    )
+
+
 def generate_cmake(files: list[str], case_dir: Path):
     """
     Generates a CMakeLists.txt file for compiling unit-test
@@ -1132,6 +1151,7 @@ def generate_cmake(files: list[str], case_dir: Path):
 
 
     target_compile_definitions({exe_name} PRIVATE {" ".join(macros)})
+    {noacc_block(files)}
     if (NVTX AND CMAKE_Fortran_COMPILER_ID MATCHES "^(NVHPC|PGI)$")
         message(STATUS "NVTX ranges enabled (spel_profMod)")
         target_compile_definitions({exe_name} PRIVATE SPEL_NVTX)
