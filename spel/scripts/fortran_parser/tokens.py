@@ -39,6 +39,7 @@ class TokenTypes(Enum):
     SEMICOLON = ";"
     PERCENT = "%"
     MACRO = "#"
+    DIRECTIVE = "!$"  # an OpenACC/OpenMP directive line; literal = the whole directive
     DOUBLE_COLON = "::"
     ARRAY_INIT_START = "(/"
     ARRAY_INIT_END = "/)"

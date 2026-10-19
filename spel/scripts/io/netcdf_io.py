@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Mapping
 
 import spel.scripts.io.helper as hio
 from spel.scripts import logging_configs
+from spel.scripts.DerivedType import field_name
 from spel.scripts.config import spel_mods_dir
 from spel.scripts.DerivedType import DerivedType
 from spel.scripts.fortran_parser.boolen_expression import ConditionExpectation
@@ -158,11 +159,11 @@ def generate_elmtypes_io_netcdf(unit_test: FunctionalUnitTest) -> None:
         dtype = type_dict[type_name]
 
         for field_var in dtype.components.values():
-            if not field_var.active or field_var.pointer:
-                continue
+            if not field_var.active or field_var.pointer or field_var.type in type_dict:
+                continue  # a derived-type component is captured through its flattened fields
 
             new_var = field_var.copy()
-            new_var.name = f"{inst_var.name}%" f"{field_var.name.split('%')[-1]}"
+            new_var.name = f"{inst_var.name}%{field_name(field_var)}"
 
             dtype_vars[new_var.name] = new_var
 

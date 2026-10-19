@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from spel.scripts.DerivedType import DerivedType, get_component
+from spel.scripts.DerivedType import DerivedType, component_path, get_component
 from spel.scripts.fortran_modules import FortranModule
 from spel.scripts.fortran_parser.environment import Environment
 from spel.scripts.fortran_parser.scope_walk import SubroutineRecord, walk_subroutine
@@ -321,7 +321,7 @@ class Subroutine(object):
         """
         index_str = ""
         regex_paren = re.compile(r"\((.+)\)")  # for removing array of struct index
-        regex_dtype_var = re.compile(r"\w+(?:\(\w+\))?%\w+")
+        regex_dtype_var = re.compile(r"\w+(?:\(\w+\))?(?:%\w+)+")
         fileinfo = self.get_file_info()
         lines = [
             lt for lt in self.sub_lines if fileinfo.startln <= lt.ln <= fileinfo.endln
@@ -360,6 +360,12 @@ class Subroutine(object):
                 actual_inst = replace_associate_ptr(og_name)
                 actual_inst = sub_soa(actual_inst).strip()
                 if not is_arg_or_local(actual_inst):
+                    # inst%a%b: the longest component path (core%leaf), else inst%a as before
+                    dtype = instance_dict.get(actual_inst)
+                    parts = og_field.split("%")
+                    path = component_path(dtype.components, parts) if dtype else None
+                    og_field = path or parts[0]
+                    dtype_w_field = f"{og_name}%{og_field}"
                     dtype_var = get_component(instance_dict, actual_inst, og_field)
                     if dtype_var:
                         dtype_var.name = f"{actual_inst}%{og_field}"

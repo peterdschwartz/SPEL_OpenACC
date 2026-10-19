@@ -256,6 +256,10 @@ class Lexer:
                     self.read_position = m.end()
                 else:
                     tok = new_token(tokens.TokenTypes.MACRO, self.ch)
+            case "!":
+                # only directive lines reach the lexer with a `!` (keep_directives)
+                tok = new_token(tokens.TokenTypes.DIRECTIVE, self.input[self.position :].rstrip("\n"))
+                self.read_position = len(self.input) - 1  # resume at the newline
             case "[":
                 tok = new_token(tokens.TokenTypes.ARRAY_LBRACKET, self.ch)
             case "]":

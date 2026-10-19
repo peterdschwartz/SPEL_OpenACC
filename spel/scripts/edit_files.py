@@ -1415,8 +1415,9 @@ def process_for_unit_test(
         sub_dict[f"{initobj.mod_name}::{subname}"] = Subroutine(initobj)
     link_internal_subprograms(sub_dict)
 
+    all_types = {name: dtype for m in mod_dict.values() for name, dtype in m.defined_types.items()}
     for fort_mod in mod_dict.values():
-        fort_mod.find_allocations(sub_dict)
+        fort_mod.find_allocations(sub_dict, all_types)
 
     return ordered_mods
 

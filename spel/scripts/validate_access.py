@@ -59,6 +59,34 @@ def access_manifest(subroutines: Iterable) -> dict[str, str]:
     return {name: s.pop() if len(s) == 1 else "rw" for name, s in merged.items()}
 
 
+def expand_nested(access: dict, type_dict: dict, inst_types: dict) -> dict:
+    """
+    `inst%core` (a data-only component, passed whole to a routine) stands for its
+    flattened fields `inst%core%leaf` (resolve_nested): expand it, merging with what
+    is recorded for each field (r + w = rw). Other entries are kept as they are.
+    """
+    out = {}
+    for name, value in access.items():
+        inst, _, comp = name.partition("%")
+        dtype = type_dict.get(inst_types.get(inst, ""))
+        children = [k for k in dtype.components if k.startswith(f"{comp}%")] if dtype and comp else []
+        if not children:
+            out[name] = _merge_status(out.get(name), value)
+            continue
+        for k in children:
+            key = f"{inst}%{k}"
+            out[key] = _merge_status(out.get(key), value)
+    return out
+
+
+def _merge_status(old, new):
+    if old is None or old == new:
+        return new
+    if isinstance(new, str) and isinstance(old, str):
+        return "rw"
+    return old  # guards: keep the first
+
+
 def merge_guards(
     per_sub: Iterable[tuple[dict[str, Any], dict[str, ConditionExpectation]]],
 ) -> dict[str, ConditionExpectation]:

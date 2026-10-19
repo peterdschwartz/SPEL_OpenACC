@@ -459,7 +459,17 @@ def component_symbols(fut: FunctionalUnitTest) -> ComponentSymbols:
     for name, dtype in getattr(fut, "type_dict", {}).items():
         if not dtype.active or not dtype.declaration:
             continue
-        comps = {c: v.ln for c, v in dtype.components.items() if v.active and v.ln is not None}
+        comps = {}
+        for c, v in dtype.components.items():
+            if not v.active or v.ln is None:
+                continue
+            if getattr(v, "nested", False):
+                # core%leaf is declared in core's type: make `core` accessible here
+                holder = dtype.components.get(c.split("%")[0])
+                if holder is not None and holder.ln is not None:
+                    comps[holder.name] = holder.ln
+                continue
+            comps[c] = v.ln
         if comps:
             symbols.setdefault(dtype.declaration, {})[name] = comps
     return symbols

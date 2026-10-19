@@ -1106,6 +1106,41 @@ class ReturnStatement(Statement):
         return {"Node": "ReturnStatement"}
 
 
+class DirectiveStatement(Statement):
+    """
+    An OpenACC/OpenMP directive (`!$acc parallel loop ...`), kept only when the
+    parser is asked to (keep_directives); `text` is the whole directive, lowercase.
+    """
+
+    def __init__(self, tok: Token):
+        self.token = tok
+        self.text: str = tok.literal
+
+    @property
+    def sentinel(self) -> str:
+        return self.text.split()[0]
+
+    @property
+    def construct(self) -> str:
+        words = self.text.split()
+        return words[1] if len(words) > 1 else ""
+
+    def statement_node(self) -> None:
+        pass
+
+    def token_literal(self) -> str:
+        return self.token.literal
+
+    def __str__(self) -> str:
+        return self.text
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, DirectiveStatement) and self.text == other.text
+
+    def to_dict(self):
+        return {"Node": "DirectiveStatement", "text": self.text}
+
+
 class StopStatement(Statement):
     """[error] stop [stop-code]"""
 
@@ -1203,6 +1238,81 @@ class IntrinsicStatement(Statement):
 
     def to_dict(self):
         return {"Node": "IntrinsicStatement", "Names": self.names}
+
+
+class AccessStatement(Statement):
+    """public | private [[::] access-id-list]; `names` empty for the default access"""
+
+    def __init__(self, tok: Token, access: str, names: list[str]):
+        self.token = tok
+        self.access: str = access
+        self.names: list[str] = names
+
+    def statement_node(self) -> None:
+        pass
+
+    def token_literal(self) -> str:
+        return self.token.literal
+
+    def __str__(self) -> str:
+        return f"{self.access} :: {', '.join(self.names)}" if self.names else self.access
+
+    def to_dict(self):
+        return {"Node": "AccessStatement", "Access": self.access, "Names": self.names}
+
+
+class SaveStatement(Statement):
+    """save [[::] saved-entity-list]"""
+
+    def __init__(self, tok: Token, names: list[str]):
+        self.token = tok
+        self.names: list[str] = names
+
+    def statement_node(self) -> None:
+        pass
+
+    def token_literal(self) -> str:
+        return self.token.literal
+
+    def __str__(self) -> str:
+        return f"save :: {', '.join(self.names)}" if self.names else "save"
+
+    def to_dict(self):
+        return {"Node": "SaveStatement", "Names": self.names}
+
+
+class ModuleConstruct(Statement):
+    """
+    module name / specification part / [contains / subprograms] / end module.
+    `contains_ln` is None without a contains; lineno and end_ln are the
+    module and end module lines.
+    """
+
+    def __init__(self, tok: Token, name: str, spec: "BlockStatement", subprograms: list, contains_ln: Optional[int]):
+        self.token = tok
+        self.name: str = name
+        self.spec = spec
+        self.subprograms: list = subprograms
+        self.contains_ln: Optional[int] = contains_ln
+        self.end_ln: int = -1
+
+    def statement_node(self) -> None:
+        pass
+
+    def token_literal(self) -> str:
+        return self.token.literal
+
+    def __str__(self) -> str:
+        subs = "\n".join(str(s) for s in self.subprograms)
+        return f"module {self.name}\n{self.spec}\ncontains\n{subs}\nend module {self.name}"
+
+    def to_dict(self):
+        return {
+            "Node": "ModuleConstruct",
+            "Name": self.name,
+            "Spec": [s.to_dict() for s in self.spec.statements if hasattr(s, "to_dict")],
+            "Subprograms": [s.to_dict() for s in self.subprograms if hasattr(s, "to_dict")],
+        }
 
 
 class DataImpliedDo(Expression):

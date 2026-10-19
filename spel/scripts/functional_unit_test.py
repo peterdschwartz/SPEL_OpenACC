@@ -2104,7 +2104,9 @@ def create_type_sub(
         if active:
             dim_string = ""
             field_name = (
-                member_var.name.split("%")[1]
+                member_var.name
+                if getattr(member_var, "nested", False)
+                else member_var.name.split("%")[1]
                 if "%" in member_var.name
                 else member_var.name
             )

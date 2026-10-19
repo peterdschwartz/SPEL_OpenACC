@@ -4,7 +4,7 @@ from pprint import pprint
 from typing import NamedTuple
 
 from spel.scripts.analyze_subroutines import Subroutine
-from spel.scripts.DerivedType import DerivedType
+from spel.scripts.DerivedType import DerivedType, component_path
 from spel.scripts.types import ReadWrite
 from spel.scripts.utilityFunctions import Variable
 
@@ -58,13 +58,29 @@ def set_active_variables(
         * dtype_info_list : list for saving to file (redundant?)
     """
     regex_paren = re.compile(r"\((.+)\)")
-    # Temporary fix
-    variable_list = {key : rw for key, rw in variable_list.items() if len(key.split("%") )<= 2}
     variable_list = {key: rw for key, rw in variable_list.items() if type_lookup.get(key.split("%")[0])}
-
-    instance_member_vars = [var for var in variable_list if "%" in var]
+    # inst%a%b: a flattened component (core%leaf, resolve_nested), or a whole data-only
+    # component (this%core passed on) = all its flattened fields; other nested paths
+    # (a dribbler's) are not captured, as before
+    resolved = {}
+    for key in variable_list:
+        parts = key.split("%")
+        if len(parts) <= 2 and not (len(parts) == 2 and _flattened(type_dict, type_lookup, parts)):
+            resolved[key] = key
+            continue
+        comps = type_dict[type_lookup[parts[0]]].components
+        path = component_path(comps, parts[1:])
+        if path is None:
+            continue
+        children = [k for k in comps if k.startswith(f"{path}%")]
+        if children:
+            for k in children:
+                resolved[f"{parts[0]}%{k}"] = key
+        elif "%" in path:
+            resolved[f"{parts[0]}%{path}"] = key
+    instance_member_vars = [var for var in resolved if "%" in var]
     for var in instance_member_vars:
-        dtype, component = var.split("%")
+        dtype, component = var.split("%", 1)
         dtype = regex_paren.sub("", dtype)
         if "bounds" in dtype or "clumpfilter" in dtype:
             continue
@@ -76,7 +92,9 @@ def set_active_variables(
         for field_var in type_dict[type_name].components.values():
             active = field_var.active
 
-            if "%" in field_var.name:
+            if getattr(field_var, "nested", False):
+                match = bool(field_var.name == component)
+            elif "%" in field_var.name:
                 match = bool(field_var.name == var)
             else:
                 match = bool(field_var.name == component)
@@ -100,6 +118,12 @@ def set_active_variables(
                 inst.active = True
 
     return None
+
+
+def _flattened(type_dict, type_lookup, parts) -> bool:
+    """inst%a where a is a data-only component with flattened fields (inst%core)."""
+    comps = type_dict[type_lookup[parts[0]]].components
+    return any(k.startswith(f"{parts[1]}%") for k in comps)
 
 
 def check_inst_active_consistency(type_dict: dict[str, DerivedType]):

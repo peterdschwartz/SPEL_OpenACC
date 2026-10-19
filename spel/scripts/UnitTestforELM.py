@@ -16,7 +16,7 @@ from spel.scripts.config import (
     spel_output_dir,
     unittests_dir,
 )
-from spel.scripts.DerivedType import DerivedType
+from spel.scripts.DerivedType import DerivedType, resolve_inheritance, resolve_nested
 from spel.scripts.fortran_modules import (
     DECLARATION_ONLY_MODULES,
     FortranModule,
@@ -49,6 +49,7 @@ from spel.scripts.types import ReadWrite, UnitTestMode
 from spel.scripts.utilityFunctions import Variable
 from spel.scripts.validate_access import (
     access_manifest,
+    expand_nested,
     merge_guards,
     write_access_manifest,
 )
@@ -146,14 +147,28 @@ def select_subroutines(
     return selected
 
 
-def build_type_dict(mod_dict: ModDict) -> TypeDict:
+def build_type_dict(mod_dict: ModDict, sub_dict: dict = None) -> TypeDict:
     type_dict: TypeDict = {}
     for mod in mod_dict.values():
         for utype, dtype in mod.defined_types.items():
             type_dict[utype] = dtype
+    resolve_inheritance(type_dict)
+    resolve_nested(type_dict)
 
+    # component bounds from the modules' allocate statements (parse trees, allocations.py),
+    # now also for the flattened nested paths (core%leaf)
+    from spel.scripts.allocations import apply_allocations, scan_module
+
+    for mod in mod_dict.values():
+        allocs = getattr(mod, "allocations", None)
+        ptrs = getattr(mod, "pointer_inits", [])
+        if allocs is None:
+            allocs, ptrs = scan_module(mod, sub_dict or {}, type_dict) if sub_dict else ([], [])
+        apply_allocations(type_dict, allocs, ptrs)
     for dtype in type_dict.values():
-        dtype.get_allocation_bounds(mod_dict)
+        for var in dtype.components.values():
+            if not var.bounds and var.dim > 0:
+                var.bounds = var.generate_dim_names()
     intrinsic_types = {"real", "integer", "character", "logical", "complex"}
     for mod in mod_dict.values():
         for var in mod.global_vars.values():
@@ -204,7 +219,7 @@ def analyze_unit_test(
     unit_test.subroutine_dict = main_sub_dict
     unit_test.module_dict = mod_dict
     unit_test.ordered_mods = [m for m in ordered_mods if m not in DECLARATION_ONLY_MODULES]
-    unit_test.type_dict = build_type_dict(mod_dict)
+    unit_test.type_dict = build_type_dict(mod_dict, main_sub_dict)
     if roots_from is None:
         unit_test.primary_subroutines = select_subroutines(
             main_sub_dict, sub_name_list, logger
@@ -391,13 +406,20 @@ def finalize_unit_test(
 
     logger.info("Finished -- Pickling results")
 
+    inst_types = unit_test.instance_to_type_map()
     write_access_manifest(
         case_dir,
         list(unit_test.primary_subroutines),
-        access_manifest(unit_test.primary_subroutines.values()),
-        merge_guards(
-            (sub.elmtype_access_summary, nml_guards(sub))
-            for sub in unit_test.primary_subroutines.values()
+        expand_nested(
+            access_manifest(unit_test.primary_subroutines.values()), unit_test.type_dict, inst_types
+        ),
+        expand_nested(
+            merge_guards(
+                (sub.elmtype_access_summary, nml_guards(sub))
+                for sub in unit_test.primary_subroutines.values()
+            ),
+            unit_test.type_dict,
+            inst_types,
         ),
     )
     pickle_unit_test(unit_test)

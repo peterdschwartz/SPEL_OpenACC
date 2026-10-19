@@ -127,11 +127,14 @@ def _keyword_args(call: SubCallStatement) -> dict[str, object]:
     return out
 
 
-def parse_routine(filepath: Path, startline: int, endline: int):
+def parse_routine(
+    filepath: Path, startline: int, endline: int, keep_directives: bool = False, keep_string_case: bool = False
+):
     """The routine's SubroutineDefinitionConstruct, parsed from the original file."""
     src = Path(filepath).read_text(errors="replace").split("\n")
     lines = [LineTuple(line=src[i], ln=i) for i in range(startline, endline + 1)]
-    return Parser(lines=lines).parse_program().statements[0]
+    parser = Parser(lines=lines, keep_directives=keep_directives, keep_string_case=keep_string_case)
+    return parser.parse_program().statements[0]
 
 
 def registrations(tree) -> list[Registration]:

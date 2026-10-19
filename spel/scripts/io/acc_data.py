@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import spel.scripts.io.helper as hio
+from spel.scripts.DerivedType import field_name
 from spel.scripts.io.netcdf_io import guard_fortran_lines
 
 if TYPE_CHECKING:
@@ -52,9 +53,9 @@ def _members(unit_test: FunctionalUnitTest):
         dtype = type_dict[instance_to_type[inst_name]]
         fields = []
         for field_var in dtype.components.values():
-            if not field_var.active or field_var.pointer:
+            if not field_var.active or field_var.pointer or field_var.type in type_dict:
                 continue
-            fields.append((field_var.name.split("%")[-1], field_var))
+            fields.append((field_name(field_var), field_var))
         per_inst[inst_name] = sorted(fields, key=lambda t: t[0])
     return active_instances, per_inst
 

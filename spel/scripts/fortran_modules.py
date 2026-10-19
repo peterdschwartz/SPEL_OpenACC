@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import bisect
 import re
 import subprocess as sp
 import sys
-from collections import namedtuple
 from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -356,67 +354,17 @@ class FortranModule:
 
         return sorted_dict
 
-    def find_allocations(self, sub_dict: dict[str, Subroutine]):
+    def find_allocations(self, sub_dict: dict[str, Subroutine], types: Optional[dict] = None):
+        """
+        Bounds and pointer targets of derived-type components allocated in this module's
+        routines, from their parse trees (allocations.py). `types`: every known type, so
+        an allocation here of another module's type (`this%core%x`) reaches it too.
+        """
+        from spel.scripts.allocations import apply_allocations, scan_module
 
-        regex_alloc = re.compile(r"^(allocate\b)")
-        fline_list = self.module_lines
-        alloc_lines = [
-            line for line in filter(lambda x: regex_alloc.search(x.line), fline_list)
-        ]
-
-        mod_subs = [sub_dict[sub_id] for sub_id in self.subroutines]
-        Interval = namedtuple("Interval", "tag, xi, xf")
-        intervals: list[Interval] = [
-            Interval(tag=sub.id, xi=sub.startline, xf=sub.endline) for sub in mod_subs
-        ]
-        intervals.sort(key=lambda x: x.xi)
-        starts = [x.xi for x in intervals]
-
-        def get_init_sub(ln: int) -> Optional[str]:
-            idx = bisect.bisect_right(starts, ln) - 1
-            if idx >= 0:
-                dx = intervals[idx]
-                if dx.xi <= ln <= dx.xf:
-                    return dx.tag
-            return None
-
-        for dtype in self.defined_types.values():
-            vars = [
-                rf"%{field.name}"
-                for field in dtype.components.values()
-                if field.dim > 0
-            ]
-            # Find Allocations
-            if not vars:
-                continue
-            var_str = "|".join(vars)
-            regex_var = re.compile(rf"\b({var_str})\b")
-            var_lines = [
-                line for line in filter(lambda x: regex_var.search(x.line), alloc_lines)
-            ]
-            for lpair in var_lines:
-                line = lpair.line.strip()
-                regex_var_and_bounds = re.compile(rf"({var_str})\s*(\(.+?\))")
-                for match in regex_var_and_bounds.finditer(line):
-                    varname = match.group(1).lstrip("%")
-                    bounds = match.group(2)
-                    dtype.components[varname].bounds = bounds[1:-1]
-                    dtype.init_sub_name = get_init_sub(lpair.ln)
-
-            # Find potential targets for pointers
-            regex_ptr_init = re.compile(rf"({var_str})\b\s*(=>)(.+)")
-            var_lines = [
-                line
-                for line in filter(lambda x: regex_ptr_init.search(x.line), fline_list)
-            ]
-            for lpair in var_lines:
-                match_ptrinit = regex_ptr_init.search(lpair.line)
-                target = match_ptrinit.groups()[2].strip()
-                varname = match_ptrinit.groups()[0].strip().replace("%", "")
-                if target not in dtype.components[varname].pointer:
-                    dtype.components[varname].pointer.append(target)
-                    dtype.init_sub_name = get_init_sub(lpair.ln)
-
+        types = types if types is not None else self.defined_types
+        self.allocations, self.pointer_inits = scan_module(self, sub_dict, types)
+        apply_allocations(types, self.allocations, self.pointer_inits)
         return
 
 

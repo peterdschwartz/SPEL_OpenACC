@@ -619,8 +619,46 @@ def split_semicolon_lines(lines):
             yield stripped, ln
 
 
+DIRECTIVE_SENTINELS = ("!$acc", "!$omp")
+
+
+def directive_sentinel(line: str) -> str:
+    """The sentinel (`!$acc`, `!$omp`) a directive line starts with, else ''."""
+    head = line.lstrip()[:5].lower()
+    return head if head in DIRECTIVE_SENTINELS else ""
+
+
+def lower_code(text: str) -> str:
+    """`text` lowercased outside string literals (Fortran is case-insensitive, strings aren't)."""
+    out, quote = [], None
+    for ch in text:
+        if quote:
+            if ch == quote:
+                quote = None
+            out.append(ch)
+        elif ch in "'\"":
+            quote = ch
+            out.append(ch)
+        else:
+            out.append(ch.lower())
+    return "".join(out)
+
+
 class LogicalLineIterator:
-    def __init__(self, lines: list[LineTuple], log_name: str = ""):
+    def __init__(
+        self,
+        lines: list[LineTuple],
+        log_name: str = "",
+        keep_directives: bool = False,
+        keep_string_case: bool = False,
+    ):
+        """
+        keep_directives: return OpenACC/OpenMP directive lines (`!$acc ...`, `!$omp ...`,
+        continuations joined) as logical lines instead of dropping them as comments.
+        keep_string_case: lowercase only outside string literals ('LEAFN' stays 'LEAFN').
+        """
+        self.keep_directives = keep_directives
+        self._lower = lower_code if keep_string_case else str.lower
         self.lines = lines
         self.i: int = 0
         self.start_index: int = 0
@@ -712,6 +750,9 @@ class LogicalLineIterator:
         self.start_index = self.i
 
         cur_ln = self.lines[self.i].ln
+        if self.keep_directives and (sentinel := directive_sentinel(self.lines[self.i].line)):
+            self.curr_line = LineTuple(line=self._directive(sentinel), ln=cur_ln)
+            return self.curr_line
         full_line = self.strip_comment()
         full_line = full_line.rstrip("\n").strip()
         num_continuations: int = 1
@@ -744,10 +785,26 @@ class LogicalLineIterator:
             return self.curr_line
 
         # first part is returned now; remaining queued for subsequent __next__ calls
-        first_part = parts[0].lower()
-        self._pending_parts = [LineTuple(line=p.lower(), ln=cur_ln) for p in parts[1:]]
+        first_part = self._lower(parts[0])
+        self._pending_parts = [LineTuple(line=self._lower(p), ln=cur_ln) for p in parts[1:]]
         self.curr_line = LineTuple(line=first_part, ln=cur_ln)
         return self.curr_line
+
+    def _directive(self, sentinel: str) -> str:
+        """The directive starting at self.i, continuation lines joined; advances past it."""
+        parts = []
+        while True:
+            text = self.lines[self.i].line.lstrip()[len(sentinel):].strip()
+            self.i += 1
+            if text.startswith("&"):
+                text = text[1:].strip()
+            if not text.endswith("&") or self.i >= len(self.lines):
+                parts.append(text)
+                break
+            parts.append(text[:-1].strip())
+            while self.i < len(self.lines) and not directive_sentinel(self.lines[self.i].line):
+                self.i += 1  # comment lines between continuation lines
+        return self._lower(f"{sentinel} {' '.join(parts)}")
 
     def next_n(self, n):
         """Get next n full logical lines."""

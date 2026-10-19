@@ -9,6 +9,7 @@ from spel.scripts.fortran_parser.spel_ast import (
     ArrayInit,
     AssociateConstruct,
     AttributeSpec,
+    DirectiveStatement,
     BlockStatement,
     BoundsExpression,
     CaseBlock,
@@ -24,6 +25,7 @@ from spel.scripts.fortran_parser.spel_ast import (
     WhereConstruct,
     Else,
     ElseIf,
+    AccessStatement,
     EntityDecl,
     ExitStatement,
     Expression,
@@ -48,6 +50,7 @@ from spel.scripts.fortran_parser.spel_ast import (
     MacroBranch,
     MacroDefine,
     MacroIf,
+    ModuleConstruct,
     NameListStatement,
     NullifyStatement,
     PrefixExpression,
@@ -56,6 +59,7 @@ from spel.scripts.fortran_parser.spel_ast import (
     Program,
     ReadStatement,
     ReturnStatement,
+    SaveStatement,
     SelectCaseConstruct,
     Statement,
     StopStatement,
@@ -128,11 +132,15 @@ class Parser:
         lex: Optional[lexer.Lexer] = None,
         logger: str = "Parser",
         lines: list[LineTuple] = None,
+        keep_directives: bool = False,
+        keep_string_case: bool = False,
     ):
         if lex:
             self.lexer: lexer.Lexer = lex
         elif lines:
-            line_it = LogicalLineIterator(lines=lines)
+            line_it = LogicalLineIterator(
+                lines=lines, keep_directives=keep_directives, keep_string_case=keep_string_case
+            )
             self.lexer = lexer.Lexer(line_it)
         else:
             sys.exit("Error - Need either lexer or lines to create Parser")
@@ -504,6 +512,8 @@ class Parser:
                 stmt = self.parse_write_statement()
             case Tok.MACRO:
                 stmt = self.parse_macro()
+            case Tok.DIRECTIVE:
+                stmt = DirectiveStatement(self.cur_token)
             case Tok.M_IF:
                 stmt = self.parse_cpp_if()
             case Tok.TYPE:
@@ -554,6 +564,10 @@ class Parser:
                 stmt = ContinueStatement(self.cur_token)
             case Tok.IDENT if self.is_intrinsic_statement():
                 stmt = self.parse_intrinsic_statement()
+            case Tok.IDENT if self.is_module_statement():
+                stmt = self.parse_module()
+            case Tok.IDENT if self.is_access_or_save_statement():
+                stmt = self.parse_access_or_save_statement()
             case Tok.IDENT if self.is_data_statement():
                 stmt = self.parse_data_statement()
             case Tok.IDENT if stmt_label is not None and self.is_format_statement():
@@ -917,6 +931,93 @@ class Parser:
             self.next_token()
         return IntrinsicStatement(tok, names)
 
+    def is_module_statement(self) -> bool:
+        """`module name` (not `module procedure`/`module subroutine`: `module` is not reserved)."""
+        return (
+            self.cur_token.literal.lower() == "module"
+            and self.peekTokenIs(Tok.IDENT)
+            and self.peek_token.literal.lower() not in ("procedure", "subroutine", "function")
+        )
+
+    def is_end_module(self) -> bool:
+        lit = self.cur_token.literal.lower()
+        return lit == "endmodule" or (lit == "end" and self.peek_token.literal.lower() == "module")
+
+    @Trace.trace_decorator("parse_module")
+    def parse_module(self) -> ModuleConstruct:
+        """
+        Enter: cur_token is `module`
+        Exit:  cur_token is the last token of the end module statement
+        """
+        tok = self.cur_token
+        start_ln = self.lineno
+        self.next_token()
+        name = self.cur_token.literal
+        self.next_token()
+        spec = self.parse_block_statement(tok, [Token(Tok.CONTAINS, "contains")], stop=self.is_end_module)
+        contains_ln = None
+        subprograms: list = []
+        if self.curTokenIs(Tok.CONTAINS):
+            contains_ln = self.lineno
+            self.next_token()
+            body = self.parse_block_statement(Token(Tok.CONTAINS, "contains"), [], stop=self.is_end_module)
+            subprograms = body.statements
+        if not self.is_end_module():
+            self.fatal(f"Missing END MODULE for module {name} (started @{start_ln})")
+        end_ln = self.lineno
+        if self.cur_token.literal.lower() == "end":
+            self.next_token()  # `module`
+        if self.peekTokenIs(Tok.IDENT):
+            self.next_token()
+            if self.cur_token.literal.lower() != name.lower():
+                self.fatal(f"END MODULE name '{self.cur_token.literal}' does not match '{name}'")
+        stmt = ModuleConstruct(tok, name, spec, subprograms, contains_ln)
+        stmt.end_ln = end_ln
+        return stmt
+
+    def is_access_or_save_statement(self) -> bool:
+        """public/private/save statements; none is reserved (`save = 1` is an assignment)."""
+        if self.cur_token.literal.lower() not in ("public", "private", "save"):
+            return False
+        return (
+            self.peek_ends_statement()
+            or self.peekTokenIs(Tok.DOUBLE_COLON)
+            or self.peekTokenIs(Tok.IDENT)
+            or (self.cur_token.literal.lower() == "save" and self.peekTokenIs(Tok.SLASH))
+        )
+
+    @Trace.trace_decorator("parse_access")
+    def parse_access_or_save_statement(self) -> Statement:
+        """
+        public | private | save [[::] list]. Generic specs (`assignment(=)`,
+        `operator(.x.)`) and common blocks (`/blk/`) are kept as their text.
+        Exit: cur_token is the last token of the statement
+        """
+        tok = self.cur_token
+        kind = tok.literal.lower()
+        names: list[str] = []
+        if self.peekTokenIs(Tok.DOUBLE_COLON):
+            self.next_token()
+        while not self.peek_ends_statement():
+            self.next_token()
+            if self.curTokenIs(Tok.COMMA):
+                continue
+            text = self.cur_token.literal
+            if self.peekTokenIs(Tok.LPAREN) or self.curTokenIs(Tok.SLASH):
+                close = Tok.RPAREN if self.peekTokenIs(Tok.LPAREN) else Tok.SLASH
+                if close is Tok.RPAREN:
+                    self.next_token()
+                    text += "("
+                while not self.peekTokenIs(close) and not self.peek_ends_statement():
+                    self.next_token()
+                    text += self.cur_token.literal
+                self.next_token()
+                text += self.cur_token.literal
+            names.append(text)
+        if kind == "save":
+            return SaveStatement(tok, names)
+        return AccessStatement(tok, kind, names)
+
     def is_data_statement(self) -> bool:
         """
         `data` is not reserved: `data x /1/` and `data (a(i),i=1,n) /.../` are
@@ -1172,15 +1273,18 @@ class Parser:
                 tok=Token(Tok.CONTAINS, "contains"),
                 terminators=[Token(Tok.ENDTYPE, "end type")],
             )
+        end_ln = self.lineno
         self.next_token()  # consume end type
 
-        return TypeDef(
+        stmt = TypeDef(
             tok=tok,
             name=type_name,
             attr_spec=attrs,
             body=body,
             methods=methods,
         )
+        stmt.end_ln = end_ln
+        return stmt
 
     @Trace.trace_decorator("parse_var_decl")
     def parse_var_decl(self) -> Statement:

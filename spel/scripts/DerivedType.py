@@ -78,6 +78,8 @@ class DerivedType(object):
         self.procedures: dict[Alias, Proc] = {}
 
         self.init_sub_ptr: Optional[Subroutine] = None
+        # extends(parent): resolve_inheritance adds the parent's components and bindings
+        self.parent: Optional[str] = None
 
     def __repr__(self):
         return f"DerivedType({self.type_name})"
@@ -190,53 +192,8 @@ class DerivedType(object):
 
         return None
 
-    def get_allocation_bounds(self, mod_dict: dict[str, FortranModule]):
-        """
-        Attempt to find any allocation statements for components of a derived type
-        and set the bounds information, accordingly
-        """
-        if not self.components:
-            return
 
-        init_mod = mod_dict[f"{self.declaration}"]
-        lines = init_mod.module_lines
-
-        alloc_lines = [lt for lt in lines if re.match(r"^(allocate\b)", lt.line)]
-        field_list = [f for f in self.components.keys()]
-        fields_str = "|".join(field_list)
-
-        regex_field = re.compile(rf"\b({fields_str})\b")
-        var_lines = [
-            line for line in filter(lambda x: regex_field.search(x.line), alloc_lines)
-        ]
-
-        regex_var_and_bounds = re.compile(rf"%\s*({fields_str})\s*(\(.+?\))")
-        for lpair in var_lines:
-            line = lpair.line.split(";")[0].strip()
-            for match in regex_var_and_bounds.finditer(line):
-                varname = match.group(1)
-                bounds = match.group(2)[1:-1]
-                # other types in the module may allocate a same-named field
-                if rank(bounds) == self.components[varname].dim:
-                    self.components[varname].bounds = bounds
-
-        for var in self.components.values():
-            if not var.bounds and var.dim > 0:
-                var.bounds = var.generate_dim_names()
-        return
-
-
-def rank(bounds: str) -> int:
-    """Number of top-level comma separated dimensions in `bounds`."""
-    depth, n = 0, 1
-    for ch in bounds:
-        if ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth -= 1
-        elif ch == "," and depth == 0:
-            n += 1
-    return n
+from spel.scripts.allocations import rank  # noqa: E402,F401  (re-exported)
 
 
 def get_component(
@@ -251,6 +208,9 @@ def get_component(
     if not dtype:
         print(f"Error: {inst_name} not known. {field}")
         return None
+    if "%" in field:
+        # inst%core%leaf: the longest component path, else its first component
+        field = component_path(dtype.components, field.split("%")) or field.split("%")[0]
     if field in dtype.components:
         var: Variable = dtype.components[field].copy()
         return var
@@ -328,6 +288,88 @@ def get_fields(typedef: TypeDef) -> dict[str, Variable]:
     return components
 
 
+def type_parent(typedef: TypeDef) -> Optional[str]:
+    """The `extends(parent)` attribute of a type definition, if any."""
+    for attr in typedef.attrs.attrs if typedef.attrs else []:
+        m = re.fullmatch(r"\s*extends\s*\(\s*(\w+)\s*\)\s*", str(attr), re.IGNORECASE)
+        if m:
+            return m.group(1).lower()
+    return None
+
+
+def resolve_inheritance(type_dict: dict[str, "DerivedType"]) -> None:
+    """
+    Give each extended type its parent's components (copies: each type finds its
+    own allocation bounds) and type-bound procedures, its own taking precedence.
+    """
+    done: set[str] = set()
+
+    def resolve(dtype: DerivedType, seen: tuple[str, ...] = ()) -> None:
+        if dtype.type_name in done or dtype.parent is None:
+            done.add(dtype.type_name)
+            return
+        parent = type_dict.get(dtype.parent)
+        assert parent is not None, f"{dtype.type_name} extends unknown type {dtype.parent}"
+        assert dtype.type_name not in seen, f"cyclic extends: {seen}"
+        resolve(parent, seen + (dtype.type_name,))
+        inherited = {n: v.copy() for n, v in parent.components.items()}
+        dtype.components = {**inherited, **dtype.components}
+        dtype.procedures = {**parent.procedures, **dtype.procedures}
+        done.add(dtype.type_name)
+
+    for dtype in list(type_dict.values()):
+        resolve(dtype)
+
+
+def resolve_nested(type_dict: dict[str, "DerivedType"]) -> None:
+    """
+    Give each type the components of its data-only derived-type components
+    (`type(base) :: core`, a type without type-bound procedures) as
+    ``core%leaf`` entries (copies), so `inst%core%leaf` resolves like any
+    `inst%field`. The component itself (``core``) stays. Types with bindings
+    (e.g. annual_flux_dribbler_type) are left alone: their components are
+    reached through their procedures.
+    """
+    done: set[str] = set()
+
+    def resolve(dtype: DerivedType, seen: tuple[str, ...] = ()) -> None:
+        if dtype.type_name in done:
+            return
+        assert dtype.type_name not in seen, f"recursive component types: {seen}"
+        nested = {}
+        for name, comp in dtype.components.items():
+            inner = type_dict.get(comp.type)
+            if inner is None or inner.procedures or comp.pointer or comp.ptrscalar or comp.dim > 0:
+                continue
+            resolve(inner, seen + (dtype.type_name,))
+            for iname, ivar in inner.components.items():
+                v = ivar.copy()
+                v.name = f"{name}%{iname}"
+                v.nested = True  # a path (core%leaf), not inst%field
+                nested[v.name] = v
+        dtype.components.update(nested)
+        done.add(dtype.type_name)
+
+    for dtype in list(type_dict.values()):
+        resolve(dtype)
+
+
+def field_name(var) -> str:
+    """A component's name as written after `inst%`: its path for flattened components (core%leaf)."""
+    if getattr(var, "nested", False):
+        return var.name
+    return var.name.split("%")[-1]
+
+
+def component_path(components: dict, parts: list[str]) -> Optional[str]:
+    """The longest `a%b%...` prefix of `parts` that is a component (``core%leaf``), else None."""
+    for k in range(len(parts), 0, -1):
+        path = "%".join(parts[:k])
+        if path in components:
+            return path
+    return None
+
+
 def get_type_procedures(modname: str, typedef: TypeDef) -> dict[Alias, Proc]:
     procs: dict[Alias, Proc] = {}
     for stmt in typedef.methods.statements:
@@ -371,6 +413,7 @@ def parse_derived_type_definition(
     for typedef in statements:
         assert isinstance(typedef, TypeDef), f"Unexpect statement type {type(typedef)}"
         dtype = DerivedType(type_name=typedef.name, vmod=mod_name, fpath=ifile)
+        dtype.parent = type_parent(typedef)
         dtype.components = get_fields(typedef)
         if typedef.methods:
             dtype.procedures = get_type_procedures(mod_name, typedef)

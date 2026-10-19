@@ -352,3 +352,13 @@ def test_not_bit_for_bit_lists_roundoff(tmp_path):
     write(tmp_path / "ref.nc", [1.0, 3.0])
     write(tmp_path / "fut.nc", [1.0, 3.0 + 4.4e-16])  # 1 ulp: within relerror's tolerance
     assert not_bit_for_bit(tmp_path / "ref.nc", tmp_path / "fut.nc") == ["col_ws__endwb"]
+
+
+def test_expand_nested_components():
+    from types import SimpleNamespace
+
+    comps = {"core": None, "core%leaf": None, "core%root": None, "gpp": None}
+    td = {"veg_t": SimpleNamespace(components=comps)}
+    access = {"veg%core": "w", "veg%core%leaf": "r", "veg%gpp": "r"}
+    out = va.expand_nested(access, td, {"veg": "veg_t"})
+    assert out == {"veg%core%leaf": "rw", "veg%core%root": "w", "veg%gpp": "r"}

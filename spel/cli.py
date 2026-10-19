@@ -122,6 +122,183 @@ def compact_rewrite(fut, args):
         print(f"  {path}")
 
 
+def nutrient(args):
+    from spel.scripts.analysis_cache import load_analysis
+    from spel.transforms.nutrient.common import detail, find_families, summary, to_json
+
+    fut = load_analysis(reanalyze=args.reanalyze)
+    families = find_families(fut.type_dict)
+    if args.action in ("extract", "groups"):
+        return nutrient_extract(fut, families, args)
+    if args.action == "merge":
+        return nutrient_merge(fut, families, args)
+    if args.action == "species":
+        return nutrient_species(fut, families, args)
+    if args.action in ("history", "restart"):
+        return nutrient_history(fut, families, args)
+    if args.action == "procedures":
+        from spel.transforms.nutrient import procedures
+
+        reports = [
+            r
+            for fam in families
+            if not args.family or fam.name in args.family
+            for r in procedures.compare_family(fam, fut.subroutine_dict, fut.type_dict)
+        ]
+        print(procedures.summary(reports))
+        for r in reports:
+            if r.binding in (args.procedure or []):
+                print()
+                print(procedures.detail(r, kinds=tuple(args.kinds)))
+        return
+    print(summary(families))
+    for fam in families:
+        if fam.name in (args.family or []):
+            print()
+            print(detail(fam))
+    if args.output:
+        to_json(families, Path(args.output))
+        print(f"\nwrote {args.output}")
+
+
+def split(args):
+    from spel.scripts.analysis_cache import load_analysis
+    from spel.scripts.config import E3SM_SRCROOT
+    from spel.transforms.split.modules import PLANS, SplitError, Splitter
+
+    mods, plan = PLANS[args.plan]
+    fut = load_analysis(reanalyze=args.reanalyze)
+    try:
+        sp = Splitter(fut, mods, plan, Path(E3SM_SRCROOT))
+        sp.build()
+    except SplitError as err:
+        raise SystemExit(f"split: {err}")
+    for note in sp.notes:
+        print(note)
+    print(sp.report())
+    if args.diff:
+        print(sp.diff())
+    if args.dry_run:
+        return
+    for path in sp.apply():
+        print(f"  wrote {path}")
+
+
+def nutrient_extract(fut, families, args):
+    import difflib
+
+    from spel.scripts.analysis_cache import git_state
+    from spel.scripts.config import E3SM_SRCROOT, ELM_SRC
+    from spel.transforms.nutrient.extract import ExtractError, Extractor, core_edits, manifest
+
+    if args.family:
+        families = [f for f in families if f.name in args.family]
+    if args.action == "groups":
+        from spel.transforms.nutrient.groups import group_edits
+
+        try:
+            edits, skipped = group_edits(families), {}
+        except ExtractError as err:
+            raise SystemExit(f"nutrient groups: {err}")
+        key = "groups"
+    else:
+        edits, skipped = core_edits(families)
+        key = "families"
+    ex = Extractor(edits, fut.type_dict, Path(ELM_SRC), skipped)
+    try:
+        ex.build()
+    except ExtractError as err:
+        raise SystemExit(f"nutrient extract: {err}")
+    print(ex.report())
+    if args.diff:
+        for path, lines in ex.files.items():
+            old = Path(path).read_text(errors="replace").split("\n")
+            sys.stdout.writelines(
+                l + "\n" for l in difflib.unified_diff(old, lines, str(path), str(path), lineterm="")
+            )
+    if args.dry_run:
+        return
+    spel_commit = git_state(Path(SPEL_ROOT)).get("commit")
+    for path in ex.write(manifest(ex, spel_commit, git_state(Path(E3SM_SRCROOT)), key)):
+        print(f"  wrote {path}")
+
+
+def nutrient_merge(fut, families, args):
+    import difflib
+
+    from spel.transforms.nutrient.merge import DEFAULT_BINDINGS, Merger
+
+    if args.family:
+        families = [f for f in families if f.name in args.family]
+    m = Merger(families, fut, bindings=args.procedure or DEFAULT_BINDINGS)
+    m.build()
+    files = m.apply()
+    print(m.report())
+    if args.diff:
+        for path, lines in files.items():
+            old = m.lines(path)
+            sys.stdout.writelines(
+                l + "\n" for l in difflib.unified_diff(old, lines, str(path), str(path), lineterm="")
+            )
+    if args.dry_run:
+        return
+    for path, lines in files.items():
+        Path(path).write_text("\n".join(lines))
+        print(f"  wrote {path}")
+
+
+def nutrient_history(fut, families, args):
+    import difflib
+
+    from spel.transforms.nutrient.history import HISTORY, RESTART, HistoryMerger
+
+    if args.family:
+        families = [f for f in families if f.name in args.family]
+    hm = HistoryMerger(families, fut, RESTART if args.action == "restart" else HISTORY)
+    hm.build()
+    files = hm.apply()
+    print(hm.report())
+    if args.diff:
+        for path, lines in files.items():
+            old = Path(path).read_text(errors="replace").split("\n")
+            sys.stdout.writelines(
+                l + "\n" for l in difflib.unified_diff(old, lines, str(path), str(path), lineterm="")
+            )
+    if args.dry_run:
+        return
+    for path, lines in files.items():
+        Path(path).write_text("\n".join(lines))
+        print(f"  wrote {path}")
+
+
+def nutrient_species(fut, families, args):
+    import difflib
+
+    from spel.scripts.config import ELM_SRC
+    from spel.transforms.nutrient.extract import ExtractError
+    from spel.transforms.nutrient.species import SpeciesEditor
+
+    ed = SpeciesEditor(families, fut, Path(ELM_SRC))
+    try:
+        ed.build()
+    except ExtractError as err:
+        raise SystemExit(f"nutrient species: {err}")
+    for note in ed.notes:
+        print(note)
+    changed = {p: l for p, l in ed.files.items() if "\n".join(l) != p.read_text(errors="replace")}
+    if args.diff:
+        for path, lines in changed.items():
+            old = path.read_text(errors="replace").split("\n")
+            sys.stdout.writelines(
+                l + "\n" for l in difflib.unified_diff(old, lines, str(path), str(path), lineterm="")
+            )
+    if args.dry_run:
+        return
+    for path, lines in changed.items():
+        path.write_text("\n".join(lines))
+        print(f"  wrote {path}")
+
+
 def acc2omp(args):
     from spel.scripts.analysis_cache import load_analysis
     from spel.transforms.acc_to_omp import TranslationError, case_modules, translate_modules
@@ -660,6 +837,67 @@ def main():
         "--reanalyze", action="store_true", help="rebuild the cached elm_drv analysis first"
     )
     compact_parser.set_defaults(func=compact)
+
+    nutrient_parser = subparsers.add_parser(
+        "nutrient",
+        help="fields the C/N/P variants of a derived type share (candidates for a common base type)",
+    )
+    nutrient_parser.add_argument(
+        "action",
+        choices=["common", "procedures", "extract", "merge", "species", "groups", "history", "restart"],
+        help="common: match the C/N/P types' components by name; "
+        "procedures: compare the types' type-bound procedures statement by statement; "
+        "extract: move the shared fields to base types the C/N/P types extend (edits the E3SM sources); "
+        "merge: move the procedures' shared statements to base-type procedures (after extract); "
+        "species: give each core its element (core%species, set in Init; after extract); "
+        "groups: move N/P-only fields to role components (mineral, uptake, retrans; groups.py); "
+        "history: one history registration per core field for every species (after species, merge --procedure init); "
+        "restart: likewise one restartvar per core field",
+    )
+    nutrient_parser.add_argument(
+        "--family",
+        nargs="*",
+        help="common: print the fields of these families (e.g. vegetation_nutrient_flux); "
+        "procedures: only these families",
+    )
+    nutrient_parser.add_argument(
+        "--procedure",
+        nargs="*",
+        help="procedures: print the statements of these bindings (e.g. init); "
+        "merge: the bindings to merge (default: setvalues zerodwt clean)",
+    )
+    nutrient_parser.add_argument(
+        "--kinds",
+        nargs="*",
+        default=["differs"],
+        help="procedures: statement kinds to print (generic guards longname differs own other)",
+    )
+    nutrient_parser.add_argument("-o", "--output", help="common: write all families as JSON")
+    nutrient_parser.add_argument("--dry-run", dest="dry_run", action="store_true", help="extract, merge, species, groups, history, restart: report only")
+    nutrient_parser.add_argument("--diff", action="store_true", help="extract, merge, species, groups, history, restart: print the changes")
+    nutrient_parser.add_argument(
+        "--reanalyze", action="store_true", help="rebuild the cached elm_drv analysis first"
+    )
+    nutrient_parser.set_defaults(func=nutrient)
+
+    split_parser = subparsers.add_parser(
+        "split",
+        help="move type definitions and their procedures out of large modules into new ones "
+        "(instances stay; every `use` of a moved name is rewritten)",
+    )
+    split_parser.add_argument(
+        "--plan",
+        default="elm-data-types",
+        choices=["elm-data-types"],
+        help="elm-data-types: Column/Vegetation/GridcellDataType -> Nutrient{State,Flux}Type, "
+        "{Vegetation,Column}{State,Flux}Types; instances stay in the *DataType modules",
+    )
+    split_parser.add_argument("--dry-run", dest="dry_run", action="store_true", help="report only")
+    split_parser.add_argument("--diff", action="store_true", help="print the changes")
+    split_parser.add_argument(
+        "--reanalyze", action="store_true", help="rebuild the cached elm_drv analysis first"
+    )
+    split_parser.set_defaults(func=split)
 
     analyze_parser = subparsers.add_parser(
         "analyze",
