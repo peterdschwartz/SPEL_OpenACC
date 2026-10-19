@@ -233,6 +233,7 @@ def validate(args):
         keep_instrumentation=args.keep_instrumentation,
         dry_run=args.dry_run,
         subsets=subsets,
+        test_env=args.test_env,
     )
     if not report.ok and not args.dry_run:
         raise SystemExit(1)
@@ -674,6 +675,10 @@ def main():
     validate_parser.add_argument(
         "-j", "--jobs", type=int, default=4,
         help="parallel `spel create`/`spel run` processes (default: 4)",
+    )
+    validate_parser.add_argument(
+        "--test-env", default=None, metavar="FILE",
+        help="shell file sourced before each `spel run` (the unit-test toolchain env; the ELM build keeps the clean env)",
     )
     validate_parser.add_argument(
         "--run-name", default="spel-validate", help="CIME case name (default: spel-validate)"

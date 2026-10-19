@@ -926,20 +926,57 @@ class Dependence:
 
     def trigger_constraint(self, cascade_constraint: str) -> str | None:
         """
-        Constraint ("True"/"False") on the trigger implied by a logical cascade
+        Constraint ("True"/"False") on the trigger implied by a cascade
         variable's constraint, or None if it implies nothing: the trigger can't
-        take a value whose pair forces the cascade variable to the other value.
+        take a value whose pair forces the cascade variable to a value that
+        fails the constraint.
+
+        A logical cascade variable has the constraint "True"/"False" and each
+        pair fixes its value. An integer one (a filter count such as num_pcropp)
+        has a comparison constraint ("> 0", "== 0", ...): the pair of the
+        trigger value that disables it fixes the count (0), while the other
+        pair's value is only representative, since the count can then be any
+        non-negative integer (a rank may hold no crop patch with use_crop on).
+        So "num_pcropp > 0" implies use_crop, but "num_pcropp == 0" implies
+        nothing.
         """
         values = {"True": ".true.", "False": ".false."}
         wanted = values.get(cascade_constraint)
-        if wanted is None:
-            return None
-        allowed = {".true.", ".false."} - {
-            p.nml_val for p in self.pairs if p.cascade_val != wanted
-        }
+        if wanted is not None:
+            forced_other = {p.nml_val for p in self.pairs if p.cascade_val != wanted}
+        else:
+            comparison = _parse_int_comparison(cascade_constraint)
+            if comparison is None:
+                return None
+            op, rhs = comparison
+            forced_other = set()
+            for p in self.pairs:
+                try:
+                    value = int(str(p.cascade_val))
+                except ValueError:
+                    return None
+                # the enabling value is representative: the count is unrestricted
+                if str(p.nml_val).lower() == ".true.":
+                    continue
+                if not _compare_ints(value, op, rhs):
+                    forced_other.add(p.nml_val)
+        allowed = {".true.", ".false."} - forced_other
         if len(allowed) != 1:
             return None
         return "True" if allowed == {".true."} else "False"
+
+
+def _parse_int_comparison(constraint: str) -> tuple[str, int] | None:
+    m = re.match(r"^\s*(==|/=|>=|<=|>|<|\.eq\.|\.ne\.|\.ge\.|\.le\.|\.gt\.|\.lt\.)\s*(-?\d+)\s*$", constraint.strip(), re.IGNORECASE)
+    if m is None:
+        return None
+    op = {".eq.": "==", ".ne.": "/=", ".ge.": ">=", ".le.": "<=", ".gt.": ">", ".lt.": "<"}.get(m.group(1).lower(), m.group(1))
+    return op, int(m.group(2))
+
+
+def _compare_ints(value: int, op: str, rhs: int) -> bool:
+    return {"==": value == rhs, "/=": value != rhs, ">=": value >= rhs,
+            "<=": value <= rhs, ">": value > rhs, "<": value < rhs}[op]
 
 
 class PassManager:

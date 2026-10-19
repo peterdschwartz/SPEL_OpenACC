@@ -555,3 +555,36 @@ def test_same_block():
     assert not ie._same_block(lines, 2, 4)  # leaves the if
     assert not ie._same_block(lines, 4, 5)  # crosses an else
     assert not ie._same_block(lines, 0, 2)  # ends inside the if
+
+
+def test_wait_for_case_jobs_polls_until_complete(tmp_path):
+    import pytest
+    from spel.scripts.instrument_elm import CaseRunError, case_job_ids, job_state, wait_for_case_jobs
+
+    assert case_job_ids("case.run:60004107,case.st_archive:60004108") == ["60004107", "60004108"]
+    assert case_job_ids("") == []
+    assert job_state("   CANCELLED by 1234 \n") == "CANCELLED"
+    assert job_state("") == ""
+
+    states = iter(["PENDING", "RUNNING", "COMPLETED"])
+    calls = []
+
+    def run(cmd, cwd=None):
+        calls.append(cmd[0])
+        if cmd[0] == "./xmlquery":
+            return "case.run:1\n"
+        return next(states) + "\n"
+
+    slept = []
+    wait_for_case_jobs(tmp_path, run=run, sleep=slept.append, poll_s=1.0)
+    assert calls.count("sacct") == 3 and slept == [1.0, 1.0]
+
+    def failing(cmd, cwd=None):
+        return "case.run:2\n" if cmd[0] == "./xmlquery" else "FAILED\n"
+
+    with pytest.raises(CaseRunError):
+        wait_for_case_jobs(tmp_path, run=failing, sleep=lambda s: None)
+
+    with pytest.raises(CaseRunError):
+        wait_for_case_jobs(tmp_path, run=lambda cmd, cwd=None: "case.run:3\n" if cmd[0] == "./xmlquery" else "RUNNING\n",
+                           sleep=lambda s: None, timeout_s=2.0, poll_s=1.0)

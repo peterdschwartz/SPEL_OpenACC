@@ -1079,6 +1079,7 @@ def run_case(
         )
     if casedir is None:
         raise InstrumentError("casegen script didn't report CASEDIR")
+    wait_for_case_jobs(Path(casedir))
     return _rundir(Path(casedir))
 
 
@@ -1087,7 +1088,63 @@ def resubmit_case(casedir: Path) -> Path:
     code, _ = _stream(["./case.submit"], cwd=casedir)
     if code:
         raise CaseRunError(f"case.submit failed with exit code {code}", casedir)
+    wait_for_case_jobs(casedir)
     return _rundir(casedir)
+
+
+_JOB_DONE = {"COMPLETED"}
+_JOB_FAILED = {"FAILED", "TIMEOUT", "CANCELLED", "NODE_FAIL", "OUT_OF_MEMORY", "DEADLINE", "PREEMPTED", "BOOT_FAIL"}
+
+
+def case_job_ids(job_ids: str) -> list[str]:
+    """Slurm job ids in a case's JOB_IDS value (`case.run:123,case.st_archive:124`)."""
+    return re.findall(r"(?<=:)\d+", job_ids)
+
+
+def job_state(sacct_output: str) -> str:
+    """State of a job from `sacct -X -n -o State%20` ('CANCELLED by 1234' -> 'CANCELLED')."""
+    first = sacct_output.strip().splitlines()[0].strip() if sacct_output.strip() else ""
+    return first.split()[0] if first else ""
+
+
+def wait_for_case_jobs(
+    casedir: Path,
+    timeout_s: float = 4 * 3600,
+    poll_s: float = 30.0,
+    run=None,
+    sleep=None,
+) -> None:
+    """
+    On a batch machine `case.submit` only queues the run: wait for the case's
+    Slurm jobs (JOB_IDS) to finish, so that the RUNDIR holds the outputs when
+    they are collected. A case run on the login node has no JOB_IDS and returns
+    at once. Raises CaseRunError if a job ends in a failed state or the wait
+    times out.
+    """
+    import time as _time
+    run = run or (lambda cmd, cwd=None: subprocess.run(cmd, cwd=cwd, capture_output=True, text=True).stdout)
+    sleep = sleep or _time.sleep
+    try:
+        ids = case_job_ids(run(["./xmlquery", "JOB_IDS", "--value"], cwd=casedir))
+    except (OSError, subprocess.SubprocessError):
+        return
+    if not ids or not shutil.which("sacct"):
+        return
+    print(f"waiting for Slurm job(s) {', '.join(ids)} of {casedir.name}", flush=True)
+    waited = 0.0
+    pending = list(ids)
+    while pending:
+        for job in list(pending):
+            state = job_state(run(["sacct", "-j", job, "-X", "-n", "-o", "State%20"]))
+            if state in _JOB_DONE:
+                pending.remove(job)
+            elif state in _JOB_FAILED:
+                raise CaseRunError(f"Slurm job {job} ended in state {state}", casedir)
+        if pending:
+            if waited >= timeout_s:
+                raise CaseRunError(f"Slurm job(s) {', '.join(pending)} still not finished after {int(waited)} s", casedir)
+            sleep(poll_s)
+            waited += poll_s
 
 
 def collect_outputs(rundir: Path, dest: Path, prefix: str = "") -> list[Path]:

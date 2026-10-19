@@ -115,7 +115,7 @@ def env(tmp_path, monkeypatch):
         calls.uninstrumented += 1
         return []
 
-    def run_cases(report, cases, jobs):
+    def run_cases(report, cases, jobs, test_env=None):
         calls.ran = cases
         for c in cases:
             report.cases[c].status = v.PASS
@@ -178,3 +178,14 @@ def test_run_logged_has_no_stdin(tmp_path):
     code = v.run_logged(["bash", "-c", "read -p 'ok? ' a; echo got=$a"], log)
     assert code == 0
     assert "got=" in log.read_text()
+
+
+def test_test_command_sources_env():
+    import shlex
+    from spel.scripts.validate import spel_command, test_command
+
+    assert test_command("canflux") == spel_command("run", "canflux")
+    wrapped = test_command("canflux", "/tmp/my env.sh")
+    assert wrapped[:2] == ["bash", "-c"]
+    assert wrapped[2].startswith("source '/tmp/my env.sh' && exec ")
+    assert wrapped[2].endswith(shlex.join(spel_command("run", "canflux")))

@@ -5,6 +5,8 @@ from spel.scripts.types import Dependence, Pairs
 from spel.scripts.utilityFunctions import Variable
 
 NML_CASCADES = {
+    # filter counts: 0 without use_crop; with it the count is any non-negative
+    # integer (the .true. value is representative), see Dependence.trigger_constraint
     "num_pcropp": Dependence(
         cascade_var="num_pcropp",
         trigger="elm_varctl::use_crop",

@@ -89,6 +89,8 @@ class FunctionalUnitTest:
         self.guarded_usage_dict: dict[ConditionExpectation, list[Variable]] = {}
         self.primary_subroutines: dict[str, Subroutine] = {}
         self.active_global_vars: dict[str, Variable] = {}
+        # elm_instMod globals main.F90 passes as actuals (types outside the unit test, e.g. alm_fates)
+        self.main_instmod_imports: set[str] = set()
         self.case_dir = casedir
         self.config = cfg
         self.logger: logging.Logger = logger
@@ -631,6 +633,11 @@ class FunctionalUnitTest:
                         (m for m, fm in self.module_dict.items() if base in fm.global_vars), None
                     ):
                         use(f"use {mod}, only : {base}\n")
+                        if mod == "elm_instmod":
+                            # a global of a type outside the unit test (e.g. alm_fates): the
+                            # generated elm_instMod must still declare it for main.F90
+                            # (setdefault: the object may come from the analysis pickle)
+                            self.__dict__.setdefault("main_instmod_imports", set()).add(base)
                 elif var is not None and var.optional and b is None:
                     continue
                 elif var is not None and var.dim == 0 and var.type in intrinsic:
@@ -953,7 +960,8 @@ class FunctionalUnitTest:
     def write_elminst_mod(self) -> None:
         """Write the reduced elm_instMod.F90 needed by this unit test."""
         inst_mod = self.module_dict.get("elm_instmod")
-        imported = imported_from(self.module_dict, self.ordered_mods, "elm_instmod")
+        imported = set(imported_from(self.module_dict, self.ordered_mods, "elm_instmod"))
+        imported |= getattr(self, "main_instmod_imports", set())
         write_elminstMod(self.type_dict, self.case_dir, inst_mod, imported)
 
     def generate_cmake(self, files: list[str]) -> None:

@@ -43,9 +43,11 @@ def test_ispolygon_implies_use_polygonal_tundra():
     ) == NO_EXPECTATION
 
 
-def test_integer_cascades_keep_their_guard():
+def test_integer_cascades_become_trigger_guards():
+    # a filter count isn't a global the IO modules could test, so the guard
+    # moves to the trigger (num_pcropp > 0 only happens with use_crop)
     guard = AllOf((Expectation("num_pcropp", "> 0"),))
-    assert cascade_to_triggers(guard) == guard
+    assert cascade_to_triggers(guard) == AllOf((Expectation("use_crop", "True"),))
 
 
 def test_trigger_constraint_both_pairs():
@@ -142,3 +144,17 @@ def test_guarded_vars_are_the_types_own_components():
     )
     guards = check_subs_for_nml_guarded_vars([root], {"veg_pp": dtype})
     assert guards[fates][0] is comp
+
+
+def test_integer_cascade_to_trigger():
+    from spel.scripts.nml.analyze_namelist import cascade_to_triggers
+    from spel.scripts.fortran_parser.boolen_expression import Expectation, AnyOf, NO_EXPECTATION, simplify
+
+    # num_pcropp > 0 only with use_crop; == 0 happens either way (a rank without crop patches)
+    assert cascade_to_triggers(Expectation("num_pcropp", "> 0")) == Expectation("use_crop", "True")
+    assert cascade_to_triggers(Expectation("num_ppercropp", "/= 0")) == Expectation("use_crop", "True")
+    assert cascade_to_triggers(Expectation("num_pcropp", "== 0")) == NO_EXPECTATION
+    assert cascade_to_triggers(Expectation("num_pcropp", "<= 0")) == NO_EXPECTATION
+    both = cascade_to_triggers(AnyOf((Expectation("num_pcropp", "> 0"), Expectation("num_ppercropp", "> 0"))))
+    assert "num_pcropp" not in both.variable_names() and "num_ppercropp" not in both.variable_names()
+    assert simplify(both) == Expectation("use_crop", "True")

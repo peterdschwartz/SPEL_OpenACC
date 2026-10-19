@@ -64,16 +64,15 @@ def find_nml_ifs(sub_dict: dict[str, Subroutine], nml_dict: dict[str, NameList])
 
 def cascade_to_triggers(condition: ConditionExpectation) -> ConditionExpectation:
     """
-    Replace expectations on logical cascade variables by what they imply for the
+    Replace expectations on cascade variables by what they imply for the
     trigger namelist variable: the cascade variable may be an array element
-    (lun_pp%ispolygon(l)) that a guard can't evaluate. Negations are already at
-    the leaves, so the weaker condition still holds wherever the original does.
+    (lun_pp%ispolygon(l)) or a filter count (num_pcropp) that a guard can't
+    evaluate. Negations are already at the leaves, so the weaker condition
+    still holds wherever the original does.
     """
     match condition:
         case Expectation(var, constraint) if var in NML_CASCADES:
             dep = NML_CASCADES[var]
-            if constraint not in ("True", "False"):
-                return condition
             trigger = dep.trigger_constraint(constraint)
             if trigger is None:
                 return NO_EXPECTATION

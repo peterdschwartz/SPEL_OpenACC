@@ -25,6 +25,9 @@ submit=0
 refcase=""
 start_date=""
 ntasks=""
+nthrds=""
+threaded=0
+max_tasks_per_node=""
 rest_n=""
 rest_option=""
 queue=""
@@ -32,6 +35,7 @@ wallclock="0:10:00"
 auto_name=0
 share=0
 compressed_cft=0
+daily_hist=0
 remove_zero_weight_urban=0
 compressed_cft_dir=${COMPRESSED_CFT_DIR:-/pscratch/sd/g/gbisht/crop_reduced_inputdata}
 compressed_cft_paramfile=$compressed_cft_dir/clm_params_31pfts_c261015.nc
@@ -59,10 +63,14 @@ Usage: $(basename "$0") [options]
   --rest-n N           REST_N                    (default: unchanged)
   --rest-option OPT    REST_OPTION               (default: unchanged)
   --ntasks N           NTASKS                    (default: unchanged)
+  --nthrds N           NTHRDS (all components); implies --threaded
+  --threaded           FORCE_BUILD_SMP=TRUE (one executable for any NTASKS x NTHRDS)
+  --max-tasks-per-node N  MAX_TASKS_PER_NODE (e.g. 128 on pm-cpu: one thread per core)
   --queue NAME         JOB_QUEUE                 (default: unchanged)
   --wallclock T        JOB_WALLCLOCK_TIME and USER_REQUESTED_WALLTIME
                                                  (default: $wallclock)
   --no-debug           DEBUG=FALSE
+  --daily-history      hist_nhtfrq=-24, hist_mfilt=5 (part of --preset crop-perf; --no-daily-history undoes it)
   --compressed-cft     t-lr25 only: use the paramfile and surface dataset reduced
                        to the 16 CFTs unique in mergetoclmpft (from
                        \$COMPRESSED_CFT_DIR, default $compressed_cft_dir)
@@ -76,7 +84,7 @@ Usage: $(basename "$0") [options]
   --preset crop-perf   ELM crop-model performance case on Perlmutter: --mach pm-cpu
                        --compiler '' --user-mods '' --config none --no-debug
                        --ntasks 1024 --rest-n 10 --rest-option ndays --stop-n 5
-                       --stop-option ndays --queue debug --wallclock 00:20:00
+                       --stop-option ndays --queue debug --wallclock 00:20:00 --daily-history
                        --scratch \$SCRATCH --group E3SM_testings --auto-name --share
                        --build. Options after it override it; combine with
                        --res and --with-crops/--no-crops.
@@ -85,6 +93,7 @@ Usage: $(basename "$0") [options]
   --start-date DATE    RUN_STARTDATE for --refcase (default: the refcase date)
   --keep               reuse an existing case instead of recreating it
   --build              run case.setup and case.build
+  --no-build           undo --build (after --preset)
   --clean-lnd          run 'case.build --clean lnd' before building
   --submit             run case.submit
   -h, --help           show this message
@@ -103,7 +112,7 @@ while [ $# -gt 0 ]; do
             crop-perf)
                mach=pm-cpu; compiler=""; user_mods=""; config=none; debug=FALSE
                ntasks=1024; rest_n=10; rest_option=ndays; stop_n=5; stop_option=ndays
-               queue=debug; wallclock=00:20:00
+               queue=debug; wallclock=00:20:00; daily_hist=1
                scratch=${SCRATCH:?SCRATCH is not set}; case_group=E3SM_testings
                auto_name=1; share=1; build=1 ;;
             *) echo "Unknown preset: $2" >&2; exit 1 ;;
@@ -128,9 +137,15 @@ while [ $# -gt 0 ]; do
       --rest-n) rest_n=$2; shift ;;
       --rest-option) rest_option=$2; shift ;;
       --ntasks) ntasks=$2; shift ;;
+      --nthrds) nthrds=$2; threaded=1; shift ;;
+      --threaded) threaded=1 ;;
+      --max-tasks-per-node) max_tasks_per_node=$2; shift ;;
+      --no-build) build=0 ;;
       --queue) queue=$2; shift ;;
       --wallclock) wallclock=$2; shift ;;
       --compressed-cft) compressed_cft=1 ;;
+      --daily-history) daily_hist=1 ;;
+      --no-daily-history) daily_hist=0 ;;
       --remove-zero-weight-urban) remove_zero_weight_urban=1 ;;
       --auto-name) auto_name=1 ;;
       --share) share=1 ;;
@@ -165,7 +180,7 @@ fi
 
 if [ "$auto_name" -eq 1 ]; then
    git_hash=$(git -C "$src_path" log -n 1 --format=%h)
-   casename=$(date +%Y%m%d).$res.$compset.$mach.NTASKS${ntasks:-default}.$git_hash
+   casename=$(date +%Y%m%d).$res.$compset.$mach.NTASKS${ntasks:-default}${nthrds:+x$nthrds}.$git_hash
    if [ "$compressed_cft" -eq 1 ]; then
       casename=$casename.compressed_cft
    fi
@@ -195,6 +210,15 @@ if [ "$keep" -eq 0 ] || [ ! -d "$casedir" ]; then
    ./xmlchange DEBUG=$debug
    if [ -n "$ntasks" ]; then
       ./xmlchange NTASKS="$ntasks"
+   fi
+   if [ -n "$nthrds" ]; then
+      ./xmlchange NTHRDS="$nthrds"
+   fi
+   if [ "$threaded" -eq 1 ]; then
+      ./xmlchange FORCE_BUILD_SMP=TRUE   # case.setup recomputes BUILD_THREADED from NTHRDS unless forced
+   fi
+   if [ -n "$max_tasks_per_node" ]; then
+      ./xmlchange MAX_TASKS_PER_NODE="$max_tasks_per_node"
    fi
 
    if [ "$config" == "fates" ]; then
@@ -228,6 +252,10 @@ if [ "$keep" -eq 0 ] || [ ! -d "$casedir" ]; then
       snicar_atm_type            = 'mid-latitude_winter'
       fsnowoptics                   = '\$DIN_LOC_ROOT/lnd/clm2/snicardata/snicar_optics_5bnd_mam_c211006.nc'
       " > user_nl_elm
+   fi
+
+   if [ "$daily_hist" -eq 1 ]; then
+      printf " hist_nhtfrq = -24\n hist_mfilt  = 5\n" >> user_nl_elm
    fi
 
    if [ "$remove_zero_weight_urban" -eq 1 ]; then

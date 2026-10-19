@@ -210,14 +210,25 @@ def create_cases(report: ValidateReport, jobs: int, log_dir: Path) -> None:
     parallel(create, list(report.cases), jobs)
 
 
-def run_cases(report: ValidateReport, cases: list[str], jobs: int) -> None:
+def test_command(case: str, test_env: Optional[str] = None) -> list[str]:
+    """`spel run case`, run after sourcing `test_env` (the unit-test toolchain
+    environment, e.g. a machine's netcdf/pkg-config modules) when given."""
+    cmd = spel_command("run", case)
+    if not test_env:
+        return cmd
+    return ["bash", "-c", f"source {shlex.quote(test_env)} && exec {shlex.join(cmd)}"]
+
+
+def run_cases(
+    report: ValidateReport, cases: list[str], jobs: int, test_env: Optional[str] = None
+) -> None:
     from spel.scripts.config import unittests_dir
 
     def run(case: str) -> None:
         result = report.cases[case]
         log = Path(unittests_dir) / case / "validate.log"
         print(f"  run {case}", flush=True)
-        code = run_logged(spel_command("run", case), log)
+        code = run_logged(test_command(case, test_env), log)
         result.log = str(log)
         result.status = PASS if code == 0 else FAIL
         result.detail = log_tail(log, 3 if code == 0 else LOG_TAIL)
@@ -254,6 +265,7 @@ def validate(
     keep_instrumentation: bool = False,
     dry_run: bool = False,
     subsets: Optional[dict[str, SubsetSpec]] = None,
+    test_env: Optional[str] = None,
 ) -> ValidateReport:
     from spel.scripts.analysis_cache import ANALYSIS_PICKLE, build_analysis, cache_dir
     from spel.scripts.config import (
@@ -367,7 +379,7 @@ def validate(
     ready = [c for c, r in report.cases.items() if not r.status]
     if ready:
         print(f"Running {len(ready)} unit test(s) with {jobs} job(s)", flush=True)
-        run_cases(report, ready, jobs)
+        run_cases(report, ready, jobs, test_env)
 
     write_report(report, report_path)
     print_summary(report, report_path)
