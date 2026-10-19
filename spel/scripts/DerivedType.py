@@ -332,6 +332,8 @@ def get_type_procedures(modname: str, typedef: TypeDef) -> dict[Alias, Proc]:
     procs: dict[Alias, Proc] = {}
     for stmt in typedef.methods.statements:
         if isinstance(stmt, ProcedureStatement):
+            if stmt.token_literal().lower() == "generic":
+                continue  # binds other bindings, not routines
             alias = stmt.alias if stmt.alias else stmt.name
             name = f"{modname}::{stmt.name}"
             procs[f"{alias}"] = name

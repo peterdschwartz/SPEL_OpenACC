@@ -131,21 +131,37 @@ def check_subs_for_nml_guarded_vars(
     Given the unit test's root subroutines, find the global variables ONLY
     accessed under certain NML options (guarded in every root that accesses them)
     """
+    root_subs = list(root_subs)
     var_dict = merge_guards(
         (root_sub.elmtype_access_by_ln, nml_guards(root_sub)) for root_sub in root_subs
     )
+    accessed = {v for root_sub in root_subs for v in root_sub.elmtype_access_by_ln}
 
-    temp = defaultdict(list)
-    for v, cond in var_dict.items():
-        # the type's own component (get_component returns a copy): guards are
-        # looked up by identity (FunctionalUnitTest.guards_for_variable)
-        inst, field = v.split('%')
+    # Guards are looked up by the type's own component (identity, see
+    # FunctionalUnitTest.guards_for_variable), which every instance of the type
+    # shares: c13_col_cf%x used only under use_c13 must not guard col_cf%x. A
+    # component is guarded only if every instance accessing it is, by any of
+    # their conditions.
+    by_comp: dict[int, tuple[Variable, list]] = {}
+    for v in sorted(accessed | set(var_dict)):
+        inst, _, field = v.partition("%")
+        # the type's own component (get_component returns a copy)
         dtype = instance_dict.get(inst)
         var = dtype.components.get(field) if dtype is not None else None
         if var is None:
+            if v not in var_dict:
+                continue  # unguarded and not a shared component: nothing to clear
             var = get_component(instance_dict, inst, field)
         if var is None:
             raise ValueError(f"Error: expected derived type of the for inst%field, Got {v}")
+        by_comp.setdefault(id(var), (var, []))[1].append(var_dict.get(v))
+
+    temp = defaultdict(list)
+    for var, conds in by_comp.values():
+        if any(cond is None for cond in conds):
+            continue
+        unique = list(dict.fromkeys(conds))
+        cond = unique[0] if len(unique) == 1 else simplify(AnyOf(tuple(unique)))
         temp[cond].append(var)
 
     return temp

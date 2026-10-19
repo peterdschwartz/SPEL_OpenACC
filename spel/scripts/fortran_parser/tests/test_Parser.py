@@ -410,3 +410,19 @@ def parse_statements(txt: str) -> Program:
 
     parser.logger.info(f"FOUND {len(program.statements)} statements")
     return program
+
+
+def test_generic_type_bound_binding():
+    prog = parse_statements(
+        """type, public :: t
+   integer :: a
+ contains
+   procedure, private :: write_formatted => t_write
+   generic, public :: write(formatted) => write_formatted
+end type t"""
+    )
+    methods = prog.statements[0].methods.statements
+    assert [(m.alias, m.name) for m in methods] == [
+        ("write_formatted", "t_write"),
+        ("write(formatted)", "write_formatted"),
+    ]

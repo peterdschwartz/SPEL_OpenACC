@@ -177,6 +177,13 @@ def generate_elmtypes_io_netcdf(unit_test: FunctionalUnitTest) -> None:
     for name, typ in drv_args.items():
         drv_var = Variable(typ, f"spel_drv_{name}", "?", 0, 1, bounds="(1)")
         dtype_vars[drv_var.name] = drv_var
+    # time-step scalars (spel.scripts.io.time_scalars): one value per step
+    from spel.scripts.io.time_scalars import unit_test_time_scalars
+
+    tscalars = unit_test_time_scalars(unit_test)
+    unit_test.time_scalars = tscalars
+    for ts in tscalars:
+        dtype_vars[ts.array] = Variable(ts.io_type, ts.array, "?", 0, 1, bounds="(1)")
 
     lines: list[str] = [
         f"module {mod_name}\n",
@@ -216,6 +223,10 @@ def generate_elmtypes_io_netcdf(unit_test: FunctionalUnitTest) -> None:
     for name, typ in drv_args.items():
         ftype = "real(8)" if typ == "real" else "integer"
         lines.append(f"{tabs}{ftype}, public :: spel_drv_{name}(1) = 0\n")
+    # set by the ELM capture module from the time step, copied back by main.F90
+    for ts in tscalars:
+        ftype = "real(8)" if ts.io_type == "real" else "integer"
+        lines.append(f"{tabs}{ftype}, public :: {ts.array}(1) = 0\n")
     lines.append("contains\n")
     lines.extend(create_inbuf_to_device(dtype_vars))
 

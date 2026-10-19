@@ -26,5 +26,8 @@ dependencies = [
 [tool.setuptools.packages.find]
 include = ["spel*"]
 
+[tool.setuptools.package-data]
+"spel.transforms.compact" = ["templates/*.F90", "*.md"]
+
 [project.scripts]
 spel = "spel.cli:main"

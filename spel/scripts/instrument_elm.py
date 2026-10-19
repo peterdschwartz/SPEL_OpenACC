@@ -121,9 +121,13 @@ class CaptureNames:
     # elm_drv scalar dummies the unit test needs: ((name, type), ...); see
     # FunctionalUnitTest.driver_args
     drv_args: tuple[tuple[str, str], ...] = ()
+    # time-step scalars captured every step (spel.scripts.io.time_scalars)
+    time: tuple = ()
 
     @classmethod
-    def for_case(cls, case_name: str, drv_args: tuple[tuple[str, str], ...] = ()) -> "CaptureNames":
+    def for_case(
+        cls, case_name: str, drv_args: tuple[tuple[str, str], ...] = (), time: tuple = ()
+    ) -> "CaptureNames":
         tag = re.sub(r"\W+", "_", case_name.lower()).strip("_")
         if tag and tag[0].isdigit():
             tag = f"c{tag}"
@@ -132,7 +136,7 @@ class CaptureNames:
                 f"case name {case_name!r} can't be used in Fortran names "
                 f"(1-{MAX_TAG} letters, digits or _)"
             )
-        return cls(tag, tuple(drv_args))
+        return cls(tag, tuple(drv_args), tuple(time))
 
     @property
     def module(self) -> str:
@@ -615,6 +619,13 @@ def _capture_parts(names: CaptureNames, instances: list[str]) -> tuple[str, ...]
     drv_use = "".join(f", spel_drv_{n}" for n, _ in names.drv_args)
     drv_decl = "".join(f"    {ftype[t]}, intent(in) :: {n}\n" for n, t in names.drv_args)
     drv_copy = "".join(f"    spel_drv_{n}(1) = {n}\n" for n, _ in names.drv_args)
+    if names.time:
+        from spel.scripts.io.time_scalars import capture_lines
+
+        t_uses, t_sets = capture_lines(list(names.time))
+        inst_use += t_uses
+        drv_use += "".join(f", {ts.array}" for ts in names.time)
+        drv_copy += t_sets
     return inst_use, inst_args, rw, fc, pre, drv_dummies, drv_use, drv_decl, drv_copy
 
 
@@ -812,8 +823,12 @@ def instrument_cases(
     for fut in futs:
         name = fut.case_name
         try:
+            from spel.scripts.io.time_scalars import unit_test_time_scalars
+
             names = CaptureNames.for_case(
-                name, tuple(getattr(fut, "driver_args", {}).items())
+                name,
+                tuple(getattr(fut, "driver_args", {}).items()),
+                tuple(getattr(fut, "time_scalars", None) or unit_test_time_scalars(fut)),
             )
             if names.tag in tags:
                 raise InstrumentError(f"case name clashes with {tags[names.tag]} (tag {names.tag})")

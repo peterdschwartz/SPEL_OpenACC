@@ -122,6 +122,18 @@ Do this in a scratch directory so `.mod`/`.o` files don't land in the repo.
   the speed-up over master on the same thread count. Cases made before `SPEL_CLUMPS` must be
   regenerated. It leaves the cases configured for nvfortran.
 
+## Time-step state in unit tests
+
+- Module variables are captured once (constants file); derived-type components every step.
+  State that changes every step is captured per step instead, through `spel_t_<name>(1)` in
+  ReadWriteMod, and copied back after each read (`spel/scripts/io/time_scalars.py`, main.F90
+  `!#TIME_SYNC_INIT/STEP`): every `timeInfoMod` scalar, and the globals a case reads that
+  something in elm_drv's tree writes (`step_written_globals`, e.g. `subgrid_weights_updated`).
+- `elm_time_manager` stays out of unit tests (it needs ESMF). A `use elm_time_manager, only :`
+  of just `is_first_step`/`is_first_restart_step` is pointed at `SourceFiles/spel_timeMod.F90`,
+  whose values the capture records from `get_nstep()`/`is_first_restart_step()`.
+- Adding a per-step variable changes the IO: reference data captured before it must be recaptured.
+
 ## Analysis
 
 - `spel create` reuses the per-srcroot cache in `unit-tests/.spel-cache/<srcroot>-<hash>/elm_drv/`.
@@ -142,6 +154,17 @@ Do this in a scratch directory so `.mod`/`.o` files don't land in the repo.
   through the callee's dummy intent. Build new analyses on these rather than on regexes.
 - OpenACC directives are comments to the parser; `spel/transforms/acc_directives.py` parses them
   from the source and `acc_to_omp.py` attaches them to the analyzed loops.
+
+## Compact layout (`spel compact`)
+
+- Design and rules: `spel/transforms/compact/DESIGN.md`; deferred fields: `DEFERRED.md`.
+- The inventory is deliberately conservative: false positives (e.g. value-dependent guards like
+  `ch4_prod`'s `lake`) are reviewed by hand, not analyzed away.
+- `rewrite` needs the analysis of exactly the sources it edits (`spel analyze` first) and refuses
+  sources that already have `CompactLayoutMod.F90`. Test it with `-o $CASE/SourceMods/src.elm`
+  against a baseline case built from the same commit (bit-for-bit history files).
+- `CompactLayoutMod` must only use share modules (`shr_*`): `decompMod` uses it, so ELM modules
+  like `abortutils` would make a module cycle.
 
 ## Refactoring a routine against a reference
 

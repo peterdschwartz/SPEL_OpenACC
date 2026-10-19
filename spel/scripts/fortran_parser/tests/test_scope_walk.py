@@ -674,3 +674,44 @@ def test_loop_nest():
         rec.loop_nest[1].perfect_nest(2)
     assert rec.loop_at(13) is loops[3]
     assert rec.enclosing_loops(14) == [loops[2], loops[3]]
+
+
+DO_CONCURRENT = """
+subroutine s(num, filter, x, y, m)
+  implicit none
+  integer, intent(in) :: num, m, filter(:)
+  real(r8), intent(inout) :: x(:,:), y(:)
+  integer :: fi, j
+  do concurrent (fi = 1:num, j = 1:m:2, y(fi) > 0._r8)
+     x(filter(fi), j) = 0._r8
+  end do
+end subroutine s
+"""
+
+
+def test_do_concurrent_is_nested_do_loops():
+    rec = walk(DO_CONCURRENT)
+    outer, = rec.loop_nest
+    assert outer.index == "fi" and [c.index for c in outer.children] == ["j"]
+    assert str(outer.children[0].node.step) == "2"
+    assert outer.node.concurrent and outer.node.mask is not None
+    # the mask reads y; the body writes x
+    assert ("r", "y", 6) in acc(rec, 6)
+    assert ("w", "x", 7) in acc(rec, 7)
+
+
+def test_write_control_specifiers():
+    rec = walk(
+        """
+subroutine s(unit, text, ios, msg)
+  implicit none
+  integer, intent(in) :: unit
+  character(len=*), intent(in) :: text
+  integer, intent(out) :: ios
+  character(len=*), intent(inout) :: msg
+  write(unit, '(a)', iostat=ios, iomsg=msg) text
+end subroutine s
+"""
+    )
+    assert ("w", "ios", 7) in acc(rec, 7) and ("w", "msg", 7) in acc(rec, 7)
+    assert ("r", "text", 7) in acc(rec, 7)

@@ -548,6 +548,15 @@ def extract_unit_test(
 
     fut = analysis
     src = cache_dir() / SRC_DIR
+    # globals something in the time step writes: a unit test reads them per step
+    # (spel.scripts.io.time_scalars), not once from the constants file
+    drv = fut.subroutine_dict.get(DRIVER_ID)
+    maps = drv.record_access if drv is not None else None
+    fut.step_written_globals = sorted(
+        name
+        for name, rws in (maps.all_globals().items() if maps is not None else ())
+        if any("w" in rw.status for rw in rws)
+    )
     for sub in fut.subroutine_dict.values():
         sub.unit_test_function = False
     selected = select_subroutines(fut.subroutine_dict, sub_name_list, logger)

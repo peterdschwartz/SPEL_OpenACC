@@ -153,6 +153,7 @@ class FunctionalUnitTest:
             variable.name: variable
             for variable in self.active_global_vars.values()
             if not variable.parameter
+            and str(variable.declaration).lower() not in RUNTIME_STATE_MODULES
         }
 
     def guards_for_variable(
@@ -772,6 +773,21 @@ class FunctionalUnitTest:
             self.type_dict
         )
 
+        # types rewritten by `spel compact rewrite`: pack/unpack around compute
+        from spel.transforms.compact.unit_test import compact_instances, hook_lines
+
+        compact = compact_instances(self.type_dict, active_instances)
+        for token, hook in hook_lines(compact).items():
+            lines = insert_at_token(lines, token, hook)
+
+        # time-step scalars: copied from the per-step inputs after every read
+        from spel.scripts.io.time_scalars import sync_lines, unit_test_time_scalars
+
+        t_uses, t_body = sync_lines(unit_test_time_scalars(self))
+        lines = insert_at_token(lines, "!#TIME_SYNC_INIT", t_body)
+        lines = insert_at_token(lines, "!#TIME_SYNC_STEP", [f"   {l}" for l in t_body])
+        lines = insert_at_token(lines, "!#USE_START", t_uses)
+
         in_arg_str = "io_inputs, bounds_io"
         out_arg_str = "io_outputs, bounds_io"
         for _, elmvar in elm_inst_vars:
@@ -818,6 +834,15 @@ class FunctionalUnitTest:
                 self.logger.warning(
                     "Type %s has pointer fields but no initialization subroutine",
                     dtype.type_name,
+                )
+                continue
+            if dtype.init_sub_ptr.arguments:
+                # called without arguments below; a routine with dummies (e.g.
+                # CompactLayoutMod's compact_add) only happens to associate pointers
+                self.logger.warning(
+                    "Type %s: %s takes arguments; not called as its pointer initialization",
+                    dtype.type_name,
+                    dtype.init_sub_ptr.id,
                 )
                 continue
             sub_mod = dtype.init_sub_ptr.module
@@ -969,6 +994,11 @@ class FunctionalUnitTest:
 
     def create_fortls(self) -> None:
         create_fortls(self.case_dir)
+
+
+# modules whose variables the unit test sets itself (not captured inputs):
+# CompactLayoutMod's clump offset is set by get_clump_bounds
+RUNTIME_STATE_MODULES = {"compactlayoutmod"}
 
 
 def adjust_bounds(bounds: str) -> str:
