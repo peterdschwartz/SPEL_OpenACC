@@ -45,8 +45,25 @@ As recorded on 2026-10-16; not re-checked since.
 
 ### Perlmutter
 
-Production profiling and large (e.g. crop, `--preset crop-perf`) reference runs. Its paths and
-modules aren't recorded here yet; add them when working there.
+Production profiling and large (e.g. crop, `--preset crop-perf`) reference runs. Recorded on
+2026-10-19.
+
+- Login nodes are shared and have A100 GPUs. Build and run unit tests on an interactive CPU node
+  (`salloc -N 1 -q interactive -C cpu -t 2:00:00 --no-shell`, then
+  `srun --jobid=JOB --overlap -N1 -n1 -c 64 ...`); Slurm jobs need the user's OK.
+- `spel` comes from the NERSC python module (`nersc-python` 3.13, conda env 26.8.1); the user
+  install is `~/.local/perlmutter/python-3.13/26.8.1/bin/spel`.
+- E3SM checkouts: `~/merge/E3SM` (branch `peterdschwartz/lnd/gpu-refactor-with-crop-perf-changes`),
+  `~/E3SM` (upstream bishtgautam/lnd/add-t-meshes-v3). Cases and runs go under
+  `$SCRATCH/E3SM_testings` (home quota is small); `unit-tests/` and its input data are symlinked
+  to `$SCRATCH`.
+- Crop performance runs: `./e3sm_casegen.sh --preset crop-perf --res t-lr25 --with-crops
+  --compressed-cft` (pm-cpu default compiler = Intel, 1024 tasks, 5 days, debug queue).
+- nvfortran 25.9 is `/opt/nvidia/hpc_sdk/Linux_x86_64/25.9`; for unit tests use a pm-cpu nvidia
+  case's `.env_mach_specific.sh` plus `SPEL_FC=nvfortran SPEL_DBG=OFF` and the cray netcdf
+  `PKG_CONFIG_PATH`. OpenACC multicore runs need `ACC_DEVICE_TYPE=multicore`: otherwise the
+  runtime may try the login node's GPU and loop forever printing `Failing in Thread:1`.
+- `cprnc` is `/global/cfs/cdirs/e3sm/tools/cprnc/cprnc`; restart files need `-m`.
 
 ## Generated vs. hand-edited files
 

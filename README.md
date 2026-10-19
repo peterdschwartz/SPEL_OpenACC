@@ -37,6 +37,8 @@ pip install -e .
 ```
 
 This installs the `spel` console script (`[project.scripts]` → `spel.cli:main`).
+Django (the database / web app) and PyTorch (`spel sample`/`spel train`) are optional extras:
+`pip install -e '.[db]'`, `pip install -e '.[ml]'`, or `'.[db,ml]'` for both.
 
 ### Pointing SPEL at E3SM
 
@@ -571,8 +573,8 @@ spel repl
 ### `spel sample` and `spel train` (experimental)
 
 Early-stage tooling for training neural-network emulators of ELM subroutines from unit-test
-output. These paths require PyTorch, which is **not** a declared dependency and must be
-installed separately. Interfaces are unstable.
+output. These paths need the `ml` extra (`pip install -e '.[ml]'`: PyTorch, scikit-learn).
+Interfaces are unstable.
 
 ```bash
 spel sample -c <casename> -n <samples_per_file>
@@ -643,6 +645,7 @@ The CSVs produced by `spel export` feed a Django app (`spel/db/`) that renders E
 graph, subroutine call trees, derived-type usage, and namelist/COMPSET-conditional behavior in a
 browser. Django management commands under
 `spel/db/app/management/commands/` import the CSVs (`update_all_data --all` loads everything).
+Running the app needs the `db` extra (`pip install -e '.[db]'`).
 
 An instance is already hosted on AWS, so most users never need to run the web app or understand
 its internals — point your browser at the hosted deployment and use `spel export` only if you

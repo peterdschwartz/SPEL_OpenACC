@@ -6,7 +6,6 @@ from pathlib import Path
 from pprint import pprint
 
 import spel.scripts.config as cfg
-import spel.scripts.db_utils as db_utils
 import spel.scripts.dynamic_globals as dg
 from spel.scripts.aggregate import aggregate_dtype_vars
 from spel.scripts.analyze_subroutines import Subroutine
@@ -549,8 +548,6 @@ def process_subroutines_for_unit_test(
         3) construct subroutine call trees (abstract=child subs represented only once)
         4) analyze status of variables used by subroutines.
     """
-    from spel.scripts.nml.nml_queries import query_active_variables
-
     sub_dict = unit_test.subroutine_dict
     mod_dict = unit_test.module_dict
     type_dict = unit_test.type_dict
@@ -574,6 +571,9 @@ def process_subroutines_for_unit_test(
             dtype.init_sub_ptr = sub_dict[dtype.init_sub_name]
 
     if False:  # not cfg.options.db_mode:
+        # needs the optional Django dependencies (pip install -e '.[db]')
+        from spel.scripts.nml.nml_queries import query_active_variables
+
         ok = query_active_variables(sub_dict)
         if not ok:
             sys.exit("Expected database to return non-empty result")

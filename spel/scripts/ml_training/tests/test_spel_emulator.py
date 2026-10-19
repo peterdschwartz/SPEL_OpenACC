@@ -1,7 +1,8 @@
 from pathlib import Path
 
 import pytest
-import torch
+
+torch = pytest.importorskip("torch")
 
 from spel.scripts.ml_training.model import MLPConfig, SpelEmulator
 

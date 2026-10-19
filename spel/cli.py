@@ -12,10 +12,6 @@ apply_srcroot(sys.argv[1:])
 
 from spel.scripts.config import unittests_dir  # noqa: E402
 from spel.scripts.export_objects import unpickle_unit_test  # noqa: E402
-from spel.scripts.ml_training.dataset_analysis import summarize_data  # noqa: E402
-from spel.scripts.ml_training.prepare_dataset import separate_inputs_outputs  # noqa: E402
-from spel.scripts.ml_training.sample_spel_output import sample  # noqa: E402
-from spel.scripts.ml_training.train import train  # noqa: E402
 from spel.scripts.profiler_context import profile_ctx  # noqa: E402
 
 SPEL_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -296,6 +292,10 @@ def diff(args):
 
 
 def sample_training(args):
+    from spel.scripts.ml_training.dataset_analysis import summarize_data
+    from spel.scripts.ml_training.prepare_dataset import separate_inputs_outputs
+    from spel.scripts.ml_training.sample_spel_output import sample
+
     n = int(args.num_samples)
     unit_test = unpickle_unit_test(casename=args.case_name)
     input_set: set[str] = set()
@@ -310,6 +310,8 @@ def sample_training(args):
 
 
 def _train(args):
+    from spel.scripts.ml_training.train import train
+
     data_dir = Path(unittests_dir) / f"input-data/{args.case_name}"
     train(data_dir)
     return
