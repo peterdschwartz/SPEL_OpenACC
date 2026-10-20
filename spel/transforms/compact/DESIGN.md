@@ -116,3 +116,51 @@ generated commit, `spel analyze`, run `spel compact rewrite` again.
 - Fields with maps (`compact+maps`), restart fields, column types (rank 2/3)
   and the deferred `ch4_prod` fields (DEFERRED.md).
 - GPU: device copies of `cbuf%data` and attach for the components.
+
+## Nutrient sources (after `spel nutrient ...` and `spel split`)
+
+The shared C/N/P fields then live on a base type (`vegetation_nutrient_flux`) that has no
+instances: each concrete type holds one as its component `core` (`veg_cf%core%agnpp`), N/P-only
+fields on role components (`veg_nf%retrans%pool`), and the shared code is in plain module
+procedures `<base>_<binding>` (`vegetation_nutrient_flux_setvalues`, `_init_history`, `_restart`).
+`holders.py` describes both shapes: a *holder* is the type whose fields get compact storage and
+its *embeddings* (instance, component path, element: `veg_cf`/`core`/`c12`, `veg_nf`/`retrans`/`n`).
+
+- **One `cbuf` per holder**, shared by every instance that embeds it (`veg_cf%core%cbuf`,
+  `c13_veg_cf%core%cbuf` are distinct buffers, one per instance's own `core`). The inventory
+  traces 3-level targets (`Tracer.target`: the longest component path; a whole holder passed to a
+  base routine is not a field), zeroing in `<base>_setvalues` counts (`build_inventory` adds it to
+  the zeroing routines of the concrete types that embed the holder), and registrations come from
+  the concrete Init/restart plus `<holder>_init`, `_init_history`, `_restart`, their fields
+  prefixed with the component. Templated names (`nutrient_name(this%species, 'LEAF#')`) are kept
+  as labels; species guards (`this%species == CN_SPECIES_N`, `is_carbon(this%species)`) are
+  evaluated per element, and a guard the evaluator cannot read admits (conservative: history →
+  unpacked, restart → excluded). `hist_default(...)` is not `inactive`.
+- **Plain procedures on the base type.** `<base>_compact_init(this, beg, end)`, `_compact_view`,
+  `_full_view` with `type(<base>) :: this`, placed before `end module` of the holder's file and
+  made public. Not type-bound: `resolve_nested` (DerivedType.py) only flattens a component type
+  into `core%field` entries when it has no type-bound procedures, so a binding on the base type
+  would stop SPEL's analysis of the rewritten sources.
+- **CompactInit from each concrete Init**, after its special-patch `SetValues` call (not from
+  `<base>_init`, which runs before it: `compact_add` snapshots the values, so the full copy must
+  already hold the special-patch zeros). The concrete module gets `use <holder module>, only :
+  <base>_compact_init` when the holder lives in another module (after `spel split`).
+- **Zeroing**: a base holder's fields are dropped from `<base>_setvalues` and zeroed by class there
+  (`this%x(k0p+fi)` under `this%cbuf%bound`); a role holder's from each concrete SetValues under
+  `this%<path>%` (`this%retrans%pool`, guard `this%retrans%cbuf%bound`). The zeroing class text of
+  the base routine may name `this%species` (`.not. (is_carbon(this%species) .and. use_fates)`):
+  it is emitted as is, inside the routine it came from.
+- **Selection**: `--type vegetation_nutrient_flux` selects the shared fields; a concrete type's
+  own fields (`veg_cf%gpp`) are still selected with `--type vegetation_carbon_flux`, whose nested
+  fields are excluded with "lives on <holder>: pass --type <holder>". Both can be passed in one
+  run. With a `.spel-nutrient.json` in the sources and no explicit `--type`, the default concrete
+  types are mapped to their family base types (`--roles` adds the role holders).
+- **Driver**: `call veg_cf%core%cbuf%unpack(num, filt)` per embedding. decompMod and
+  CompactLayoutMod are unchanged. The manifest records `embedded_in` per type and the nutrient
+  manifest's provenance.
+- **Unit tests / captures**: `compact_instances` detects `inst%cbuf` (bound) and `inst%<path>%cbuf`
+  (embedded holder); the hooks call `<base>_compact_view(inst%core)` etc. and add a `use` of the
+  holder's module at `!#USE_START`. OpenACC GPU builds still stop (the buffer and its views
+  have no device copy); multicore runs in host memory and works.
+- **Order on a checkout**: `spel analyze` → the nutrient steps (`nutrient_refactor.sh`, each
+  re-analyzes) → `spel analyze` → `spel compact rewrite` → `spel analyze` for unit tests.

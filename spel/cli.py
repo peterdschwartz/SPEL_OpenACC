@@ -44,6 +44,7 @@ def create(args):
 
 
 def compact(args):
+    args.type_given = "--type" in sys.argv
     from spel.scripts.analysis_cache import load_analysis
     from spel.transforms.compact.inventory import (
         FLUX_TYPES,
@@ -78,11 +79,31 @@ def compact_rewrite(fut, args):
     from spel.transforms.compact.rewrite import RewriteError, Rewriter, manifest
     from spel.transforms.compact.select import select_fields
 
+    from spel.transforms.compact.holders import family_base, nutrient_manifest, role_types
+
+    types = list(args.type)
+    nm = nutrient_manifest(fut)
+    if nm is not None and not getattr(args, "type_given", False):
+        # nutrient-transformed sources: the shared fields live on the family base types
+        mapped = []
+        for dtype in types:
+            base = family_base(nm, dtype)
+            if base and base not in mapped:
+                mapped.append(base)
+            elif not base and dtype not in mapped:
+                mapped.append(dtype)
+        if getattr(args, "roles", False):
+            mapped += [r for r in role_types(nm, types) if r not in mapped]
+        print(f"types: {', '.join(mapped)} (from .spel-nutrient.json)")
+        types = mapped
     sels = []
-    for dtype in [] if args.loops_only else args.type:
+    for dtype in [] if args.loops_only else types:
         sel = select_fields(fut, dtype, unpack_after=args.unpack_after)
         sels.append(sel)
         print(f"{dtype}: {len(sel.components)} fields, {len(sel.sites)} access sites")
+        nested = [c for c, why in sel.excluded.items() if why.startswith("lives on")]
+        if nested:
+            print(f"  {len(nested)} shared fields live on an embedded holder; pass --type <that type> (see --excluded)")
         for comp, zc in sel.components.items():
             print(f"  {comp:32s} zeroed: {zc:20s} unpack: {sel.unpack[comp]}")
         if args.excluded:
@@ -787,7 +808,13 @@ def main():
         "--type",
         nargs="+",
         default=["vegetation_carbon_flux", "vegetation_nitrogen_flux", "vegetation_phosphorus_flux"],
-        help="rewrite: the derived types (default: the patch-level C/N/P flux types)",
+        help="rewrite: the derived types (default: the patch-level C/N/P flux types; on nutrient-transformed "
+        "sources their family base type, vegetation_nutrient_flux)",
+    )
+    compact_parser.add_argument(
+        "--roles",
+        action="store_true",
+        help="rewrite: on nutrient-transformed sources also the role holders (mineral/uptake/retrans) of the default types",
     )
     compact_parser.add_argument("--diff", action="store_true", help="rewrite: print the changes")
     compact_parser.add_argument(

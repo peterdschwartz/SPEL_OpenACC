@@ -26,7 +26,7 @@ import json
 import re
 import shutil
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Sequence
@@ -630,40 +630,64 @@ end module {names.module}
 """
 
 
-def _compact_capture_lines(compact: Sequence[tuple[str, str, str]]) -> tuple[str, str, str]:
-    """use lines, and the lines before/after a capture, for the compact instances."""
+def _compact_capture_lines(compact: Sequence) -> tuple[str, str, str]:
+    """
+    use lines, and the lines before/after a capture, for the compact
+    instances: (instance, subgrid, module) tuples of types with type-bound
+    Compact procedures, or CompactInstance records (an embedded holder's
+    plain procedures, `inst%<path>%cbuf`).
+    """
     if not compact:
         return "", "", ""
     from spel.transforms.compact.index_forms import MAIN_FILTER
+    from spel.transforms.compact.unit_test import CompactInstance
 
+    items: list[CompactInstance] = []
     uses: dict[str, list[str]] = {}
-    for inst, _, module in compact:
-        uses.setdefault(module, []).append(inst)
-    use = "".join(f"  use {m}, only : {', '.join(insts)}\n" for m, insts in sorted(uses.items()))
+    for c in compact:
+        if isinstance(c, CompactInstance):
+            items.append(c)
+            uses.setdefault(c.module, []).append(c.instance)
+            if not c.bound:
+                procs = uses.setdefault(c.holder_module or c.module, [])
+                procs.extend(p for p in c.procedures if p not in procs)
+        else:
+            inst, sg, module = c
+            items.append(CompactInstance(inst, sg, module=module))
+            uses.setdefault(module, []).append(inst)
+    use = "".join(f"  use {m}, only : {', '.join(names)}\n" for m, names in sorted(uses.items()) if m)
     use += "  use filterMod, only : filter\n"
     pre = ["      ! compact layout (spel compact rewrite): capture the full layout of the clump\n"]
     post = []
-    for inst, sg, _ in compact:
-        main = MAIN_FILTER[sg].split("%")[1]
+    for ci in items:
+        main = MAIN_FILTER[ci.subgrid].split("%")[1]
         f = f"filter(bounds%clump_index)%num_{main}, filter(bounds%clump_index)%{main}"
-        pre.append(f"      call {inst}%cbuf%unpack({f}, all=.true.)\n")
-        pre.append(f"      call {inst}%FullView()\n")
-        post.append(f"      call {inst}%CompactView()\n")
+        pre.append(f"      call {ci.prefix}%cbuf%unpack({f}, all=.true.)\n")
+        pre.append(f"      {ci.call('full')}\n")
+        post.append(f"      {ci.call('view')}\n")
     return use, "".join(pre), "".join(post)
 
 
-def compact_capture_instances(fut: FunctionalUnitTest) -> list[tuple[str, str, str]]:
-    """(instance, subgrid, declaring module) of the case's compact-layout instances."""
+def compact_capture_instances(fut: FunctionalUnitTest) -> list:
+    """
+    The case's compact-layout instances: (instance, subgrid, declaring module)
+    tuples for types with type-bound Compact procedures, CompactInstance
+    records (with the instance's declaring module) for embedded holders.
+    """
     from spel.transforms.compact.unit_test import compact_instances
 
     type_dict = getattr(fut, "type_dict", None)
     if not type_dict:
         return []
     active_instances, _, _ = hio.get_var_usage_and_elm_inst_vars(type_dict)
-    return [
-        (name, sg, active_instances[name].declaration)
-        for name, sg in compact_instances(fut.type_dict, active_instances)
-    ]
+    out = []
+    for ci in compact_instances(fut.type_dict, active_instances):
+        decl = active_instances[ci.instance].declaration
+        if ci.bound:
+            out.append((ci.instance, ci.subgrid, decl))
+        else:
+            out.append(replace(ci, module=decl, holder_module=ci.module))
+    return out
 
 
 def _capture_parts(names: CaptureNames, instances: list[str]) -> tuple[str, ...]:

@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from dataclasses import asdict, dataclass, field
+from dataclasses import replace, asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -43,6 +43,14 @@ from spel.transforms.compact.index_forms import (
     IndexContext,
     IndexForm,
     compaction_class,
+)
+from spel.scripts.DerivedType import component_path
+from spel.transforms.compact.holders import (
+    base_routine,
+    element_of,
+    embedded_holders,
+    find_holder,
+    is_data_only,
 )
 from spel.transforms.compact.registrations import (
     Registration,
@@ -168,10 +176,23 @@ class Tracer:
 
     # --- walk ---
     def target(self, path: str) -> Optional[str]:
+        """
+        `inst%field` or `inst%core%field` for an access path into a traced
+        instance: the longest component path of the instance's type. A whole
+        embedded holder (`veg_cf%core` passed to a base routine) is not a
+        field: its fields are reached when the callee is visited.
+        """
         parts = path.split("%")
-        if len(parts) >= 2 and parts[0] in self.instances:
+        if len(parts) < 2 or parts[0] not in self.instances:
+            return None
+        comps = self.type_dict[self.instances[parts[0]]].components
+        comp = component_path(comps, parts[1:])
+        if comp is None:
             return f"{parts[0]}%{parts[1]}"
-        return None
+        v = comps[comp]
+        if v.dim == 0 and is_data_only(self.type_dict, v.type):
+            return None
+        return f"{parts[0]}%{comp}"
 
     def visit(self, sub, ctx: IndexContext, chain: tuple[str, ...], top: str, top_ln: int) -> None:
         self.visits += 1
@@ -283,7 +304,7 @@ class Tracer:
 
     def component(self, t: str) -> tuple[str, int, str]:
         if t not in self.components:
-            inst, comp = t.split("%")
+            inst, comp = t.split("%", 1)
             self.components[t] = component_info(self.type_dict[self.instances[inst]], comp)
         return self.components[t]
 
@@ -305,7 +326,13 @@ def component_info(dtype, comp: str) -> tuple[str, int, str]:
     return SUBGRID_OF_BOUND.get(first, "?"), v.dim, bounds
 
 
-def type_registrations(sub_dict: dict, dtype) -> list[Registration]:
+def type_registrations(sub_dict: dict, dtype, type_dict: Optional[dict] = None) -> list[Registration]:
+    """
+    The history/restart registrations of `dtype`: its own init/restart
+    routines, plus those of the holder types it embeds (`<holder>_init`,
+    `<holder>_init_history`, `<holder>_restart` of a nutrient base or role
+    type), their fields prefixed with the component (`core%leaf`).
+    """
     out: list[Registration] = []
     for key in ("init", "restart"):
         sub_id = dtype.procedures.get(key)
@@ -314,6 +341,15 @@ def type_registrations(sub_dict: dict, dtype) -> list[Registration]:
             continue
         tree = parse_routine(sub.filepath, sub.startline, sub.endline)
         out.extend(registrations(tree))
+    for cname, holder in embedded_holders(type_dict, dtype) if type_dict else []:
+        for binding in ("init", "init_history", "restart"):
+            sid = base_routine(sub_dict, holder, binding)
+            sub = sub_dict.get(sid) if sid else None
+            if sub is None:
+                continue
+            tree = parse_routine(sub.filepath, sub.startline, sub.endline)
+            for g in registrations(tree):
+                out.append(replace(g, field=f"{cname}%{g.field}"))
     return out
 
 
@@ -335,19 +371,27 @@ def build_inventory(
     type_dict = fut.type_dict
     inst_type: dict[str, str] = {}
     zero_procs: set[str] = set()
+    concrete: list[str] = []
     for tname in types:
+        holder = find_holder(fut, tname, instances)
+        for emb in holder.embeddings:
+            inst_type[emb.instance] = emb.concrete
+            if emb.concrete not in concrete:
+                concrete.append(emb.concrete)
+    for tname in concrete:
         dtype = type_dict[tname]
-        for inst in dtype.instances:
-            if instances is None or inst in instances:
-                inst_type[inst] = tname
         if isinstance(sid := dtype.procedures.get("setvalues"), str):
             zero_procs.add(sid)
+        # the shared zeroing of the holders it embeds (`<base>_setvalues`)
+        for _, holder_type in embedded_holders(type_dict, dtype):
+            if (sid := base_routine(sub_dict, holder_type, "setvalues")) is not None:
+                zero_procs.add(sid)
 
     tracer = Tracer(sub_dict, type_dict, inst_type, zero_procs)
     entries = tracer.run()
     unpack_ln = unpack_line(sub_dict, unpack_after)
 
-    regs = {t: type_registrations(sub_dict, type_dict[t]) for t in types}
+    regs = {t: type_registrations(sub_dict, type_dict[t], type_dict) for t in concrete}
 
     by_field: dict[str, list[Entry]] = {}
     for e in entries:
@@ -358,11 +402,14 @@ def build_inventory(
     for t, es in sorted(by_field.items()):
         if not any(e.zero for e in es):
             continue
-        inst, comp = t.split("%")
+        inst, comp = t.split("%", 1)
         tname = inst_type[inst]
+        element = element_of(inst, tname)
         sg, rank, bounds = tracer.component(t)
         r = FieldReport(field=t, type=tname, subgrid=sg, rank=rank, bounds=bounds)
-        fill_report(r, es, [g for g in regs[tname] if g.field == comp and g.applies_to(inst)], unpack_ln)
+        fill_report(
+            r, es, [g for g in regs[tname] if g.field == comp and g.applies_to(inst, element)], unpack_ln
+        )
         reports.append(r)
     return reports, tracer
 

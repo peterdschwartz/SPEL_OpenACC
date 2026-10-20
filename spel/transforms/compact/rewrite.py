@@ -38,6 +38,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from spel.transforms.compact.holders import base_routine, embedded_holders, nutrient_manifest
 from spel.transforms.compact.inventory import DRIVER_ID
 from spel.transforms.compact.registrations import parse_routine
 from spel.transforms.compact.select import Selection, statement_end
@@ -228,21 +229,24 @@ class Rewriter:
 
     # --- the derived type ---
     def rewrite_type(self) -> None:
-        dtype = self.fut.type_dict[self.sel.dtype]
-        procs = dtype.procedures
-        init, setvalues = self.subs[procs["init"]], self.subs[procs["setvalues"]]
-        prefix = procs["init"].split("::")[1].removesuffix("_init")
-        fe = self.file(init.filepath)
-        comps = list(self.sel.components)
-        classes = self.classes()
+        holder = self.sel.holder
+        if "cbuf" in self.fut.type_dict[self.sel.dtype].components:
+            raise RewriteError(f"{self.sel.dtype} already has a cbuf component: already rewritten?")
+        if holder is not None and holder.embedded:
+            self.rewrite_embedded_type()
+        else:
+            self.rewrite_concrete_type()
 
+    def buffer_use(self, fe: FileEdits) -> None:
         if str(fe.path) not in self._buffer_use:
             self._buffer_use.add(str(fe.path))
             fe.after[self.module_use_line(fe)].append(
                 f"  use CompactLayoutMod, only : compact_buffer_type, compact_field  {TAG}"
             )
 
-        tname = re.escape(self.sel.dtype)
+    def type_span(self, fe: FileEdits, type_name: str) -> tuple[int, int, int]:
+        """(first line, `contains` or end line, `end type` line) of the type definition."""
+        tname = re.escape(type_name)
         start = next(
             i for i, l in enumerate(fe.lines)
             if re.match(rf"\s*type\s*,.*::\s*{tname}\s*$", l.split("!")[0], re.IGNORECASE)
@@ -255,18 +259,10 @@ class Rewriter:
             (i for i in range(start, end) if re.match(r"\s*contains\s*$", fe.lines[i], re.IGNORECASE)),
             end,
         )
-        fe.before[contains].append(
-            f"    type(compact_buffer_type) :: cbuf  ! compact storage of some fields above {TAG}"
-        )
-        fe.before[end].extend(
-            [
-                f"    procedure, public :: CompactInit => {prefix}_compact_init  {TAG}",
-                f"    procedure, public :: CompactView => {prefix}_compact_view  {TAG}",
-                f"    procedure, public :: FullView    => {prefix}_full_view  {TAG}",
-            ]
-        )
+        return start, contains, end
 
-        # Init: register after the special-patch SetValues (which zeroes the full arrays)
+    def init_setvalues_call(self, init) -> int:
+        """Line of the one `this%SetValues` call of an Init (the special-patch zeroing)."""
         tree = parse_routine(init.filepath, init.startline, init.endline)
         calls = [
             s for s in tree.body.statements
@@ -274,17 +270,16 @@ class Rewriter:
         ]
         if len(calls) != 1:
             raise RewriteError(f"{init.id}: expected one this%SetValues call, found {len(calls)}")
-        ln = calls[0].lineno
-        bounds = self.init_bounds(init)
-        log = self.can_log(fe)
-        fe.after[statement_end(fe.lines, ln)].extend(
-            [f"    call this%CompactInit({bounds})  {TAG}"]
-            + ([f"    if (masterproc) write(iulog,*) '{prefix}: ', this%cbuf  {TAG}"] if log else [])
-        )
+        return calls[0].lineno
 
-        # SetValues: drop the lines of the compact fields, zero them by class
-        zero_lines = self.zero_lines(setvalues)
-        for comp in comps:
+    def rewrite_zeroing(self, setvalues, path: str, classes) -> None:
+        """
+        In a zeroing routine: drop the assignments of the compact fields
+        (`this%<path>%x(i) = value`) and zero them by class before `end subroutine`.
+        """
+        fe = self.file(setvalues.filepath)
+        zero_lines = self.zero_lines(setvalues, path)
+        for comp in self.sel.components:
             for ln in zero_lines.get(comp, []):
                 line = fe.lines[ln]
                 if statement_end(fe.lines, ln) != ln or not re.search(
@@ -296,13 +291,17 @@ class Rewriter:
         if not re.match(r"\s*end\s*subroutine", fe.lines[sv_end], re.IGNORECASE):
             raise RewriteError(f"{fe.path}:{sv_end + 1}: not the end of {setvalues.id}")
         dummies = [d.name for d in setvalues.record.dummy_args]
+        if len(dummies) < 4:
+            raise RewriteError(f"{setvalues.id}: expected (this, num, filter, value) dummies, got {dummies}")
         num, filt, value = dummies[1], dummies[2], dummies[3]
         if setvalues.record.declaration("fi") is None:
             raise RewriteError(f"{setvalues.id} has no loop index fi")
-        fe.before[sv_end].extend(self.zero_block(classes, num, filt, value))
+        fe.before[sv_end].extend(self.zero_block(classes, num, filt, value, path))
         self.prologue(fe, setvalues)
 
-        # generated procedures, after SetValues
+    def generated_procedures(self, prefix: str, this_decl: str, classes) -> list[str]:
+        """CompactInit / CompactView / FullView for the selected fields, named `<prefix>_<name>`."""
+        comps = list(self.sel.components)
         cls_of = {c: k for k, (_, cs) in classes.items() for c in cs}
         width = max(len(c) for c in comps) + 2
 
@@ -316,7 +315,7 @@ class Rewriter:
                 f"    ! {doc} (generated by spel compact rewrite)",
                 "    !",
                 "    ! !ARGUMENTS:",
-                f"    class({self.sel.dtype}) :: this",
+                f"    {this_decl}",
                 *decls,
                 "    !------------------------------------------------------------------------",
                 *body,
@@ -350,19 +349,135 @@ class Rewriter:
             [],
             [f"    call this%cbuf%full_view(this%{c})" for c in comps] + ["    this%cbuf%bound = .false."],
         )
-        fe.after[sv_end].extend(gen)
+        return gen
+
+    def rewrite_concrete_type(self) -> None:
+        """A type with instances and type-bound procedures (the pre-nutrient flux types)."""
+        dtype = self.fut.type_dict[self.sel.dtype]
+        procs = dtype.procedures
+        init, setvalues = self.subs[procs["init"]], self.subs[procs["setvalues"]]
+        prefix = procs["init"].split("::")[1].removesuffix("_init")
+        fe = self.file(init.filepath)
+        classes = self.classes()
+        self.buffer_use(fe)
+
+        _, contains, end = self.type_span(fe, self.sel.dtype)
+        fe.before[contains].append(
+            f"    type(compact_buffer_type) :: cbuf  ! compact storage of some fields above {TAG}"
+        )
+        fe.before[end].extend(
+            [
+                f"    procedure, public :: CompactInit => {prefix}_compact_init  {TAG}",
+                f"    procedure, public :: CompactView => {prefix}_compact_view  {TAG}",
+                f"    procedure, public :: FullView    => {prefix}_full_view  {TAG}",
+            ]
+        )
+
+        # Init: register after the special-patch SetValues (which zeroes the full arrays)
+        ln = self.init_setvalues_call(init)
+        bounds = self.init_bounds(init)
+        log = self.can_log(fe)
+        fe.after[statement_end(fe.lines, ln)].extend(
+            [f"    call this%CompactInit({bounds})  {TAG}"]
+            + ([f"    if (masterproc) write(iulog,*) '{prefix}: ', this%cbuf  {TAG}"] if log else [])
+        )
+
+        # SetValues: drop the lines of the compact fields, zero them by class
+        self.rewrite_zeroing(setvalues, "", classes)
+
+        # generated procedures, after SetValues
+        fe.after[setvalues.endline].extend(
+            self.generated_procedures(prefix, f"class({self.sel.dtype}) :: this", classes)
+        )
+
+    def rewrite_embedded_type(self) -> None:
+        """
+        A holder embedded in its instances' types (a nutrient base or role
+        type): `cbuf` on the holder, plain module procedures
+        `<holder>_compact_init/_compact_view/_full_view` (a type-bound
+        procedure would stop SPEL's analysis from flattening the holder's
+        fields into `inst%core%field`), CompactInit called from each concrete
+        Init after its special-patch SetValues, and the zeroing in the shared
+        `<holder>_setvalues` (base type) or in the concrete SetValues routines
+        (role type, under `this%<path>%`).
+        """
+        holder = self.sel.holder
+        base = holder.type
+        fe = self.file(holder.dtype.filepath)
+        classes = self.classes()
+        self.buffer_use(fe)
+
+        _, contains, end = self.type_span(fe, base)
+        fe.before[contains].append(
+            f"    type(compact_buffer_type) :: cbuf  ! compact storage of some fields above {TAG}"
+        )
+        fe.after[end].append(
+            f"  public :: {base}_compact_init, {base}_compact_view, {base}_full_view  {TAG}"
+        )
+        mod_end = next(
+            i for i in range(len(fe.lines) - 1, -1, -1)
+            if re.match(r"\s*end\s*module\b", fe.lines[i], re.IGNORECASE)
+        )
+        fe.before[mod_end].extend(
+            self.generated_procedures(base, f"type({base}), intent(inout) :: this", classes)
+        )
+        holder_module = getattr(holder.dtype, "declaration", None) or Path(holder.dtype.filepath).stem
+
+        # each concrete Init: CompactInit after the special-patch SetValues call
+        done: set[str] = set()
+        for emb in holder.embeddings:
+            cdtype = self.fut.type_dict[emb.concrete]
+            init_id = cdtype.procedures.get("init")
+            if not isinstance(init_id, str) or init_id in done:
+                if not isinstance(init_id, str):
+                    raise RewriteError(f"{emb.concrete} has no Init procedure")
+                continue
+            done.add(init_id)
+            init = self.subs[init_id]
+            fe_c = self.file(init.filepath)
+            ln = self.init_setvalues_call(init)
+            bounds = self.init_bounds(init)
+            log = self.can_log(fe_c)
+            fe_c.after[statement_end(fe_c.lines, ln)].extend(
+                [f"    call {base}_compact_init(this%{emb.path}, {bounds})  {TAG}"]
+                + ([f"    if (masterproc) write(iulog,*) '{base} of {emb.concrete}: ', this%{emb.path}%cbuf  {TAG}"] if log else [])
+            )
+            if fe_c.path != fe.path:
+                key = (str(fe_c.path), base)
+                if key not in self._buffer_use:
+                    self._buffer_use.add(key)
+                    fe_c.after[self.module_use_line(fe_c)].append(
+                        f"  use {holder_module}, only : {base}_compact_init  {TAG}"
+                    )
+
+        # zeroing: the shared routine of a base type, else the concrete SetValues routines
+        if "setvalues" in holder.routines:
+            self.rewrite_zeroing(self.subs[holder.routines["setvalues"]], "", classes)
+        else:
+            seen: set[str] = set()
+            for emb in holder.embeddings:
+                sid = self.fut.type_dict[emb.concrete].procedures.get("setvalues")
+                if not isinstance(sid, str):
+                    raise RewriteError(f"{emb.concrete} has no SetValues procedure")
+                if sid in seen:
+                    continue
+                seen.add(sid)
+                self.rewrite_zeroing(self.subs[sid], emb.path, classes)
 
     def can_log(self, fe: FileEdits) -> bool:
         """Whether the module imports masterproc and iulog (to log the buffer)."""
         uses = " ".join(l.split("!")[0].lower() for l in fe.lines if re.match(r"\s*use\s", l, re.IGNORECASE))
         return bool(re.search(r"\bmasterproc\b", uses) and re.search(r"\biulog\b", uses))
 
-    def zero_block(self, classes, num: str, filt: str, value: str) -> list[str]:
+    def zero_block(self, classes, num: str, filt: str, value: str, path: str = "") -> list[str]:
         """
         Explicit assignments (visible to SPEL's analysis): a contiguous fill of
         each clump's compact range once bound, the filter elements of the full
-        layout copies before (the special-patch call in Init).
+        layout copies before (the special-patch call in Init). `path`: the
+        component of `this` that holds the fields and the buffer (`retrans`).
         """
+        this = f"this%{path}" if path else "this"
+
         def guarded(guard, body, indent):
             if guard is None:
                 return [f"{indent}{line}" for line in body]
@@ -372,11 +487,11 @@ class Rewriter:
         def loop(index: str, comps: list[str]) -> list[str]:
             return (
                 [f"do concurrent (fi = 1:{num})"]
-                + [f"   this%{c}({index}) = {value}" for c in comps]
+                + [f"   {this}%{c}({index}) = {value}" for c in comps]
                 + ["end do"]
             )
 
-        out = [f"    ! compact fields, by zeroing class  {TAG}", "    if (this%cbuf%bound) then"]
+        out = [f"    ! compact fields, by zeroing class  {TAG}", f"    if ({this}%cbuf%bound) then"]
         for guard, comps in classes.values():
             out += guarded(guard, loop(f"{K0}+fi", comps), "       ")
         out.append("    else")
@@ -408,12 +523,16 @@ class Rewriter:
             return "begc, endc"
         raise RewriteError(f"{init.id}: no bounds dummies for subgrid {self.sel.subgrid} in {names}")
 
-    def zero_lines(self, setvalues) -> dict[str, list[int]]:
+    def zero_lines(self, setvalues, path: str = "") -> dict[str, list[int]]:
+        """component -> lines assigning `this%<path>%component` in the routine."""
+        want = f"this%{path}%" if path else "this%"
         out: dict[str, list[int]] = defaultdict(list)
         for e in setvalues.record.accesses(status="w"):
-            parts = e.path.split("%")
-            if parts[0] == "this" and len(parts) == 2 and e.ln not in out[parts[1]]:
-                out[parts[1]].append(e.ln)
+            if not e.path.startswith(want):
+                continue
+            comp = e.path[len(want):]
+            if "%" not in comp and e.ln not in out[comp]:
+                out[comp].append(e.ln)
         return out
 
     # --- driver, clump bounds, module ---
@@ -444,17 +563,22 @@ class Rewriter:
             num, filt = args.get(f"num_{main}"), args.get(f"filter_{main}")
             if num is None or filt is None:
                 raise RewriteError(f"{unpack_after}: no num_{main}/filter_{main} arguments")
-            block += [f"{indent}call {inst}%cbuf%unpack({num}, {filt})" for inst in sel.instances]
+            if sel.holder is not None:
+                block += [f"{indent}call {e.prefix}%cbuf%unpack({num}, {filt})" for e in sel.holder.embeddings]
+            else:
+                block += [f"{indent}call {inst}%cbuf%unpack({num}, {filt})" for inst in sel.instances]
         block.append(f"{indent}call t_stopf('compact_unpack')")
         fe.after[end].extend(block)
 
         # the instances elm_driver doesn't import yet
         missing: dict[str, list[str]] = defaultdict(list)
         for sel in self.sels:
-            dtype = self.fut.type_dict[sel.dtype]
+            embs = sel.holder.embeddings if sel.holder is not None else None
             for inst in sel.instances:
-                if not known(drv.record, inst):
-                    missing[dtype.instances[inst].declaration].append(inst)
+                if known(drv.record, inst):
+                    continue
+                ctype = next((e.concrete for e in embs if e.instance == inst), sel.dtype) if embs else sel.dtype
+                missing[self.fut.type_dict[ctype].instances[inst].declaration].append(inst)
         for mod, insts in sorted(missing.items()):
             fe.after[self.module_use_line(fe)].append(f"  use {mod}, only : {', '.join(insts)}  {TAG}")
 
@@ -535,10 +659,15 @@ class Rewriter:
                 self.rewrite_type()
             self.rewrite_driver(unpack_after)
             self.rewrite_decomp()
+        done: set[str] = set()
         for dtype in loop_types:
-            sid = self.fut.type_dict[dtype].procedures.get("setvalues")
-            if isinstance(sid, str) and sid in self.subs:
-                self.notes.append(f"{sid}: {self.rewrite_blocked_loops(self.subs[sid])} blocked loops -> do concurrent")
+            dt = self.fut.type_dict[dtype]
+            sids = [dt.procedures.get("setvalues")]
+            sids += [base_routine(self.subs, h, "setvalues") for _, h in embedded_holders(self.fut.type_dict, dt)]
+            for sid in sids:
+                if isinstance(sid, str) and sid in self.subs and sid not in done:
+                    done.add(sid)
+                    self.notes.append(f"{sid}: {self.rewrite_blocked_loops(self.subs[sid])} blocked loops -> do concurrent")
 
     def main_dir(self) -> Path:
         return Path(self.subs[DRIVER_ID].filepath).parent
@@ -599,12 +728,13 @@ def manifest(rewriter: Rewriter, unpack_after: str, spel_commit: str, e3sm: dict
         rewriter.sel = sel
         types[sel.dtype] = {
             "instances": sel.instances,
+            "embedded_in": {e.instance: e.path for e in sel.holder.embeddings} if sel.holder and sel.holder.embedded else {},
             "classes": {k: {"guard": g, "fields": cs} for k, (g, cs) in rewriter.classes().items()},
             "unpack": sorted(c for c, u in sel.unpack.items() if u),
             "sites": len(sel.sites),
         }
     rewriter.sel = sel0
-    return {
+    out = {
         "generated_by": "spel compact rewrite",
         "spel_commit": spel_commit,
         "e3sm": e3sm,
@@ -612,3 +742,7 @@ def manifest(rewriter: Rewriter, unpack_after: str, spel_commit: str, e3sm: dict
         "types": types,
         "files": sorted(str(f.path) for f in rewriter.files.values()),
     }
+    nm = nutrient_manifest(rewriter.fut)
+    if nm is not None:  # the nutrient transform state the rewrite assumed
+        out["nutrient"] = {k: nm.get(k) for k in ("spel_commit", "e3sm", "generated_by") if k in nm}
+    return out

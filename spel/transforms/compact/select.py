@@ -40,6 +40,7 @@ from spel.transforms.compact.inventory import (
     build_inventory,
     split_window,
 )
+from spel.transforms.compact.holders import Holder, find_holder, srcroot_of
 from spel.transforms.compact.index_forms import MAIN_FILTER
 
 
@@ -81,6 +82,7 @@ class Selection:
     excluded: dict[str, str]  # component -> reason
     untraced: list[str]
     polymorphic: dict[str, Polymorphic] = field(default_factory=dict)
+    holder: Optional[Holder] = None  # the type and where its instances live (see holders.py)
 
 
 def rewritable(e: Entry, subgrid: str) -> Optional[str]:
@@ -106,17 +108,28 @@ def rewritable(e: Entry, subgrid: str) -> Optional[str]:
 
 
 def select_fields(fut, dtype_name: str, unpack_after: str = UNPACK_AFTER) -> Selection:
+    holder = find_holder(fut, dtype_name)
     reports, tracer = build_inventory(fut, types=(dtype_name,), unpack_after=unpack_after)
     dtype = fut.type_dict[dtype_name]
-    instances = list(dtype.instances)
+    instances = holder.instances
+    excluded: dict[str, str] = {}
     by_comp: dict[str, list[FieldReport]] = defaultdict(list)
     for r in reports:
-        by_comp[r.field.split("%")[1]].append(r)
-    subgrids = {r.subgrid for r in reports}
+        hit = holder.split(r.field)
+        if hit is None:
+            continue  # a field of the instance outside this holder (concrete-only, or another holder)
+        _, comp = hit
+        if not holder.embedded and "%" in comp:
+            # a field of a holder the type embeds (its nutrient core or a role component)
+            head = comp.split("%")[0]
+            ctype = dtype.components[head].type if head in dtype.components else "?"
+            excluded[comp] = f"lives on {ctype}: pass --type {ctype}"
+            continue
+        by_comp[comp].append(r)
+    subgrids = {r.subgrid for rs in by_comp.values() for r in rs}
     if len(subgrids) != 1 or (subgrid := subgrids.pop()) not in MAIN_FILTER:
         raise ValueError(f"{dtype_name}: fields on subgrids {subgrids}; one of {set(MAIN_FILTER)} expected")
 
-    excluded: dict[str, str] = {}
     chosen: dict[str, str] = {}
     unpack: dict[str, bool] = {}
     for comp, rs in sorted(by_comp.items()):
@@ -141,7 +154,7 @@ def select_fields(fut, dtype_name: str, unpack_after: str = UNPACK_AFTER) -> Sel
         by_field[e.field].append(e)
 
     while True:
-        sites, poly, drop = _sites(tracer, by_field, chosen, subgrid, instances)
+        sites, poly, drop = _sites(tracer, by_field, chosen, subgrid, holder)
         if not drop:
             break
         for comp, reason in drop.items():
@@ -159,6 +172,7 @@ def select_fields(fut, dtype_name: str, unpack_after: str = UNPACK_AFTER) -> Sel
         excluded=excluded,
         untraced=[],
         polymorphic=poly,
+        holder=holder,
     )
     # a use the trace doesn't see (an unanalyzed routine, a line SPEL comments
     # out) would index the field with the subgrid index: keep it out
@@ -172,7 +186,7 @@ def select_fields(fut, dtype_name: str, unpack_after: str = UNPACK_AFTER) -> Sel
             sel.unpack.pop(comp, None)
             sel.excluded[comp] = reason
         while True:
-            sites, poly, drop = _sites(tracer, by_field, sel.components, subgrid, instances)
+            sites, poly, drop = _sites(tracer, by_field, sel.components, subgrid, holder)
             if not drop:
                 break
             for comp, reason in drop.items():
@@ -185,11 +199,14 @@ def select_fields(fut, dtype_name: str, unpack_after: str = UNPACK_AFTER) -> Sel
     return sel
 
 
-def _sites(tracer: Tracer, by_field, chosen, subgrid, instances):
+def _sites(tracer: Tracer, by_field, chosen, subgrid, holder: Holder):
     sites: dict[tuple, Site] = {}
     drop: dict[str, str] = {}
     for t, es in by_field.items():
-        inst, comp = t.split("%")
+        hit = holder.split(t)
+        if hit is None:
+            continue
+        _, comp = hit
         if comp not in chosen or not any(e.zero for e in es):
             continue
         window, _ = split_window(es, tracer.unpack_ln, passes=True)
@@ -209,8 +226,8 @@ def _sites(tracer: Tracer, by_field, chosen, subgrid, instances):
                 drop.setdefault(comp, f"site {e.loc} indexed differently in different visits")
             site.components.add(comp)
     def selected(path: str) -> bool:
-        parts = path.split("%")
-        return parts[0] in instances and len(parts) > 1 and parts[1] in chosen
+        hit = holder.split(path)
+        return hit is not None and hit[1] in chosen
 
     # a site bound to anything but selected fields keeps the full layout,
     # unless its routine can take both layouts (Polymorphic)
@@ -236,7 +253,7 @@ def _sites(tracer: Tracer, by_field, chosen, subgrid, instances):
                 where = f"{caller}@{ln + 1}"
                 for p in targets:
                     if selected(p):
-                        drop.setdefault(p.split("%")[1], f"call {where} mixes layouts in {sub_id}")
+                        drop.setdefault(holder.split(p)[1], f"call {where} mixes layouts in {sub_id}")
         if why is not None:
             for s in msites:
                 for comp in s.components:
@@ -291,10 +308,13 @@ def untraced_uses(fut, tracer: Tracer, sel: Selection, by_field) -> list[tuple[s
     """
     if not sel.components:
         return []
-    handled = {
-        sid for key in ("init", "setvalues", "clean")
-        if isinstance(sid := fut.type_dict[sel.dtype].procedures.get(key), str)
-    }
+    holder = sel.holder or find_holder(fut, sel.dtype)
+    handled = set(holder.routines.values())
+    for ctype in holder.concrete_types:
+        handled |= {
+            sid for key in ("init", "setvalues", "clean")
+            if isinstance(sid := fut.type_dict[ctype].procedures.get(key), str)
+        }
     traced_lines: dict[str, set[int]] = defaultdict(set)
     for es in by_field.values():
         for e in es:
@@ -310,9 +330,17 @@ def untraced_uses(fut, tracer: Tracer, sel: Selection, by_field) -> list[tuple[s
     pattern = re.compile(
         r"%\s*(" + "|".join(sorted(map(re.escape, sel.components))) + r")\b", re.IGNORECASE
     )
-    srcroot = Path(fut.subroutine_dict[next(iter(handled))].filepath).parents[1]
-    type_file = Path(fut.subroutine_dict[next(iter(handled))].filepath)
-    insts = "|".join(sorted(map(re.escape, sel.instances)))
+    srcroot = srcroot_of(fut.subroutine_dict)
+    holder_file = Path(holder.dtype.filepath)
+    concrete_files = {Path(fut.type_dict[c].filepath) for c in holder.concrete_types}
+    # `veg_cf%x` / `veg_cf%core%x`: what precedes `%x` names an instance and the holder's path
+    insts = "|".join(
+        sorted(
+            (rf"{re.escape(e.instance)}\s*%\s*{re.escape(e.path)}" if e.path else re.escape(e.instance))
+            for e in holder.embeddings
+        )
+    )
+    paths = "|".join(sorted({re.escape(e.path) for e in holder.embeddings if e.path}))
     out = []
     for path in sorted(srcroot.rglob("*.F90")):
         if "external_models" in path.parts:
@@ -338,7 +366,10 @@ def untraced_uses(fut, tracer: Tracer, sel: Selection, by_field) -> list[tuple[s
                 comp = m.group(1).lower()
                 before = code[: m.start()]
                 relevant = bool(re.search(rf"\b({insts})\s*$", before, re.IGNORECASE)) or (
-                    path == type_file and bool(re.search(r"\bthis\s*$", before, re.IGNORECASE))
+                    path == holder_file and bool(re.search(r"\bthis\s*$", before, re.IGNORECASE))
+                ) or (
+                    bool(paths) and path in concrete_files
+                    and bool(re.search(rf"\bthis\s*%\s*({paths})\s*$", before, re.IGNORECASE))
                 )
                 out.append((comp, text, relevant))
     return out

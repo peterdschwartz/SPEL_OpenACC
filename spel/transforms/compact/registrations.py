@@ -9,6 +9,7 @@ then ``ptr_col=data2dptr``) is attributed to the pointer's target.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
@@ -39,17 +40,28 @@ RESTART_CALL = "restartvar"
 @dataclass(frozen=True)
 class Registration:
     kind: str  # "hist" | "restart"
-    field: str  # component of `this`
+    field: str  # component path of `this` (x, core%x)
     name: str  # history field / restart variable name
     ln: int
     guards: tuple[str, ...]
     inactive: bool = False  # history field with default='inactive'
 
-    def applies_to(self, instance: str) -> bool:
-        """Whether the registration's carbon_type guards admit `instance`."""
+    def applies_to(self, instance: str, element: str = "") -> bool:
+        """
+        Whether the registration's guards admit `instance`: its carbon_type
+        guards (c12/c13/c14 from the instance prefix) and, for a registration
+        of a nutrient base type, its species guards evaluated for `element`
+        (c12, c13, c14, n, p). A species guard the evaluator cannot read admits
+        (conservative: the field counts as registered).
+        """
         iso = next((t for t in ("c13", "c14") if instance.startswith(f"{t}_")), "c12")
-        conds = [g for g in self.guards if "carbon_type" in g]
-        return all(_admits(g, iso) for g in conds)
+        if not all(_admits(g, iso) for g in self.guards if "carbon_type" in g):
+            return False
+        if element:
+            for g in self.guards:
+                if "species" in g and _species_admits(g, element) is False:
+                    return False
+        return True
 
 
 def _admits(guard: str, iso: str) -> bool:
@@ -57,6 +69,66 @@ def _admits(guard: str, iso: str) -> bool:
     names = [t for t in ("c12", "c13", "c14") if t in guard]
     hit = iso in names
     return not hit if negated else hit
+
+
+def _strip_parens(g: str) -> str:
+    while g.startswith("(") and g.endswith(")"):
+        depth = 0
+        for i, ch in enumerate(g):
+            depth += (ch == "(") - (ch == ")")
+            if depth == 0 and i < len(g) - 1:
+                return g
+        g = g[1:-1]
+    return g
+
+
+def _split_top(g: str, op: str) -> list[str]:
+    parts, depth, start = [], 0, 0
+    i = 0
+    while i < len(g):
+        ch = g[i]
+        depth += (ch == "(") - (ch == ")")
+        if depth == 0 and g.startswith(op, i):
+            parts.append(g[start:i])
+            start = i + len(op)
+            i += len(op)
+            continue
+        i += 1
+    parts.append(g[start:])
+    return parts
+
+
+def _species_admits(guard: str, element: str):
+    """
+    True/False if the (normalized) species guard can be evaluated for
+    `element`, else None. Terms: `this%species==cn_species_x`,
+    `this%species/=cn_species_x`, `is_carbon(this%species)`, `.not.`/`not(...)`,
+    `.and.`/`.or.` chains.
+    """
+    g = _strip_parens(guard.replace(" ", "").lower())
+    if g.startswith("not(") and g.endswith(")"):
+        inner = _species_admits(g[4:-1], element)
+        return None if inner is None else not inner
+    if g.startswith(".not."):
+        inner = _species_admits(g[5:], element)
+        return None if inner is None else not inner
+    for op, combine in ((".or.", any), (".and.", all)):
+        parts = _split_top(g, op)
+        if len(parts) > 1:
+            values = [_species_admits(p, element) for p in parts]
+            if None in values:
+                return None
+            return combine(values)
+    m = re.fullmatch(r"this%species(==|/=|\.eq\.|\.ne\.)cn_species_(\w+)", g) or re.fullmatch(
+        r"cn_species_(\w+)(==|/=|\.eq\.|\.ne\.)this%species", g
+    )
+    if m:
+        op, species = (m.group(1), m.group(2)) if m.group(1).startswith((".", "=", "/")) else (m.group(2), m.group(1))
+        equal = op in ("==", ".eq.")
+        return (element == species) if equal else (element != species)
+    if g == "is_carbon(this%species)":
+        return element in ("c12", "c13", "c14")
+    return None
 
 
 def iter_statements(
@@ -109,13 +181,13 @@ def _norm(expr) -> str:
 
 
 def _component(expr) -> str | None:
-    """`this%x(...)` -> 'x'; anything else -> None."""
+    """`this%x(...)` -> 'x', `this%core%x(...)` -> 'core%x'; anything else -> None."""
     try:
         names = [n.lower() for n, _ in flatten_designator(expr)]
     except Exception:
         return None
     if len(names) >= 2 and names[0] == "this":
-        return names[1]
+        return "%".join(names[1:])
     return None
 
 
