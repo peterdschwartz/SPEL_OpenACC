@@ -1161,7 +1161,7 @@ def generate_cmake(files: list[str], case_dir: Path):
             set(OPENACC_FLAGS "-acc=multicore -Minfo=accel")
         elseif (ACC_MODE STREQUAL "GPU")
             message(STATUS "Enabling OpenACC GPU support")
-            set(OPENACC_FLAGS "-acc=gpu -Minfo=accel")
+            set(OPENACC_FLAGS "-acc=gpu -Minfo=accel -DSPEL_ACC_GPU")  # SPEL_ACC_GPU: a real device (compact layout unsupported)
         elseif (ACC_MODE STREQUAL "OPENMP")
             message(STATUS "Enabling OpenMP (threads set by OMP_NUM_THREADS)")
             set(OPENACC_FLAGS "-mp -Minfo=mp -U_OPENMP")

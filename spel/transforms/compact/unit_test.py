@@ -56,9 +56,12 @@ def hook_lines(instances: list[tuple[str, str]]) -> dict[str, list[str]]:
     """Lines for the !#COMPACT_* tokens of main.F90 (empty if no instance)."""
     if not instances:
         return {}
+    # multicore OpenACC runs in host memory, so the compact buffers and views need
+    # nothing; a real device (SPEL_ACC_GPU, set by the generated CMake for ACC=GPU)
+    # would need the buffer and its views deep-copied
     init = [
-        "#ifdef _OPENACC\n",
-        '   stop "compact layout (spel compact rewrite): no OpenACC unit tests yet"\n',
+        "#if defined(_OPENACC) && defined(SPEL_ACC_GPU)\n",
+        '   stop "compact layout (spel compact rewrite): no OpenACC GPU unit tests yet"\n',
         "#endif\n",
     ]
     before, after = [], []

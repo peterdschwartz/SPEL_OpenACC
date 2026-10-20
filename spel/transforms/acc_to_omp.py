@@ -104,7 +104,7 @@ class LoopPlan:
 
     @property
     def loop_ln(self) -> int:
-        return self.nest[0].start_ln
+        return self.nest[0].start_ln if self.nest else self.directive.end_ln + 1
 
     def clauses(self) -> list[str]:
         out = []
