@@ -588,3 +588,27 @@ def test_wait_for_case_jobs_polls_until_complete(tmp_path):
     with pytest.raises(CaseRunError):
         wait_for_case_jobs(tmp_path, run=lambda cmd, cwd=None: "case.run:3\n" if cmd[0] == "./xmlquery" else "RUNNING\n",
                            sleep=lambda s: None, timeout_s=2.0, poll_s=1.0)
+
+
+def test_capture_module_compact_instances():
+    """A compact-layout instance is unpacked and switched to the full layout around every capture."""
+    from spel.scripts.subset import SubsetSpec
+
+    compact = [("veg_cf", "p", "vegetationdatatype"), ("veg_pf", "p", "vegetationdatatype")]
+    src = ie.generate_capture_module(NAMES, ["cnstate_vars"], compact=compact)
+    assert "use vegetationdatatype, only : veg_cf, veg_pf" in src
+    assert "use filterMod, only : filter" in src
+    unpack = "call veg_cf%cbuf%unpack(filter(bounds%clump_index)%num_soilp, filter(bounds%clump_index)%soilp, all=.true.)"
+    assert src.count(unpack) == 2 and src.count("call veg_pf%FullView()") == 2
+    assert src.count("call veg_cf%CompactView()") == 2
+    for io in ("io_inputs", "io_outputs"):
+        body = src[src.index(f"write_elmtypes({io}") - 400 : src.index(f"write_elmtypes({io}") + 200]
+        assert body.index("FullView()") < body.index(f"write_elmtypes({io}") < body.index("CompactView()")
+    # subset captures get the same treatment
+    spec = SubsetSpec.parse("urban")
+    sub = ie.generate_capture_module(NAMES, ["cnstate_vars"], subset=spec, compact=compact)
+    assert sub.count(unpack) == 2 and sub.count("call veg_cf%CompactView()") == 2
+    assert sub.index("FullView()") < sub.index("write_elmtypes(io_inputs") < sub.index("veg_cf%CompactView()")
+    # without compact instances the module is unchanged
+    assert ie.generate_capture_module(NAMES, ["cnstate_vars"]) == ie.generate_capture_module(NAMES, ["cnstate_vars"], compact=())
+    assert "FullView" not in ie.generate_capture_module(NAMES, ["cnstate_vars"])

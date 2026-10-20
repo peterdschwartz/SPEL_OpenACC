@@ -107,8 +107,12 @@ generated commit, `spel analyze`, run `spel compact rewrite` again.
   everything and unbinds after it, so IO and duplicate_sets keep the full
   layout. Test a rewritten routine from a scratch worktree of the analyzed
   commit with the rewrite applied (`spel analyze --srcroot WT` again after
-  rewriting), against reference data captured from the unrewritten sources.
-  OpenACC unit tests are not supported yet (the hooks stop).
+  rewriting). Reference data may be captured from the rewritten sources too:
+  the generated capture module (`instrument_elm.compact_capture_instances`)
+  unpacks the clump's filter into the full layout and switches each compact
+  instance to it around every capture, and back after, so the files hold what
+  a build without the compact layout holds (checked bit-for-bit on the crop20
+  case, 2026-10-19). OpenACC unit tests are not supported yet (the hooks stop).
 - Fields with maps (`compact+maps`), restart fields, column types (rank 2/3)
   and the deferred `ch4_prod` fields (DEFERRED.md).
 - GPU: device copies of `cbuf%data` and attach for the components.

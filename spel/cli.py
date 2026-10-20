@@ -165,6 +165,22 @@ def acc2omp(args):
         raise SystemExit(1)
 
 
+def accplan(args):
+    from spel.scripts.analysis_cache import load_analysis
+    from spel.scripts.record_access import AccessMapper
+    from spel.transforms.acc_plan import report
+
+    fut = load_analysis(reanalyze=args.reanalyze)
+    mapper = AccessMapper(fut.subroutine_dict)
+    mods = {m.lower() for m in args.modules}
+    subs = [s for s in fut.subroutine_dict.values() if s.module in mods and (not args.routine or s.name in args.routine)]
+    if not subs:
+        raise SystemExit(f"accplan: no analyzed routines in {', '.join(sorted(mods))}")
+    for p in report(subs, mapper, min_lines=args.min_lines):
+        print(p)
+        print()
+
+
 def analyze(args):
     from spel.scripts.analysis_cache import build_analysis
 
@@ -570,6 +586,16 @@ def main():
         "--reanalyze", action="store_true", help="rebuild the cached elm_drv analysis first"
     )
     acc2omp_parser.set_defaults(func=acc2omp)
+
+    accplan_parser = subparsers.add_parser(
+        "accplan",
+        help="propose an OpenACC loop structure (collapse / column-parallel / interchange / scatter) per loop, from the analysis",
+    )
+    accplan_parser.add_argument("modules", nargs="+", help="modules to report")
+    accplan_parser.add_argument("--routine", nargs="*", help="only these routines")
+    accplan_parser.add_argument("--min-lines", dest="min_lines", type=int, default=2, help="skip loops shorter than this")
+    accplan_parser.add_argument("--reanalyze", action="store_true", help="rebuild the cached elm_drv analysis first")
+    accplan_parser.set_defaults(func=accplan)
 
     compact_parser = subparsers.add_parser(
         "compact",
