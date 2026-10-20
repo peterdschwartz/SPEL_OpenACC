@@ -40,6 +40,33 @@ module helper_mod
 end module helper_mod
 """
 
+# a second split source defining the same parameter: one copy in the new module
+OTHER = """\
+module OtherMod
+  use shr_kind_mod, only : r8 => shr_kind_r8
+  implicit none
+  save
+  private
+  integer, parameter, private :: block_size = 32
+  type, public :: other_state
+     real(r8), pointer :: q(:) => null()
+   contains
+     procedure, public :: init => other_init
+  end type other_state
+  public :: other_stays
+contains
+  subroutine other_init(this, n)
+    class(other_state) :: this
+    integer, intent(in) :: n
+    allocate(this%q(n)) ; this%q(:) = block_size
+  end subroutine other_init
+  subroutine other_stays(x)
+    real(r8), intent(inout) :: x
+    x = x + block_size
+  end subroutine other_stays
+end module OtherMod
+"""
+
 # a module outside the analysis (like shr_infnan_mod): a defined assignment, used without its name
 NAN = """\
 module nan_mod
@@ -195,9 +222,9 @@ def plan(mod, type_name):
 def split(tmp_path):
     (tmp_path / "components").mkdir()
     files = {"components/shr_kind_mod.F90": KIND, "components/helper_mod.F90": HELPER,
-             "components/BigMod.F90": BIG, "components/client.F90": CLIENT}
+             "components/BigMod.F90": BIG, "components/OtherMod.F90": OTHER, "components/client.F90": CLIENT}
     fut = analysis(tmp_path, files)
-    sp = Splitter(fut, ["bigmod"], plan, tmp_path)
+    sp = Splitter(fut, ["bigmod", "othermod"], plan, tmp_path)
     sp.build()
     return tmp_path, sp
 
@@ -241,7 +268,8 @@ def test_split_moves_types_and_keeps_instances(split):
     assert "unused_thing" not in new and "helper_mod" not in big and "nan_mod" not in big
     assert "use shr_kind_mod, only : r8 => shr_kind_r8" in new
     # a parameter used on both sides is copied, not moved (no use of the source, no cycle)
-    assert "integer, parameter, private :: block_size = 32" in new
+    assert new.count("integer, parameter, private :: block_size = 32") == 1  # from two sources, once
+    assert "subroutine other_init" in new and "type, public :: other_state" in new
     assert "integer, parameter, private :: block_size = 32" in big and "subroutine stays_here" in big
     assert "block_size" not in " ".join(l for l in new.split("\n") if l.strip().startswith("use "))
 

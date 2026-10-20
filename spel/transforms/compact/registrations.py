@@ -9,7 +9,6 @@ then ``ptr_col=data2dptr``) is attributed to the pointer's target.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
@@ -23,9 +22,12 @@ from spel.scripts.fortran_parser.spel_ast import (
     ExpressionStatement,
     IfConstruct,
     InfixExpression,
+    FuncExpression,
     MacroIf,
+    PrefixExpression,
     SelectCaseConstruct,
     Statement,
+    StringLiteral,
     SubCallStatement,
     WhereConstruct,
 )
@@ -43,91 +45,89 @@ class Registration:
     field: str  # component path of `this` (x, core%x)
     name: str  # history field / restart variable name
     ln: int
-    guards: tuple[str, ...]
+    guards: tuple  # Guard (normalized text with its parsed condition) per enclosing if
     inactive: bool = False  # history field with default='inactive'
 
     def applies_to(self, instance: str, element: str = "") -> bool:
         """
-        Whether the registration's guards admit `instance`: its carbon_type
-        guards (c12/c13/c14 from the instance prefix) and, for a registration
-        of a nutrient base type, its species guards evaluated for `element`
-        (c12, c13, c14, n, p). A species guard the evaluator cannot read admits
-        (conservative: the field counts as registered).
+        Whether the registration's guards admit `instance`: `carbon_type` guards
+        (c12/c13/c14 from the instance prefix) and, for a registration of a
+        nutrient base type, species guards (`this%species == CN_SPECIES_N`,
+        `is_carbon(this%species)`) for `element` (c12, c13, c14, n, p).
+        Evaluated on the parsed conditions; a guard that cannot be evaluated
+        admits (conservative: the field counts as registered).
         """
         iso = next((t for t in ("c13", "c14") if instance.startswith(f"{t}_")), "c12")
-        if not all(_admits(g, iso) for g in self.guards if "carbon_type" in g):
-            return False
-        if element:
-            for g in self.guards:
-                if "species" in g and _species_admits(g, element) is False:
-                    return False
+        for g in self.guards:
+            value = g.evaluate(iso, element) if isinstance(g, Guard) else None
+            if value is False:
+                return False
         return True
 
 
-def _admits(guard: str, iso: str) -> bool:
-    negated = guard.startswith("not(")
-    names = [t for t in ("c12", "c13", "c14") if t in guard]
-    hit = iso in names
-    return not hit if negated else hit
-
-
-def _strip_parens(g: str) -> str:
-    while g.startswith("(") and g.endswith(")"):
-        depth = 0
-        for i, ch in enumerate(g):
-            depth += (ch == "(") - (ch == ")")
-            if depth == 0 and i < len(g) - 1:
-                return g
-        g = g[1:-1]
-    return g
-
-
-def _split_top(g: str, op: str) -> list[str]:
-    parts, depth, start = [], 0, 0
-    i = 0
-    while i < len(g):
-        ch = g[i]
-        depth += (ch == "(") - (ch == ")")
-        if depth == 0 and g.startswith(op, i):
-            parts.append(g[start:i])
-            start = i + len(op)
-            i += len(op)
-            continue
-        i += 1
-    parts.append(g[start:])
-    return parts
-
-
-def _species_admits(guard: str, element: str):
+class Guard(str):
     """
-    True/False if the (normalized) species guard can be evaluated for
-    `element`, else None. Terms: `this%species==cn_species_x`,
-    `this%species/=cn_species_x`, `is_carbon(this%species)`, `.not.`/`not(...)`,
-    `.and.`/`.or.` chains.
+    A normalized `if` condition (the text, for grouping and reports) with its
+    parsed expression; `negated` for the `not(...)` of an else branch.
     """
-    g = _strip_parens(guard.replace(" ", "").lower())
-    if g.startswith("not(") and g.endswith(")"):
-        inner = _species_admits(g[4:-1], element)
-        return None if inner is None else not inner
-    if g.startswith(".not."):
-        inner = _species_admits(g[5:], element)
-        return None if inner is None else not inner
-    for op, combine in ((".or.", any), (".and.", all)):
-        parts = _split_top(g, op)
-        if len(parts) > 1:
-            values = [_species_admits(p, element) for p in parts]
-            if None in values:
-                return None
-            return combine(values)
-    m = re.fullmatch(r"this%species(==|/=|\.eq\.|\.ne\.)cn_species_(\w+)", g) or re.fullmatch(
-        r"cn_species_(\w+)(==|/=|\.eq\.|\.ne\.)this%species", g
-    )
-    if m:
-        op, species = (m.group(1), m.group(2)) if m.group(1).startswith((".", "=", "/")) else (m.group(2), m.group(1))
-        equal = op in ("==", ".eq.")
-        return (element == species) if equal else (element != species)
-    if g == "is_carbon(this%species)":
-        return element in ("c12", "c13", "c14")
+
+    node: object
+    negated: bool
+
+    def __new__(cls, text: str, node=None, negated: bool = False):
+        obj = super().__new__(cls, text)
+        obj.node = node
+        obj.negated = negated
+        return obj
+
+    def evaluate(self, iso: str, element: str):
+        """True/False if the condition is decided by `iso`/`element`, else None."""
+        value = _eval(self.node, iso, element) if self.node is not None else None
+        if value is None or not self.negated:
+            return value
+        return not value
+
+
+def _designator(expr) -> str | None:
+    """`this%species` -> 'this%species', `carbon_type` -> 'carbon_type'; None if not a designator."""
+    try:
+        return "%".join(n.lower() for n, _ in flatten_designator(expr))
+    except Exception:
+        return None
+
+
+def _eval(node, iso: str, element: str):
+    """Three-valued evaluation of a guard's carbon_type and species terms."""
+    match node:
+        case PrefixExpression() if node.operator.strip().lower() == ".not.":
+            v = _eval(node.right_expr, iso, element)
+            return None if v is None else not v
+        case InfixExpression():
+            op = node.operator.strip().lower()
+            if op in (".and.", ".or."):
+                a, b = _eval(node.left_expr, iso, element), _eval(node.right_expr, iso, element)
+                values = {a, b}
+                if op == ".and.":
+                    return False if False in values else (True if values == {True} else None)
+                return True if True in values else (False if values == {False} else None)
+            if op in ("==", ".eq.", "/=", ".ne."):
+                equal = op in ("==", ".eq.")
+                for left, right in ((node.left_expr, node.right_expr), (node.right_expr, node.left_expr)):
+                    name = _designator(left)
+                    if name == "carbon_type" and isinstance(right, StringLiteral):
+                        hit = str(right.value).strip("'\"").lower() == iso
+                        return hit if equal else not hit
+                    if name == "this%species":
+                        other = _designator(right) or ""
+                        if other.startswith("cn_species_") and element:
+                            hit = other[len("cn_species_"):] == element
+                            return hit if equal else not hit
+                        return None
+            return None
+        case FuncExpression():
+            if _designator(node.function) == "is_carbon" and element:
+                return element in ("c12", "c13", "c14")
+            return None
     return None
 
 
@@ -139,19 +139,19 @@ def iter_statements(
         yield stmt, guards
         match stmt:
             case IfConstruct():
-                cond = _norm(stmt.condition)
+                cond = Guard(_norm(stmt.condition), stmt.condition)
                 yield from iter_statements(stmt.consequence, guards + (cond,))
                 prev = [cond]
                 for elif_ in stmt.else_ifs:
-                    c = _norm(elif_.condition)
+                    c = Guard(_norm(elif_.condition), elif_.condition)
                     yield from iter_statements(
                         elif_.consequence,
-                        guards + tuple(f"not({p})" for p in prev) + (c,),
+                        guards + tuple(Guard(f"not({p})", p.node, True) for p in prev) + (c,),
                     )
                     prev.append(c)
                 if stmt.else_ is not None:
                     yield from iter_statements(
-                        stmt.else_.alternative, guards + tuple(f"not({p})" for p in prev)
+                        stmt.else_.alternative, guards + tuple(Guard(f"not({p})", p.node, True) for p in prev)
                     )
             case DoLoop() | DoWhile() | AssociateConstruct():
                 yield from iter_statements(stmt.body, guards)
@@ -163,7 +163,7 @@ def iter_statements(
                 sel = _norm(stmt.selector)
                 for case in stmt.cases:
                     vals = ",".join(_norm(v) for v in case.values or []) or "default"
-                    yield from iter_statements(case.body, guards + (f"{sel}=={vals}",))
+                    yield from iter_statements(case.body, guards + (Guard(f"{sel}=={vals}"),))
             case MacroIf():
                 yield from iter_statements(stmt.body, guards)
                 for branch in stmt.branches:

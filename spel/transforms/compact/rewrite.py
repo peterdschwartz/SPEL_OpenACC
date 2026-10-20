@@ -49,8 +49,11 @@ from spel.scripts.fortran_parser.spel_ast import (
     FuncExpression,
     KeywordArgument,
     SubCallStatement,
+    TypeDef,
+    UseStatement,
 )
 from spel.scripts.fortran_parser.symbols import SymbolKind
+from spel.transforms.split.modules import parse_module_file, use_items
 
 TEMPLATE = Path(__file__).parent / "templates" / "CompactLayoutMod.F90"
 MANIFEST = ".spel-compact.json"
@@ -108,6 +111,7 @@ class Rewriter:
         self.notes: list[str] = []
         self._prologued: set[str] = set()
         self._buffer_use: set[str] = set()
+        self._trees: dict[str, object] = {}  # file -> parsed ModuleConstruct
 
     def file(self, path) -> FileEdits:
         key = str(path)
@@ -115,6 +119,21 @@ class Rewriter:
             lines = Path(path).read_text().split("\n")
             self.files[key] = FileEdits(Path(path), lines)
         return self.files[key]
+
+    def module_tree(self, fe: FileEdits):
+        """The file's parsed module (its specification part and line spans)."""
+        key = str(fe.path)
+        if key not in self._trees:
+            _, self._trees[key] = parse_module_file(fe.path)
+        return self._trees[key]
+
+    def head_uses(self, fe: FileEdits) -> list[UseStatement]:
+        return [s for s in self.module_tree(fe).spec.statements if isinstance(s, UseStatement)]
+
+    @staticmethod
+    def routine_end(sub) -> int:
+        """Line of the routine's `end subroutine`, from its parse."""
+        return parse_routine(sub.filepath, sub.startline, sub.endline).end_ln
 
     # --- access sites ---
     def rewrite_sites(self) -> None:
@@ -245,21 +264,17 @@ class Rewriter:
             )
 
     def type_span(self, fe: FileEdits, type_name: str) -> tuple[int, int, int]:
-        """(first line, `contains` or end line, `end type` line) of the type definition."""
-        tname = re.escape(type_name)
-        start = next(
-            i for i, l in enumerate(fe.lines)
-            if re.match(rf"\s*type\s*,.*::\s*{tname}\s*$", l.split("!")[0], re.IGNORECASE)
+        """(first line, last line of the last component, `end type` line) of the type definition."""
+        td = next(
+            (s for s in self.module_tree(fe).spec.statements
+             if isinstance(s, TypeDef) and str(s.name).lower() == type_name.lower()),
+            None,
         )
-        end = next(
-            i for i in range(start, len(fe.lines))
-            if re.match(rf"\s*end\s*type\s+{tname}\b", fe.lines[i], re.IGNORECASE)
-        )
-        contains = next(
-            (i for i in range(start, end) if re.match(r"\s*contains\s*$", fe.lines[i], re.IGNORECASE)),
-            end,
-        )
-        return start, contains, end
+        if td is None:
+            raise RewriteError(f"{fe.path}: no definition of type {type_name}")
+        members = td.members.statements if td.members is not None else []
+        last = statement_end(fe.lines, members[-1].lineno) if members else td.lineno
+        return td.lineno, last, td.end_ln
 
     def init_setvalues_call(self, init) -> int:
         """Line of the one `this%SetValues` call of an Init (the special-patch zeroing)."""
@@ -278,17 +293,21 @@ class Rewriter:
         (`this%<path>%x(i) = value`) and zero them by class before `end subroutine`.
         """
         fe = self.file(setvalues.filepath)
+        this = f"this%{path}" if path else "this"
         zero_lines = self.zero_lines(setvalues, path)
+        assigned = {
+            (e.ln, e.lhs.path) for e in setvalues.record.events if isinstance(e, AssignEvent)
+        }
         for comp in self.sel.components:
             for ln in zero_lines.get(comp, []):
-                line = fe.lines[ln]
-                if statement_end(fe.lines, ln) != ln or not re.search(
-                    rf"%\s*{re.escape(comp)}\s*\(", line, re.IGNORECASE
-                ):
-                    raise RewriteError(f"{fe.path}:{ln + 1}: unexpected zeroing line for {comp}: {line.strip()}")
+                # one assignment statement on one line, of this component alone
+                if statement_end(fe.lines, ln) != ln or (ln, f"{this}%{comp}") not in assigned:
+                    raise RewriteError(
+                        f"{fe.path}:{ln + 1}: unexpected zeroing line for {comp}: {fe.lines[ln].strip()}"
+                    )
                 fe.deletes.add(ln)
-        sv_end = setvalues.endline
-        if not re.match(r"\s*end\s*subroutine", fe.lines[sv_end], re.IGNORECASE):
+        sv_end = self.routine_end(setvalues)
+        if sv_end != setvalues.endline:
             raise RewriteError(f"{fe.path}:{sv_end + 1}: not the end of {setvalues.id}")
         dummies = [d.name for d in setvalues.record.dummy_args]
         if len(dummies) < 4:
@@ -361,8 +380,8 @@ class Rewriter:
         classes = self.classes()
         self.buffer_use(fe)
 
-        _, contains, end = self.type_span(fe, self.sel.dtype)
-        fe.before[contains].append(
+        _, last, end = self.type_span(fe, self.sel.dtype)
+        fe.after[last].append(
             f"    type(compact_buffer_type) :: cbuf  ! compact storage of some fields above {TAG}"
         )
         fe.before[end].extend(
@@ -407,17 +426,14 @@ class Rewriter:
         classes = self.classes()
         self.buffer_use(fe)
 
-        _, contains, end = self.type_span(fe, base)
-        fe.before[contains].append(
+        _, last, end = self.type_span(fe, base)
+        fe.after[last].append(
             f"    type(compact_buffer_type) :: cbuf  ! compact storage of some fields above {TAG}"
         )
         fe.after[end].append(
             f"  public :: {base}_compact_init, {base}_compact_view, {base}_full_view  {TAG}"
         )
-        mod_end = next(
-            i for i in range(len(fe.lines) - 1, -1, -1)
-            if re.match(r"\s*end\s*module\b", fe.lines[i], re.IGNORECASE)
-        )
+        mod_end = self.module_tree(fe).end_ln
         fe.before[mod_end].extend(
             self.generated_procedures(base, f"type({base}), intent(inout) :: this", classes)
         )
@@ -466,8 +482,8 @@ class Rewriter:
 
     def can_log(self, fe: FileEdits) -> bool:
         """Whether the module imports masterproc and iulog (to log the buffer)."""
-        uses = " ".join(l.split("!")[0].lower() for l in fe.lines if re.match(r"\s*use\s", l, re.IGNORECASE))
-        return bool(re.search(r"\bmasterproc\b", uses) and re.search(r"\biulog\b", uses))
+        names = {local for st in self.head_uses(fe) if st.has_only for local, _ in use_items(st)}
+        return {"masterproc", "iulog"} <= names
 
     def zero_block(self, classes, num: str, filt: str, value: str, path: str = "") -> list[str]:
         """
@@ -583,7 +599,11 @@ class Rewriter:
             fe.after[self.module_use_line(fe)].append(f"  use {mod}, only : {', '.join(insts)}  {TAG}")
 
     def module_use_line(self, fe: FileEdits) -> int:
-        return next(i for i, l in enumerate(fe.lines) if re.match(r"\s*use\s+\w", l, re.IGNORECASE))
+        """The module's first use statement (new uses go after it)."""
+        uses = self.head_uses(fe)
+        if not uses:
+            raise RewriteError(f"{fe.path}: the module has no use statement to add to")
+        return uses[0].lineno
 
     def rewrite_decomp(self) -> None:
         for name, begp in DECOMP_ROUTINES.items():
@@ -593,9 +613,10 @@ class Rewriter:
             fe = self.file(sub.filepath)
             header = statement_end(fe.lines, sub.startline)
             fe.after[header].append(f"     use CompactLayoutMod, only : compact_set_clump  {TAG}")
-            if not re.match(r"\s*end\s*subroutine", fe.lines[sub.endline], re.IGNORECASE):
+            end = self.routine_end(sub)
+            if end != sub.endline:
                 raise RewriteError(f"{fe.path}:{sub.endline + 1}: not the end of {sub.id}")
-            fe.before[sub.endline].append(f"     call compact_set_clump({begp})  {TAG}")
+            fe.before[end].append(f"     call compact_set_clump({begp})  {TAG}")
 
     # --- blocked filter loops ---
     def rewrite_blocked_loops(self, sub) -> int:
@@ -627,9 +648,7 @@ class Rewriter:
             filt = str(selector.function)
             start, end = str(node.start), str(node.end)
             do_ln, end_ln = loop.start_ln, loop.end_ln
-            if statement_end(fe.lines, do_ln) != do_ln or not re.match(
-                rf"\s*do\s+{loop.index}\s*=", fe.lines[do_ln], re.IGNORECASE
-            ) or not re.match(r"\s*end\s*do\b", fe.lines[end_ln], re.IGNORECASE):
+            if statement_end(fe.lines, do_ln) != do_ln or node.lineno != do_ln or node.end_ln != end_ln:
                 raise RewriteError(f"{fe.path}:{do_ln + 1}: unexpected blocked loop: {fe.lines[do_ln].strip()}")
             assoc_end = statement_end(fe.lines, assoc.lineno)
             for ln in (assoc.end_ln, *range(assoc.lineno, assoc_end + 1)):

@@ -122,8 +122,17 @@ def find_holder(fut, type_name: str, instances: Optional[list[str]] = None) -> H
     type_dict = fut.type_dict
     dtype = type_dict[type_name]
     embs: list[Embedding] = []
-    if dtype.instances:
-        for inst in dtype.instances:
+    # the analysis also lists a component declaration (`type(base) :: core` inside another
+    # type) among a type's instances: a module instance is never a component of a type
+    component_names = {
+        cname
+        for t in type_dict.values()
+        for cname, comp in t.components.items()
+        if comp.type == type_name and embeds(comp)
+    }
+    real = [i for i in dtype.instances if i not in component_names]
+    if real:
+        for inst in real:
             if instances is None or inst in instances:
                 embs.append(Embedding(inst, type_name, "", element_of(inst, type_name)))
         routines = {k: v for k, v in dtype.procedures.items() if isinstance(v, str)}
@@ -132,8 +141,9 @@ def find_holder(fut, type_name: str, instances: Optional[list[str]] = None) -> H
             for cname, comp in t.components.items():
                 if comp.type == type_name and embeds(comp):
                     for inst in t.instances:
-                        if instances is None or inst in instances:
-                            embs.append(Embedding(inst, tname, cname, element_of(inst, tname)))
+                        if inst in component_names or (instances is not None and inst not in instances):
+                            continue
+                        embs.append(Embedding(inst, tname, cname, element_of(inst, tname)))
         routines = {}
         for binding in BINDINGS:
             sid = base_routine(fut.subroutine_dict, type_name, binding)

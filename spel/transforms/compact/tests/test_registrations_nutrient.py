@@ -1,5 +1,5 @@
 """Registrations of a nutrient base type: component paths, templated names, species guards."""
-from spel.transforms.compact.registrations import Registration, _species_admits, parse_routine, registrations
+from spel.transforms.compact.registrations import parse_routine, registrations
 
 SRC = """
 subroutine vegetation_nutrient_flux_init_history(this, begp, endp)
@@ -42,15 +42,27 @@ def test_species_guards_and_paths(tmp_path):
     assert pool.applies_to("veg_cf")
 
 
-def test_species_evaluator():
-    assert _species_admits("this%species==cn_species_n", "n") is True
-    assert _species_admits("this%species==cn_species_n", "p") is False
-    assert _species_admits("not(is_carbon(this%species))", "c13") is False
-    assert _species_admits("(this%species==cn_species_c12).or.(this%species==cn_species_n)", "n") is True
-    assert _species_admits("not((is_carbon(this%species).and.use_fates))", "c12") is None
-    assert _species_admits("cn_species_p/=this%species", "p") is False
+ISO = """
+subroutine veg_cf_restart(this, ncid, flag)
+  class(vegetation_carbon_flux) :: this
+  if (carbon_type == 'c13') then
+     call restartvar(ncid=ncid, flag=flag, varname='x13', data=this%x)
+  else if (carbon_type /= 'c14') then
+     call restartvar(ncid=ncid, flag=flag, varname='x', data=this%y)
+  end if
+  if (.not. (is_carbon(this%species) .and. use_fates)) then
+     call restartvar(ncid=ncid, flag=flag, varname='z', data=this%z)
+  end if
+end subroutine veg_cf_restart
+"""
 
 
-def test_carbon_type_guards_still_apply():
-    r = Registration("restart", "x", "x", 1, ("carbon_type==c13",))
-    assert r.applies_to("c13_veg_cf", "c13") and not r.applies_to("veg_cf", "c12")
+def test_carbon_type_and_mixed_guards(tmp_path):
+    f = tmp_path / "y.F90"
+    f.write_text(ISO)
+    regs = {r.field: r for r in registrations(parse_routine(f, 1, ISO.count("\n") - 1))}
+    assert regs["x"].applies_to("c13_veg_cf", "c13") and not regs["x"].applies_to("veg_cf", "c12")
+    assert regs["y"].applies_to("veg_cf", "c12") and not regs["y"].applies_to("c13_veg_cf", "c13")
+    assert not regs["y"].applies_to("c14_veg_cf", "c14")
+    # use_fates is unknown: the guard cannot be decided, so it admits every element
+    assert regs["z"].applies_to("veg_cf", "c12") and regs["z"].applies_to("veg_nf", "n")

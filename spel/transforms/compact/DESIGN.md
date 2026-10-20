@@ -164,3 +164,19 @@ its *embeddings* (instance, component path, element: `veg_cf`/`core`/`c12`, `veg
   have no device copy); multicore runs in host memory and works.
 - **Order on a checkout**: `spel analyze` → the nutrient steps (`nutrient_refactor.sh`, each
   re-analyzes) → `spel analyze` → `spel compact rewrite` → `spel analyze` for unit tests.
+
+## What is read from parses and records, what is edited by text
+
+Information comes from the analysis and the parser, never from pattern matching on the
+source text: the trace and the access records give the fields, index forms and zeroing;
+`parse_routine`/`parse_module_file` give registrations (their `if` conditions are kept as
+expression trees and evaluated for carbon_type and species), the positions of type
+definitions, the last component, `end type`, `end module`, the first use statement, the
+module's imports, and routine ends; `untraced_uses` reads the access records of analyzed
+routines the trace never visited. The only text search left is for lines outside every
+analyzed routine (there is nothing parsed to read there), and it is reported as such.
+
+Regular expressions remain where the source text itself is edited (not read): the
+`x(p)` -> `x(k0p+fp)` substitution of a designator the record identified, appending an
+argument to a call, the indentation of inserted lines, and the associate-name replacement
+of a blocked loop. Those are textual edits of statements whose content is already known.

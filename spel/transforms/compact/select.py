@@ -302,9 +302,13 @@ def statement_end(lines: list[str], ln: int) -> int:
 def untraced_uses(fut, tracer: Tracer, sel: Selection, by_field) -> list[tuple[str, str, bool]]:
     """
     (component, file:line routine: text, relevant) for every use of a selected
-    component outside the trace. Relevant: it names an instance of the type
-    (`veg_pf%x`), or `this%x` in the type's module; else it is likely a
-    same-named component of another type (a text search).
+    component outside the elm_drv trace. Analyzed routines the trace never
+    visited (initialization, restart, finalization, ...) are read from their
+    access records: a use is relevant when its path is a selected field of one
+    of the holder's instances (`veg_pf%core%x`), or `this%<path>%x` in a
+    routine of the holder or of its concrete types; a same-named component
+    of another type is listed for review only. Lines outside every analyzed
+    routine (no record to read) are a text search.
     """
     if not sel.components:
         return []
@@ -315,61 +319,82 @@ def untraced_uses(fut, tracer: Tracer, sel: Selection, by_field) -> list[tuple[s
             sid for key in ("init", "setvalues", "clean")
             if isinstance(sid := fut.type_dict[ctype].procedures.get(key), str)
         }
-    traced_lines: dict[str, set[int]] = defaultdict(set)
-    for es in by_field.values():
-        for e in es:
-            traced_lines[e.sub].add(e.ln)
-    # associate statements of traced routines (selectors are not accesses)
-    for sub_id in tracer.visited:
-        rec = fut.subroutine_dict[sub_id].record
-        traced_lines[sub_id].update(f.start_ln for f in rec.frames)
-    by_file: dict[str, list] = defaultdict(list)
-    for sub in fut.subroutine_dict.values():
-        if sub.filepath:
-            by_file[str(sub.filepath)].append(sub)
-    pattern = re.compile(
-        r"%\s*(" + "|".join(sorted(map(re.escape, sel.components))) + r")\b", re.IGNORECASE
-    )
+    chosen = set(sel.components)
+    # routines whose `this` holds the selected fields: `this%x` in the holder's own
+    # routines, `this%<path>%x` in the concrete types' type-bound procedures
+    this_prefix: dict[str, str] = {sid: "this%" for sid in holder.routines.values()}
+    for emb in holder.embeddings:
+        for sid in fut.type_dict[emb.concrete].procedures.values():
+            if isinstance(sid, str):
+                this_prefix[sid] = f"this%{emb.path}%" if emb.path else "this%"
     srcroot = srcroot_of(fut.subroutine_dict)
-    holder_file = Path(holder.dtype.filepath)
-    concrete_files = {Path(fut.type_dict[c].filepath) for c in holder.concrete_types}
-    # `veg_cf%x` / `veg_cf%core%x`: what precedes `%x` names an instance and the holder's path
+    out: list[tuple[str, str, bool]] = []
+    # routines the trace never walked are walked here on demand (module scopes needed);
+    # one that fails to walk falls to the text search of its lines
+    from spel.scripts.module_resolver import ModuleScopes
+    from spel.scripts.record_access import AccessMapper
+
+    failures: dict[str, str] = {}
+    mapper = AccessMapper(fut.subroutine_dict, ModuleScopes(fut.module_dict, fut.subroutine_dict), failures)
+
+    def where(sub, ln: int) -> str:
+        path = Path(sub.filepath)
+        rel = path.relative_to(srcroot) if path.is_relative_to(srcroot) else path
+        text = path.read_text(errors="replace").split("\n")[ln].strip()[:100]
+        return f"{rel}:{ln + 1} {sub.id}: {text}"
+
+    analyzed_lines: dict[str, set[int]] = defaultdict(set)
+    for sub in fut.subroutine_dict.values():
+        if not sub.filepath:
+            continue
+        analyzed_lines[str(sub.filepath)].update(range(sub.startline, sub.endline + 1))
+        if sub.id in handled or sub.id in tracer.visited or getattr(sub, "library", False):
+            continue
+        rec = sub.record
+        if rec is None and mapper.maps(sub) is not None:
+            rec = sub.record
+        if rec is None:
+            analyzed_lines[str(sub.filepath)] -= set(range(sub.startline, sub.endline + 1))
+            continue  # no record: its lines fall to the text search
+        seen: set[tuple[int, str]] = set()
+        for a in rec.accesses():
+            hit = holder.split(a.path)
+            prefix = this_prefix.get(sub.id)
+            if hit is not None and hit[1] in chosen:
+                comp, relevant = hit[1], True
+            elif prefix and a.path.startswith(prefix) and a.path[len(prefix):] in chosen:
+                comp, relevant = a.path[len(prefix):], True
+            elif a.path.split("%")[-1] in chosen and "%" in a.path:
+                comp, relevant = a.path.split("%")[-1], False  # a same-named component of another type
+            else:
+                continue
+            if (a.ln, comp) in seen:
+                continue
+            seen.add((a.ln, comp))
+            out.append((comp, where(sub, a.ln), relevant))
+
+    # lines no analyzed routine covers: a text search (no record to read)
+    pattern = re.compile(
+        r"%\s*(" + "|".join(sorted(map(re.escape, chosen))) + r")\b", re.IGNORECASE
+    )
     insts = "|".join(
         sorted(
             (rf"{re.escape(e.instance)}\s*%\s*{re.escape(e.path)}" if e.path else re.escape(e.instance))
             for e in holder.embeddings
         )
     )
-    paths = "|".join(sorted({re.escape(e.path) for e in holder.embeddings if e.path}))
-    out = []
     for path in sorted(srcroot.rglob("*.F90")):
         if "external_models" in path.parts:
             continue
+        covered = analyzed_lines.get(str(path), set())
         lines = path.read_text(errors="replace").split("\n")
-        subs = by_file.get(str(path), [])
         for ln, line in enumerate(lines):
+            if ln in covered:
+                continue
             code = line.split("!")[0]
-            m = pattern.search(code)
-            if m is None:
-                continue
-            owner = min(
-                (s for s in subs if s.startline <= ln <= s.endline),
-                key=lambda s: s.endline - s.startline,
-                default=None,
-            )
-            start = statement_start(lines, ln)
-            if owner is not None and (owner.id in handled or start in traced_lines.get(owner.id, ())):
-                continue
-            where = owner.id if owner is not None else "(no analyzed routine)"
-            text = f"{path.relative_to(srcroot)}:{ln + 1} {where}: {line.strip()[:100]}"
             for m in pattern.finditer(code):
                 comp = m.group(1).lower()
                 before = code[: m.start()]
-                relevant = bool(re.search(rf"\b({insts})\s*$", before, re.IGNORECASE)) or (
-                    path == holder_file and bool(re.search(r"\bthis\s*$", before, re.IGNORECASE))
-                ) or (
-                    bool(paths) and path in concrete_files
-                    and bool(re.search(rf"\bthis\s*%\s*({paths})\s*$", before, re.IGNORECASE))
-                )
-                out.append((comp, text, relevant))
+                relevant = bool(re.search(rf"\b({insts})\s*$", before, re.IGNORECASE))
+                out.append((comp, f"{path.relative_to(srcroot)}:{ln + 1} (no analyzed routine): {line.strip()[:100]}", relevant))
     return out

@@ -214,6 +214,14 @@ def idents(text: str) -> set[str]:
             out.add(tok.literal.lower())
 
 
+def _decl_text(src: Source, p: Piece) -> str:
+    return " ".join("".join(src.lines[p.start : p.last + 1]).split()).lower()
+
+
+def twin_source(sp: "Splitter", home: str, piece: Piece) -> str:
+    return next(k for k, q in sp.new_modules[home] if q is piece)
+
+
 def is_parameter(node) -> bool:
     attrs = getattr(getattr(node, "attrs", None), "attrs", None) or []
     return any(str(a).replace(" ", "").lower().startswith("parameter") for a in attrs)
@@ -337,6 +345,15 @@ class Splitter:
                 if p.home:
                     self.new_modules.setdefault(p.home, []).append((key, p))
                 for h in sorted(p.copies):
+                    # one copy per module: several sources may define the same parameter
+                    twin = next(
+                        (q for k2, q in self.new_modules.get(h, []) if q.copies and set(q.defines) == set(p.defines)),
+                        None,
+                    )
+                    if twin is not None:
+                        if _decl_text(self.sources[key], p) != _decl_text(self.sources[twin_source(self, h, twin)], twin):
+                            raise SplitError(f"parameter {p.defines} differs between the sources copying it to {h}")
+                        continue
                     self.new_modules.setdefault(h, []).append((key, p))
         directory = next(iter(self.sources.values())).path.parent
         clash = [n for n in self.new_modules if n.lower() in self.md or (directory / f"{n}.F90").exists()]

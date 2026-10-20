@@ -33,6 +33,7 @@ def fut():
     base = dtype(
         "vegetation_nutrient_flux",
         [comp("species", "integer", 0, None), comp("leaf_to_litter"), comp("cbuf_dummy", "real", 0, None)],
+        instances=("core",),  # the analysis lists the component declaration as an instance
         filepath="NutrientFluxType.F90",
     )
     role = dtype("vegetation_retrans_flux", [comp("pool")], filepath="NutrientFluxType.F90")
