@@ -96,7 +96,7 @@ def compact_instances(type_dict: dict, active_instances: dict) -> list[CompactIn
             continue
         if BIND in {str(k).lower() for k in dtype.procedures}:
             out.append(CompactInstance(name, _subgrid(dtype, name)))
-            continue
+        # the holders it embeds (a type may have its own buffer and a core with one)
         for cname, comp in dtype.components.items():
             if getattr(comp, "nested", False) or str(comp.type).lower() in RUNTIME_TYPES:
                 continue

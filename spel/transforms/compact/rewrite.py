@@ -41,7 +41,7 @@ from pathlib import Path
 from spel.transforms.compact.holders import base_routine, embedded_holders, nutrient_manifest
 from spel.transforms.compact.inventory import DRIVER_ID
 from spel.transforms.compact.registrations import parse_routine
-from spel.transforms.compact.select import Selection, statement_end
+from spel.transforms.compact.select import Polymorphic, Selection, statement_end
 from spel.scripts.fortran_parser.scope_walk import AssignEvent
 from spel.scripts.fortran_parser.spel_ast import (
     AssociateConstruct,
@@ -143,9 +143,16 @@ class Rewriter:
             for site in sel.sites:
                 by_sub[site.sub].append(site)
             for sub_id, poly in sel.polymorphic.items():
-                if sub_id in polymorphic:
-                    raise RewriteError(f"{sub_id} takes compact fields of several types")
-                polymorphic[sub_id] = poly
+                prev = polymorphic.get(sub_id)
+                if prev is None:
+                    polymorphic[sub_id] = poly
+                elif prev.dummies == poly.dummies:
+                    # fields of several types through the same dummies (the shared fields on
+                    # the nutrient base type, the element-specific ones on the concrete type):
+                    # a call is compact when its fields are selected by either selection
+                    polymorphic[sub_id] = Polymorphic(sub_id, prev.dummies, prev.compact_calls | poly.compact_calls)
+                else:
+                    raise RewriteError(f"{sub_id} takes compact fields of several types through different dummies")
         callers = {c for p in polymorphic.values() for c, _ in p.compact_calls}
         for sub_id in sorted(set(by_sub) | callers):
             sub = self.subs[sub_id]

@@ -612,3 +612,39 @@ def test_capture_module_compact_instances():
     # without compact instances the module is unchanged
     assert ie.generate_capture_module(NAMES, ["cnstate_vars"]) == ie.generate_capture_module(NAMES, ["cnstate_vars"], compact=())
     assert "FullView" not in ie.generate_capture_module(NAMES, ["cnstate_vars"])
+
+
+def test_compact_instances_bound_and_embedded():
+    """A concrete type with its own buffer and a core holder with one: both hooked."""
+    from types import SimpleNamespace
+
+    from spel.transforms.compact.unit_test import compact_instances, hook_lines
+
+    def comp(name, type_, dim=1, bounds="begp:endp", nested=False):
+        return SimpleNamespace(name=name, type=type_, dim=dim, bounds=bounds, nested=nested, active=True)
+
+    base = SimpleNamespace(
+        type_name="vegetation_nutrient_flux", declaration="nutrientfluxtype", procedures={},
+        components={"x": comp("x", "real"), "cbuf": comp("cbuf", "compact_buffer_type", 0, None)},
+    )
+    carbon = SimpleNamespace(
+        type_name="vegetation_carbon_flux", declaration="vegetationfluxtypes",
+        procedures={"compactview": "m::veg_cf_compact_view"},
+        components={
+            "core": comp("core", "vegetation_nutrient_flux", 0, None),
+            "core%x": comp("core%x", "real", nested=True),
+            "y": comp("y", "real"),
+            "cbuf": comp("cbuf", "compact_buffer_type", 0, None),
+        },
+    )
+    type_dict = {t.type_name: t for t in (base, carbon)}
+    active = {"veg_cf": SimpleNamespace(type="vegetation_carbon_flux", declaration="vegetationdatatype")}
+    insts = compact_instances(type_dict, active)
+    assert [(c.instance, c.path, c.bound) for c in insts] == [("veg_cf", "", True), ("veg_cf", "core", False)]
+    hooks = hook_lines(insts)
+    text = "".join(hooks["!#COMPACT_BEFORE"] + hooks["!#COMPACT_AFTER"] + hooks["!#COMPACT_INIT"])
+    assert "call veg_cf%CompactView()" in text
+    assert "call vegetation_nutrient_flux_compact_view(veg_cf%core)" in text
+    assert "call veg_cf%core%cbuf%unpack(" in text
+    assert "call vegetation_nutrient_flux_compact_init(veg_cf%core, bounds_proc%begp, bounds_proc%endp)" in text
+    assert hooks["!#USE_START"] == ["use nutrientfluxtype, only : vegetation_nutrient_flux_compact_init, vegetation_nutrient_flux_compact_view, vegetation_nutrient_flux_full_view\n"]
