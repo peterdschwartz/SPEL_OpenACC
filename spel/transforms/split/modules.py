@@ -80,6 +80,7 @@ class Piece:
     defines: list[str] = field(default_factory=list)
     home: Optional[str] = None  # new module, None: stays
     passed: list[tuple[str, str, str]] = field(default_factory=list)  # (instance, type, intent) made dummies
+    copies: set[str] = field(default_factory=set)  # new modules that get their own copy (a parameter)
 
 
 @dataclass
@@ -213,6 +214,11 @@ def idents(text: str) -> set[str]:
             out.add(tok.literal.lower())
 
 
+def is_parameter(node) -> bool:
+    attrs = getattr(getattr(node, "attrs", None), "attrs", None) or []
+    return any(str(a).replace(" ", "").lower().startswith("parameter") for a in attrs)
+
+
 def decl_names(node: VariableDecl) -> set[str]:
     """Module-level names a declaration needs: its derived type, kind, bounds, initializers."""
     out: set[str] = set()
@@ -330,6 +336,8 @@ class Splitter:
                     self.home[d] = (p.home or src.name).lower()
                 if p.home:
                     self.new_modules.setdefault(p.home, []).append((key, p))
+                for h in sorted(p.copies):
+                    self.new_modules.setdefault(h, []).append((key, p))
         directory = next(iter(self.sources.values())).path.parent
         clash = [n for n in self.new_modules if n.lower() in self.md or (directory / f"{n}.F90").exists()]
         if clash:
@@ -377,12 +385,17 @@ class Splitter:
                     self.notes.append(f"{p.defines[0]}: {n} passed as an argument (intent({intent}))")
 
     def place_variables(self) -> None:
-        """Module variables of no defined type follow their users when those all move to one module."""
+        """
+        Module variables of no defined type follow their users when those all move to one
+        module. A `parameter` whose users spread over several modules is copied into each new
+        module that uses it (a constant has no state); the source keeps its own.
+        """
         users: dict[str, set] = defaultdict(set)
         for key, src in self.sources.items():
             for p in src.subs:
                 for n in self.sub_names(key, p) & {d for q in src.head if q.kind == "var" for d in q.defines}:
                     users[n].add(p.home)
+        self.copied: dict[str, set[str]] = {}
         for key, src in self.sources.items():
             types = {q.node.name.lower() for q in src.head if q.kind == "type"}
             for p in src.head:
@@ -391,6 +404,11 @@ class Splitter:
                 homes = set.union(*(users.get(d, set()) for d in p.defines)) if p.defines else set()
                 if len(homes) == 1 and None not in homes:
                     p.home = homes.pop()
+                elif len(homes) > 1 and is_parameter(p.node):
+                    p.copies = {h for h in homes if h is not None}
+                    for d in p.defines:
+                        self.copied[d] = {h.lower() for h in p.copies}
+                    self.notes.append(f"{src.name}: parameter {', '.join(p.defines)} copied to {sorted(p.copies)}")
 
     def place_directives(self) -> None:
         """A directive naming only moved variables goes with them."""
@@ -504,6 +522,8 @@ class Splitter:
         need: dict = {}
         for mod, p in pieces:
             for name in sorted(self.piece_names(mod, p)):
+                if here.lower() in getattr(self, "copied", {}).get(name, ()):
+                    continue  # a parameter copied into this module
                 prov = self.provider(mod, name)
                 if prov is None:
                     continue
@@ -714,7 +734,7 @@ class Splitter:
             st, m = p.node, p.node.module.lower()
             if not st.has_only:
                 if (m, st) in need:
-                    out += src.lines[p.first : p.last + 1]
+                    out += src.lines[p.start : p.last + 1]  # its leading comments stay in place
                     covered.add((m, st))
                 continue
             wanted = need.get((m, None), [])
@@ -722,7 +742,7 @@ class Splitter:
             got = [i for i in mine if i in wanted]
             covered |= {(m, i) for i in got}
             if got == mine:
-                out += src.lines[p.first : p.last + 1]
+                out += src.lines[p.start : p.last + 1]
             elif got:
                 indent = src.lines[p.start][: len(src.lines[p.start]) - len(src.lines[p.start].lstrip())]
                 out += wrap(f"{indent}use {self.module_name(m)}, only : ", [self.item(l, r) for l, r in got])

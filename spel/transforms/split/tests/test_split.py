@@ -73,6 +73,7 @@ module BigMod
   public
   real(r8), public :: scale = 2._r8
   !$acc declare copyin(scale)
+  integer, parameter, private :: block_size = 32
 
   ! the energy state
   type, public :: energy_state
@@ -98,7 +99,7 @@ contains
     class(energy_state) :: this
     integer, intent(in) :: n
     allocate(this%t(n)) ; this%t(:) = nan
-    this%t(1) = spval
+    this%t(1) = spval + block_size
   end subroutine energy_init
 
   !-----------------------------------------------------------------------
@@ -108,6 +109,12 @@ contains
     allocate(this%h2o(n))
     this%h2o(:) = es%t(:) * scale
   end subroutine water_init
+
+  !-----------------------------------------------------------------------
+  subroutine stays_here(x)
+    real(r8), intent(inout) :: x
+    x = x * block_size
+  end subroutine stays_here
 
 end module BigMod
 """
@@ -211,7 +218,7 @@ def test_parser_module_construct(tmp_path):
     # comments before a piece belong to it
     (e,) = [p for p in src.head if p.defines == ["energy_state"]]
     assert src.lines[e.first].strip() == "! the energy state"
-    assert [p.defines[0] for p in src.subs] == ["energy_init", "water_init"]
+    assert [p.defines[0] for p in src.subs] == ["energy_init", "water_init", "stays_here"]
     assert src.lines[src.subs[0].first].startswith("  !----")
 
 
@@ -225,13 +232,18 @@ def test_split_moves_types_and_keeps_instances(split):
         assert s in new
     # the source keeps its description, the instances and their directive, nothing else
     assert "! the module's description stays" in big and "type(energy_state), public, target :: es" in big
-    assert "!$acc declare create(es, ws)" in big and "contains" not in big and "subroutine" not in big
+    assert "!$acc declare create(es, ws)" in big and "subroutine energy_init" not in big
+    assert big.count("the module's description stays") == 1
     assert "use StateTypes, only : energy_state, water_state" in big
     # uses: what the code needs, spelled as the source spells it; unused names dropped
     assert "use nan_mod, only : nan => nan_value, assignment(=)" in new
     assert "use helper_mod, only : spval" in new
     assert "unused_thing" not in new and "helper_mod" not in big and "nan_mod" not in big
     assert "use shr_kind_mod, only : r8 => shr_kind_r8" in new
+    # a parameter used on both sides is copied, not moved (no use of the source, no cycle)
+    assert "integer, parameter, private :: block_size = 32" in new
+    assert "integer, parameter, private :: block_size = 32" in big and "subroutine stays_here" in big
+    assert "block_size" not in " ".join(l for l in new.split("\n") if l.strip().startswith("use "))
 
 
 def test_split_passes_instances_the_moved_code_reads(split):
