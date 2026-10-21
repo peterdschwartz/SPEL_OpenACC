@@ -33,21 +33,6 @@
     htmx.trigger(el, "reload");
   });
 
-  // Trace chips: add / remove `v` parameters.
-  document.addEventListener("click", e => {
-    const add = e.target.closest("[data-add-var]");
-    if (add && (location.pathname.startsWith("/trace_view") || add.closest("#chips"))) {
-      e.preventDefault();
-      navigateWith(p => { if (!p.getAll("v").includes(add.dataset.addVar)) p.append("v", add.dataset.addVar); });
-      return;
-    }
-    const rm = e.target.closest("[data-remove-var]");
-    if (rm) {
-      e.preventDefault();
-      navigateWith(p => { const keep = p.getAll("v").filter(v => v !== rm.dataset.removeVar); p.delete("v"); keep.forEach(v => p.append("v", v)); });
-    }
-  });
-
   // Source: jump to a line.
   function focusLine(ln) {
     const el = document.getElementById("L" + ln);

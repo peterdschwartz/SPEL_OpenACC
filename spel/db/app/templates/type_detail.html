@@ -7,19 +7,13 @@
 <p>Instances: {% for i in instances %}<a href="?instance={{ i.instance_name }}" class="{% if focus and i.pk == focus.pk %}current{% endif %}">{{ i.instance_name }}</a>{% if not i.public %}<span class="muted">(private)</span>{% endif %} {% empty %}<span class="muted">none in the analyzed modules</span>{% endfor %}</p>
 {% if focus %}<p class="cat-bar">Categories of <strong>{{ focus.instance_name }}</strong>: {% for cat, n in categories %}<a class="badge badge-cat-{{ cat }}" href="{% url 'variables' %}?instance={{ focus.instance_name }}&category={{ cat }}">{{ cat }} {{ n }}</a>{% endfor %}</p>{% endif %}
 {% if procs %}<p class="muted">Type-bound: {% for p in procs %}{{ p.binding }}{% if p.subroutine %} → <a href="{% url 'sub_view' p.subroutine.sub_id %}">{{ p.subroutine.subroutine_name }}</a>{% endif %}{% if not forloop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+<form class="member-filter inline-form" onsubmit="return false;">
+  <input type="search" name="q" value="{{ needle }}" placeholder="filter members (fuzzy)" autocomplete="off"
+         hx-get="{% url 'type_members' type.user_type_name %}?instance={% if focus %}{{ focus.instance_name }}{% endif %}" hx-trigger="input changed delay:150ms" hx-target="#member-rows" hx-swap="innerHTML">
+  <span class="muted">add members to the trace list with the add buttons</span>
+</form>
 <table class="catalog">
-  <thead><tr><th>Member</th><th>Type</th><th>Bounds</th><th>Level</th><th>Category</th><th>Reads</th><th>Writes</th><th>Routines</th><th>Registrations</th><th></th></tr></thead>
-  <tbody>{% for row in members %}
-    <tr id="m-{{ row.m.member_name|slugify }}">
-      <td><code>{{ row.m.member_name }}</code>{% if row.m.pointer %} <span class="muted">ptr</span>{% endif %}</td>
-      <td class="muted">{% if row.m.component_type %}<a href="{% url 'type_detail' row.m.component_type.user_type_name %}">{{ row.m.member_type }}</a>{% else %}{{ row.m.member_type }}{% endif %}{% if row.m.dim %}({{ row.m.dim }}d){% endif %}</td>
-      <td class="muted">{{ row.m.bounds }}</td><td>{{ row.m.subgrid }}</td>
-      <td>{% if row.state %}<span class="badge badge-cat-{{ row.state.effective_category }}">{{ row.state.effective_category }}</span>{% endif %}</td>
-      <td>{{ row.state.n_reads|default:"" }}</td><td>{{ row.state.n_writes|default:"" }}</td><td>{{ row.state.n_routines|default:"" }}</td>
-      <td>{% for r in row.regs %}<span class="badge badge-{{ r.kind }}" title="{{ r.long_name }} {% if r.units %}[{{ r.units }}]{% endif %}{% if r.guards %} if {{ r.guards|join:' and ' }}{% endif %}">{{ r.kind }} {{ r.name }}{% if r.inactive %} (inactive){% endif %}</span> {% endfor %}
-        {% if row.state.restart_unneeded %}<span class="badge badge-off">restart unneeded?</span>{% endif %}{% if row.state.restart_missing %}<span class="badge badge-w">restart missing?</span>{% endif %}</td>
-      <td>{% if row.key %}<a href="{% url 'trace_view' %}?v={{ row.key|urlencode }}" title="trace">⊕</a>{% endif %}</td>
-    </tr>
-  {% endfor %}</tbody>
+  <thead><tr><th>Member</th><th>Type</th><th>Level</th><th>Category</th><th>Reads/writes</th><th>Registrations</th><th></th></tr></thead>
+  <tbody id="member-rows">{% include "partials/member_rows.html" with rows=members %}</tbody>
 </table>
 {% endblock %}

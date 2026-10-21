@@ -105,6 +105,8 @@ else:
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
             "NAME": Path(os.getenv("SPEL_DB_PATH", BASE_DIR / "explorer.sqlite3")),
+            # the dev server answers HTMX requests concurrently: wait for locks, WAL set in apps.py
+            "OPTIONS": {"timeout": 30, "transaction_mode": "IMMEDIATE"},
         }
     }
 

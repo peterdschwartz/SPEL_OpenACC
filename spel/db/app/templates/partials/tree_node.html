@@ -1,12 +1,12 @@
 {% load mapping logic %}
-<li class="node {% if not node.active %}inactive{% endif %} {% if node.cut %}cut{% endif %}" data-order="{{ node.order }}">
+<li class="node {% if not node.active %}inactive{% endif %} {% if node.cut %}cut{% endif %}" data-order="{{ node.order }}" data-orders="{{ node.orders|join:',' }}">
   <div class="row">
     {% if node.children %}
     {% with is_open=current_depth|lt:expand_to %}
-    <span class="toggler checkbox" role="button" tabindex="0" aria-expanded="{{ is_open|yesno:'true,false' }}" aria-controls="child-{{ node.uid }}">{{ node.name }}</span>
+    <span class="toggler checkbox" role="button" tabindex="0" aria-expanded="{{ is_open|yesno:'true,false' }}" aria-controls="child-{{ node.uid }}">{{ node.name }}{% if node.count > 1 %} <small class="muted" title="called {{ node.count }} times by this routine">×{{ node.count }}</small>{% endif %}</span>
     {% endwith %}
     {% else %}
-    <span class="parent {% if not node.analyzed %}ghost{% endif %}">{{ node.name }}{% if node.cut %} <small title="recursive call, not expanded">↺</small>{% endif %}</span>
+    <span class="parent {% if not node.analyzed %}ghost{% endif %}">{{ node.name }}{% if node.count > 1 %} <small class="muted" title="called {{ node.count }} times by this routine">×{{ node.count }}</small>{% endif %}{% if node.cut %} <small title="recursive call, not expanded">↺</small>{% endif %}</span>
     {% endif %}
     {% for key in var_keys %}
       {% with status=node.marks|get_item:key %}

@@ -31,7 +31,7 @@
       <ul class="plain">{% for m in grp.members %}
         <li class="var-row"><code>{{ m.name }}</code> <span class="badge badge-{{ m.status }}">{{ m.status }}</span>
           <span class="lines">{% for ln in m.lines %}<a href="#L{{ ln }}" data-goto-line="{{ ln }}">{{ ln|add:1 }}</a>{% endfor %}</span>
-          <a class="trace-link" title="trace {{ m.key }}" href="{% url 'trace_view' %}?v={{ m.key|urlencode }}" data-add-var="{{ m.key }}">⊕ trace</a></li>
+          <button type="button" class="add-btn" title="add {{ m.key }} to the trace list" data-add-var="{{ m.key }}" data-label="{{ m.key }}">add</button></li>
       {% endfor %}</ul>
     </div>
     {% empty %}<p class="muted">None.</p>{% endfor %}
@@ -41,7 +41,7 @@
     <ul class="plain">{% for g in nml_vars %}
       <li class="var-row"><code>{{ g.name }}</code> <span class="muted">{{ g.module }}</span> <span class="badge badge-{{ g.status }}">{{ g.status }}</span>
         <span class="lines">{% for ln in g.lines %}<a href="#L{{ ln }}" data-goto-line="{{ ln }}">{{ ln|add:1 }}</a>{% endfor %}</span>
-        <a class="trace-link" href="{% url 'trace_view' %}?v={{ g.key|urlencode }}" data-add-var="{{ g.key }}">⊕ trace</a></li>
+        <button type="button" class="add-btn" data-add-var="{{ g.key }}" data-label="{{ g.name }}">add</button></li>
     {% endfor %}</ul>
   </details>
 
@@ -49,7 +49,7 @@
     <ul class="plain">{% for g in globals %}
       <li class="var-row"><code>{{ g.name }}</code> <span class="muted">{{ g.module }}{% if g.parameter %} · parameter{% endif %}</span> <span class="badge badge-{{ g.status }}">{{ g.status }}</span>
         <span class="lines">{% for ln in g.lines %}<a href="#L{{ ln }}" data-goto-line="{{ ln }}">{{ ln|add:1 }}</a>{% endfor %}</span>
-        {% if not g.parameter %}<a class="trace-link" href="{% url 'trace_view' %}?v={{ g.key|urlencode }}" data-add-var="{{ g.key }}">⊕ trace</a>{% endif %}</li>
+        {% if not g.parameter %}<button type="button" class="add-btn" data-add-var="{{ g.key }}" data-label="{{ g.name }}">add</button>{% endif %}</li>
     {% endfor %}</ul>
   </details>
 

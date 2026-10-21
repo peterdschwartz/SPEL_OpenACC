@@ -23,6 +23,7 @@ def timeline(request):
     ranges = inactive_ranges(snap.pk, cfg["hash"])
     nodes = {r[1]: r for r in q.load_nodes(snap.pk)}
     tops = q.top_level(snap.pk)
+    occ = q.occurrence_index(snap.pk)
     per_var = {ref.key: q.trace_rows(snap, ref, reach, ranges) for ref in refs}
     if request.GET.get("all") == "1":
         orders = sorted(o for o in nodes if o in reach.orders)
@@ -32,7 +33,8 @@ def timeline(request):
     columns = []
     for o in orders:
         r = nodes[o]
-        columns.append({"i": col_of[o], "node": o, "sub": r[6], "short": r[4], "module": r[5] or "lib", "depth": r[7], "order": o, "top": nodes[tops[o]][4] if tops.get(o) in nodes else r[4], "top_order": tops.get(o, o)})
+        k, n = occ.get(o, (1, 1))
+        columns.append({"i": col_of[o], "node": o, "sub": r[6], "short": r[4] + (f" #{k}" if n > 1 else ""), "module": r[5] or "lib", "depth": r[7], "order": o, "top": nodes[tops[o]][4] if tops.get(o) in nodes else r[4], "top_order": tops.get(o, o)})
     steps = []
     for c in columns:
         if steps and steps[-1]["top_order"] == c["top_order"]:
@@ -52,12 +54,17 @@ def timeline(request):
     return JsonResponse({"snapshot": snap.label, "config": {"label": cfg["label"], "key": cfg["key"], "hash": cfg["hash"]}, "columns": columns, "steps": steps, "rows": rows})
 
 
-def _node_json(n: q.Node, depth_limit, marks=None):
-    d = {"id": n.order, "name": n.name, "sub": n.sub_id, "label": n.label, "depth": n.depth, "size": n.size, "cut": n.cut, "analyzed": n.analyzed, "active": n.active}
-    if marks is not None and n.order in marks:
-        d["marks"] = marks[n.order]
-    if n.children and (depth_limit is None or n.depth < depth_limit):
-        d["children"] = [_node_json(c, depth_limit, marks) for c in n.children]
+def _node_json(n: q.Node, depth_limit, marks=None, base_depth=0):
+    d = {"id": n.order, "name": n.name, "sub": n.sub_id, "label": n.label, "depth": n.depth, "size": n.size, "cut": n.cut, "analyzed": n.analyzed, "active": n.active, "count": n.count}
+    if marks is not None:
+        merged: dict[str, str] = {}
+        for o in n.orders:
+            for k, v in marks.get(o, {}).items():
+                merged[k] = q.merge_status([merged[k], v]) if k in merged else v
+        if merged:
+            d["marks"] = merged
+    if n.children and (depth_limit is None or n.depth - base_depth < depth_limit):
+        d["children"] = [_node_json(c, depth_limit, marks, base_depth) for c in n.children]
     elif n.children:
         d["collapsed"] = len(n.children)
         d["n_desc"] = n.size - 1
@@ -85,7 +92,7 @@ def calltree(request):
             for row in q.trace_rows(snap, ref, reach, ranges):
                 marks.setdefault(row["c"], {}).setdefault(ref.key, "")
                 marks[row["c"]][ref.key] = q.merge_status([marks[row["c"]][ref.key], row["s"]]) if marks[row["c"]][ref.key] else row["s"]
-    return JsonResponse({"snapshot": snap.label, "config": cfg["label"], "roots": [_node_json(n, depth_limit, marks) for n in tree], "vars": [r.key for r in refs]})
+    return JsonResponse({"snapshot": snap.label, "config": cfg["label"], "roots": [_node_json(n, depth_limit, marks, n.depth) for n in tree], "vars": [r.key for r in refs]})
 
 
 def modgraph(request):

@@ -8,7 +8,7 @@
   const status = document.getElementById("tl-status");
   const allBox = document.getElementById("tl-all");
   const arcsBox = document.getElementById("tl-arcs");
-  const ROW = 44, LEFT = 190, TOP = 56, BOTTOM = 120, COL = 22;
+  const LEFT = 210, TOP = 64, BOTTOM = 130, MINCOL = 26, MAXCOL = 90, MINROW = 48, MAXROW = 72;
 
   function url() {
     const p = new URLSearchParams(location.search);
@@ -16,23 +16,28 @@
     return svg.dataset.src + "?" + p.toString();
   }
 
-  function markShape(sel, s) {
+  function markShape(sel, s, size) {
+    const r = size || 7;
     sel.each(function (d) {
       const g = d3.select(this);
-      if (s === "r") g.append("circle").attr("r", 6).attr("class", "mark mark-r");
-      else if (s === "w") g.append("rect").attr("x", -6).attr("y", -6).attr("width", 12).attr("height", 12).attr("class", "mark mark-w");
-      else g.append("path").attr("d", "M0,-7 L7,0 L0,7 L-7,0 Z").attr("class", "mark mark-rw");
+      if (s === "r") g.append("circle").attr("r", r).attr("class", "mark mark-r");
+      else if (s === "w") g.append("rect").attr("x", -r).attr("y", -r).attr("width", 2 * r).attr("height", 2 * r).attr("class", "mark mark-w");
+      else g.append("path").attr("d", `M0,${-r - 1} L${r + 1},0 L0,${r + 1} L${-r - 1},0 Z`).attr("class", "mark mark-rw");
     });
   }
 
-  function arcPath(x1, x2, y, kind) {
-    const h = Math.min(18 + Math.abs(x2 - x1) / 8, 20);
+  function arcPath(x1, x2, y, kind, rowH) {
+    const h = Math.min(rowH * 0.42, 14 + Math.abs(x2 - x1) / 10);
     const up = kind === "next-read" ? -h : h;
-    return `M${x1},${y + (up < 0 ? -8 : 8)} Q${(x1 + x2) / 2},${y + up * 1.6} ${x2},${y + (up < 0 ? -8 : 8)}`;
+    return `M${x1},${y + (up < 0 ? -9 : 9)} Q${(x1 + x2) / 2},${y + up * 1.5} ${x2},${y + (up < 0 ? -9 : 9)}`;
   }
 
   function draw(data) {
     const cols = data.columns, rows = data.rows;
+    // spread few columns over the available width; many columns scroll horizontally
+    const avail = Math.max(300, wrap.clientWidth - LEFT - 40);
+    const COL = Math.max(MINCOL, Math.min(MAXCOL, Math.floor(avail / Math.max(cols.length, 1))));
+    const ROW = Math.max(MINROW, Math.min(MAXROW, Math.floor(420 / Math.max(rows.length, 1))));
     const width = Math.max(wrap.clientWidth, LEFT + cols.length * COL + 40);
     const height = TOP + rows.length * ROW + BOTTOM;
     const root = d3.select(svg).attr("width", width).attr("height", height);
@@ -53,8 +58,8 @@
       const x0 = LEFT + s.c0 * COL, x1 = LEFT + (s.c1 + 1) * COL;
       bands.append("rect").attr("x", x0).attr("y", TOP - 6).attr("width", x1 - x0).attr("height", rows.length * ROW + 12)
         .attr("class", "band" + (i % 2 ? " alt" : ""));
-      const label = bands.append("text").attr("x", x0 + 3).attr("y", TOP - 12).attr("class", "band-label").text(s.label);
-      if (x1 - x0 < s.label.length * 6.5) label.attr("transform", `rotate(-30, ${x0 + 3}, ${TOP - 12})`).attr("class", "band-label small");
+      const label = bands.append("text").attr("x", x0 + 3).attr("y", TOP - 14).attr("class", "band-label").text(s.label);
+      if (x1 - x0 < s.label.length * 6.5) label.attr("transform", `rotate(-30, ${x0 + 3}, ${TOP - 14})`).attr("class", "band-label small");
     });
 
     // column labels
@@ -64,26 +69,37 @@
         .attr("transform", `rotate(-60, ${x(c.i)}, ${TOP + rows.length * ROW + 10})`)
         .attr("class", "col-label").text(c.short).attr("data-sub", c.sub)
         .on("click", () => openDetails(c.sub, null));
-      labels.append("line").attr("x1", x(c.i)).attr("x2", x(c.i)).attr("y1", TOP - 4).attr("y2", TOP + rows.length * ROW).attr("class", "col-guide");
+      labels.append("line").attr("x1", x(c.i)).attr("x2", x(c.i)).attr("y1", TOP - 4).attr("y2", TOP + rows.length * ROW).attr("class", "col-guide").attr("data-col", c.i);
     });
+    // hover a column: highlight its guide and label
+    g.append("rect").attr("x", LEFT).attr("y", TOP).attr("width", cols.length * COL).attr("height", rows.length * ROW).attr("fill", "transparent")
+      .on("mousemove", ev => {
+        const [mx] = d3.pointer(ev, g.node());
+        const ci = Math.floor((mx - LEFT) / COL);
+        labels.selectAll(".col-guide").classed("hot", (d, i, nodes) => +nodes[i].getAttribute("data-col") === ci);
+        labels.selectAll(".col-label").classed("hot", (d, i, nodes) => i === ci);
+      }).on("mouseleave", () => { labels.selectAll(".hot").classed("hot", false); }).lower();
 
     rows.forEach((r, ri) => {
       const color = window.traceColor(ri);
       const rowG = g.append("g").attr("class", "trow");
-      rowG.append("line").attr("x1", LEFT).attr("x2", LEFT + cols.length * COL).attr("y1", y(ri)).attr("y2", y(ri)).attr("class", "row-line");
+      rowG.append("rect").attr("x", 0).attr("y", TOP + ri * ROW).attr("width", width).attr("height", ROW).attr("class", "row-bg" + (ri % 2 ? " alt" : ""))
+        .attr("fill", color).attr("fill-opacity", ri % 2 ? 0.06 : 0.03);
+      rowG.append("line").attr("x1", LEFT).attr("x2", LEFT + cols.length * COL).attr("y1", y(ri)).attr("y2", y(ri)).attr("class", "row-line").attr("stroke", color).attr("stroke-opacity", 0.35);
       const lab = rowG.append("text").attr("x", 8).attr("y", y(ri) + 4).attr("class", "row-label").attr("fill", color).text(r.label);
       lab.append("title").text(`${r.key}: ${r.config_category} under this config (${r.category} overall)`);
       rowG.append("text").attr("x", LEFT - 6).attr("y", y(ri) + 4).attr("text-anchor", "end").attr("class", "row-cat").text(r.config_category);
       if (arcsBox.checked) {
         r.arcs.forEach(a => {
           const m1 = r.marks[a.from], m2 = r.marks[a.to];
-          rowG.append("path").attr("d", arcPath(x(m1.c), x(m2.c), y(ri), a.kind))
+          rowG.append("path").attr("d", arcPath(x(m1.c), x(m2.c), y(ri), a.kind, ROW))
             .attr("class", "arc arc-" + a.kind).attr("stroke", color);
         });
       }
       const marks = rowG.selectAll("g.m").data(r.marks).enter().append("g").attr("class", "m")
         .attr("transform", d => `translate(${x(d.c)},${y(ri)})`).attr("fill", color).attr("stroke", color);
-      marks.each(function (d) { markShape(d3.select(this), d.s); }).classed("cond", d => d.cond);
+      const msize = Math.max(6, Math.min(10, COL / 3));
+      marks.each(function (d) { markShape(d3.select(this), d.s, msize); }).classed("cond", d => d.cond);
       marks.on("mouseenter", (ev, d) => {
         const c = cols[d.c];
         tip.innerHTML = `<b>${r.label}</b> ${d.s === "r" ? "read" : d.s === "w" ? "written" : "read+written"}<br>${c.sub} line ${d.ln + 1}<br><span class="muted">${c.top} · step position ${d.order}${d.from === "dummy" ? " · via argument" : ""}${d.cond ? " · inside an if block" : ""}</span>`;
@@ -105,6 +121,7 @@
   }
 
   function load() {
+    if (!new URLSearchParams(location.search).getAll("v").length) { d3.select(svg).selectAll("*").remove(); status.textContent = ""; return; }
     status.textContent = "loading…";
     fetch(url(), { headers: { Accept: "application/json" } }).then(r => r.json()).then(draw)
       .catch(err => { status.textContent = "failed: " + err; });

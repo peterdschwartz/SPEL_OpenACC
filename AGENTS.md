@@ -188,6 +188,11 @@ Do this in a scratch directory so `.mod`/`.o` files don't land in the repo.
   registration; intermediate = unconditional write first, no history; unused. "Conditional" =
   inside a plain (non-namelist) if block or in a routine called from one (`TraceAccess.conditional`).
   Registration flags are facts; `restart_unneeded` / `restart_missing` are findings for review.
+- Accesses through pointer components of module instances (`transport_ptr_list(i)%trcr_tend_ptr`)
+  are expanded to the component's recorded targets (`DerivedType.components[x].pointer`, filled
+  from every `=>` in the module by `allocations.scan_module`), transitively, in the exporter
+  (`GlobalResolver.expand`); `TraceAccess.resolved_from == "pointer"` marks such rows. Pointers
+  assigned at run time to something the module scan never sees stay unexpanded (conservative).
 - `hist_addfld*`/`restartvar` calls are recorded by the analysis (`spel/scripts/registrations.py`,
   `Subroutine.registrations`) by parsing the original routine bodies; the edited `src/` copies keep
   them commented out. Analysis attributes the export reads need `spel analyze` again after changes.

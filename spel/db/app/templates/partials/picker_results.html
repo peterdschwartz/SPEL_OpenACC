@@ -1,0 +1,26 @@
+{% if mode == "members" %}
+<p class="muted">{{ rows|length }} components of <strong>{{ instance.instance_name }}</strong> <span class="muted">({{ instance.instance_type.user_type_name }}{% if needle %}, matching “{{ needle }}”{% endif %})</span>
+  · <a href="{% url 'type_detail' instance.instance_type.user_type_name %}?instance={{ instance.instance_name }}">type page</a></p>
+<table class="catalog compact">
+  <thead><tr><th>Member</th><th>Type</th><th>Lvl</th><th>Category</th><th>r/w</th><th>Reg.</th><th></th></tr></thead>
+  <tbody>{% include "partials/member_rows.html" %}</tbody>
+</table>
+{% elif items %}
+<div class="pick-list">
+  {% for item in items %}
+  <div class="pick-row">
+    {% if item.kind == "instance" %}
+    <a href="#" class="grow" data-pick-instance="{{ item.key }}" title="list this instance's components">{{ item.label }} <small class="muted">{{ item.detail }}</small></a>
+    <button type="button" class="add-btn" data-pick-instance="{{ item.key }}">components ›</button>
+    {% else %}
+    <span class="grow">{{ item.label }} <small class="muted">{{ item.detail }}</small></span>
+    <button type="button" class="add-btn" data-add-var="{{ item.key }}" data-label="{{ item.label }}">add</button>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% elif needle %}
+<p class="muted">No matches for “{{ needle }}”.</p>
+{% else %}
+<p class="muted">Choose an instance to list its components, or type part of a variable name.</p>
+{% endif %}

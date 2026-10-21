@@ -58,7 +58,7 @@
     enter.on("click", (ev, d) => toggle(d))
       .on("dblclick", (ev, d) => { ev.stopPropagation(); location.assign(subUrl.replace("X", encodeURIComponent(d.data.sub)) + location.search); })
       .on("mouseenter", (ev, d) => {
-        tip.innerHTML = `<b>${d.data.label}</b><br>${d.data.size - 1} routines below · depth ${d.data.depth}${d.data.cut ? " · recursive call" : ""}${!d.data.analyzed ? " · not analyzed" : ""}${!d.data.active ? " · pruned by the config" : ""}` + (d.data.marks ? "<br>" + Object.entries(d.data.marks).map(([k, v]) => `${k}: ${v}`).join(", ") : "");
+        tip.innerHTML = `<b>${d.data.label}</b>${d.data.count > 1 ? ` · called ${d.data.count} times here` : ""}<br>${d.data.size - 1} routines below · depth ${d.data.depth}${d.data.cut ? " · recursive call" : ""}${!d.data.analyzed ? " · not analyzed" : ""}${!d.data.active ? " · pruned by the config" : ""}` + (d.data.marks ? "<br>" + Object.entries(d.data.marks).map(([k, v]) => `${k}: ${v}`).join(", ") : "");
         tip.hidden = false; tip.style.left = (ev.pageX + 12) + "px"; tip.style.top = (ev.pageY - 10) + "px";
       }).on("mouseleave", () => { tip.hidden = true; });
     const all = enter.merge(node).attr("transform", d => `translate(${d.y},${d.x})`)
@@ -66,7 +66,7 @@
       .classed("collapsed", d => !!(d._children || d.data.collapsed));
     all.select("circle").attr("r", d => Math.min(12, 3 + Math.sqrt(d.data.size)));
     all.select("text").attr("x", d => (d.children ? -1 : 1) * (Math.min(12, 3 + Math.sqrt(d.data.size)) + 4)).attr("text-anchor", d => d.children ? "end" : "start")
-      .text(d => d.data.name + (d.data.cut ? " ↺" : "") + ((d._children || d.data.collapsed) ? ` (+${d.data.collapsed || d.data.size - 1})` : ""));
+      .text(d => d.data.name + (d.data.count > 1 ? ` ×${d.data.count}` : "") + (d.data.cut ? " ↺" : "") + ((d._children || d.data.collapsed) ? ` (+${d.data.collapsed || d.data.size - 1})` : ""));
   }
 
   function load() {

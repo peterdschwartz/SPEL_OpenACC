@@ -384,7 +384,8 @@ class SubroutineActiveGlobalVars(models.Model):
 
     class Meta:
         db_table = "subroutine_active_global_vars"
-        constraints = [UniqueConstraint(fields=("subroutine", "path", "status", "ln"), name="unique_sub_dtype")]
+        # one line may reach several targets through a pointer component, hence instance/member in the key
+        constraints = [UniqueConstraint(fields=("subroutine", "path", "instance", "member", "status", "ln"), name="unique_sub_dtype")]
         indexes = [models.Index(fields=["instance", "member"]), models.Index(fields=["subroutine", "ln"])]
 
 
@@ -629,7 +630,7 @@ class TraceAccess(models.Model):
     status = models.CharField(max_length=2)  # r | w | rw
     ln = models.IntegerField()
     order = models.IntegerField()  # sequence across the whole trace
-    resolved_from = models.CharField(max_length=8, default="global")  # global | dummy
+    resolved_from = models.CharField(max_length=8, default="global")  # global | dummy | pointer
     conditional = models.BooleanField(default=False)  # inside a plain if block, or called from one
 
     class Meta:

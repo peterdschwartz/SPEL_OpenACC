@@ -9,7 +9,7 @@
       <tbody>
         {% for r in rows %}
         <tr>
-          <td>{% if r.module %}<span class="muted">{{ r.module }}::</span>{% endif %}<a href="{% url 'trace_view' %}?v={{ r.module }}::{{ r.name }}">{{ r.name }}</a></td>
+          <td>{% if r.module %}<span class="muted">{{ r.module }}::</span>{% endif %}{{ r.name }} <button type="button" class="add-btn" data-add-var="{{ r.module }}::{{ r.name }}" data-label="{{ r.name }}">add</button></td>
           <td class="muted">{{ r.group }}</td>
           <td><code>{{ r.value }}</code></td>
           <td><span class="badge badge-{{ r.source|slice:':6' }}">{{ r.source }}</span></td>

@@ -101,12 +101,21 @@ def parse_env(env: dict[str, str]) -> dict:
     return out
 
 
-@transaction.atomic
 def ensure_if_evals(snapshot: Snapshot, config_hash: str, data: dict) -> int:
-    """Evaluate the snapshot's namelist-gated ifs under `data` (once per hash). Returns rows written."""
+    """
+    Evaluate the snapshot's namelist-gated ifs under `data` (once per hash). Returns rows written.
+    Read requests stay write-free: the last-used time is touched at most once per CACHE_SECONDS.
+    """
+    touched_key = f"ifeval-touched:{snapshot.pk}:{config_hash}"
+    if cache.get(touched_key):
+        return 0
     qs = IfEvaluationByHash.objects.filter(snapshot=snapshot, config_hash=config_hash)
     if qs.exists():
-        qs.update(last_used_at=timezone.now())
+        try:
+            qs.update(last_used_at=timezone.now())
+        except Exception:  # a concurrent writer on SQLite: the touch is not worth failing a page for
+            pass
+        cache.set(touched_key, True, CACHE_SECONDS)
         return 0
     eval_env = parse_env(build_env(snapshot, data))
     batch = []
@@ -123,8 +132,10 @@ def ensure_if_evals(snapshot: Snapshot, config_hash: str, data: dict) -> int:
         batch.append(IfEvaluationByHash(
             snapshot=snapshot, config_hash=config_hash, flatif_id=fi.pk, subroutine_id=fi.subroutine_id,
             start_ln=fi.start_ln, end_ln=fi.end_ln, is_active=is_active))
-    IfEvaluationByHash.objects.bulk_create(batch, ignore_conflicts=True, batch_size=2000)
-    evict_cold_hashes(snapshot)
+    with transaction.atomic():
+        IfEvaluationByHash.objects.bulk_create(batch, ignore_conflicts=True, batch_size=2000)
+        evict_cold_hashes(snapshot)
+    cache.set(touched_key, True, CACHE_SECONDS)
     return len(batch)
 
 

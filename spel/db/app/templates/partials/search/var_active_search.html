@@ -1,12 +1,10 @@
 {% if items %}
 <div class="dropdown" role="listbox" aria-label="Variable matches">
   {% for item in items %}
-  {% if mode == "add" %}
-  <a href="#" role="option" data-add-var="{{ item.key }}" data-kind="{{ item.kind }}">{{ item.label }} <small class="muted">{{ item.detail }}</small></a>
-  {% elif item.kind == "instance" %}
-  <a href="{% url 'var_active_search' %}" role="option" hx-post="{% url 'var_active_search' %}" hx-vals='{"search": "{{ item.key }}", "mode": "{{ mode }}"}' hx-target="closest .dropdown" hx-swap="outerHTML">{{ item.label }} <small class="muted">{{ item.detail }}</small></a>
+  {% if item.kind == "instance" %}
+  <a href="{% url 'type_detail' item.type %}?instance={{ item.key }}" role="option" data-pick-instance="{{ item.key }}">{{ item.label }} <small class="muted">{{ item.detail }} · components</small></a>
   {% else %}
-  <a href="{% url 'trace_view' %}?v={{ item.key|urlencode }}" role="option">{{ item.label }} <small class="muted">{{ item.detail }}</small></a>
+  <a href="#" role="option" data-add-var="{{ item.key }}" data-label="{{ item.label }}">{{ item.label }} <small class="muted">{{ item.detail }} · add to trace list</small></a>
   {% endif %}
   {% endfor %}
 </div>

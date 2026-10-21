@@ -118,6 +118,21 @@ def binding_rows(ctx: ExportContext):
                 }
 
 
+def _access_rows_for(sub, path, rws, info, cols, dtype_rows, intr_rows):
+    for rw in rws:
+        if info is not None and info["dtype"] is not None:
+            dtype_rows.append(
+                {"sub_id": sub.id, "path": path, "inst_module": cols["inst_module"],
+                 "instance": cols["instance"], "member": cols["member"],
+                 "status": rw.status, "ln": rw.ln}
+            )
+        else:
+            intr_rows.append(
+                {"sub_id": sub.id, "path": path, "var_module": cols["var_module"],
+                 "var_name": cols["var_name"], "status": rw.status, "ln": rw.ln}
+            )
+
+
 def access_rows(ctx: ExportContext):
     """(active_dtype_vars, intrinsic_access, arg_access, propagated_access) rows."""
     dtype_rows, intr_rows, arg_rows_, prop_rows = [], [], [], []
@@ -126,20 +141,12 @@ def access_rows(ctx: ExportContext):
         if maps is None:
             continue
         for path, rws in list(maps.elmtype.items()) + list(maps.globals.items()):
-            info = ctx.resolver.split(sub, path)
-            cols = var_columns(info, path)
-            for rw in rws:
-                if info is not None and info["dtype"] is not None:
-                    dtype_rows.append(
-                        {"sub_id": sub.id, "path": path, "inst_module": cols["inst_module"],
-                         "instance": cols["instance"], "member": cols["member"],
-                         "status": rw.status, "ln": rw.ln}
-                    )
-                else:
-                    intr_rows.append(
-                        {"sub_id": sub.id, "path": path, "var_module": cols["var_module"],
-                         "var_name": cols["var_name"], "status": rw.status, "ln": rw.ln}
-                    )
+            canon = ctx.resolver.canonical(sub, path)
+            targets = ctx.resolver.expand(canon) if canon else (None,)
+            for target in targets:
+                info = ctx.resolver.describe_canonical(target) if target else None
+                cols = var_columns(info, path)
+                _access_rows_for(sub, path, rws, info, cols, dtype_rows, intr_rows)
         for path, rws in maps.args.items():
             dummy, _, rest = path.partition("%")
             for rw in rws:

@@ -6,27 +6,33 @@
 <script src="{% static 'js/timeline.js' %}" defer></script>
 {% endblock %}
 {% block body %}
-<div class="page-head">
-  <h2>Variable trace</h2>
+<div class="tracebar">
+  <strong>Trace</strong>
   <div class="chips" id="chips">
-    {% for r in refs %}
-    <span class="chip chip-{{ r.kind }}" data-key="{{ r.key }}">
-      <span class="chip-swatch" data-swatch="{{ forloop.counter0 }}"></span>{{ r.label }}
-      {% if r.state %}<span class="badge badge-cat-{{ r.state.effective_category }}" title="static category">{{ r.state.effective_category }}</span>{% endif %}
-      <a href="#" class="chip-remove" data-remove-var="{{ r.key }}" title="remove">×</a>
-    </span>
-    {% endfor %}
-    {% for k in unknown %}<span class="chip chip-unknown" title="not found in this snapshot">{{ k }} <a href="#" class="chip-remove" data-remove-var="{{ k }}">×</a></span>{% endfor %}
-    <div class="toolbar-item search-item add-var">{% include 'partials/search/var_search_form.html' with mode="add" %}</div>
+    {% for r in refs %}<span class="chip" data-seed-key="{{ r.key }}" data-seed-label="{{ r.label }}" data-seed-category="{% if r.state %}{{ r.state.effective_category }}{% endif %}">{{ r.label }}</span>{% endfor %}
   </div>
+  <button id="trace-go" class="styled-button" disabled>Trace</button>
+  <button id="trace-clear" class="link-button">clear</button>
+  <button class="link-button" type="button" onclick="document.getElementById('picker').open = !document.getElementById('picker').open">+ add variables</button>
+  {% for k in unknown %}<span class="chip chip-unknown" title="not found in this snapshot">{{ k }}</span>{% endfor %}
 </div>
-{% if not refs %}
-<p class="lead">Add variables with the search box above: an instance field such as <code>col_ws%h2osoi_liq</code>, or a module
-  variable such as <code>elm_varctl::use_crop</code>. The timeline shows where in the time step each one is read (○) and
-  written (■), the arcs from a write to the <em>next</em> read show when a computed value is needed, and a dashed arc from
-  the last write back to the first read marks state carried into the next step (prognostic). Faded marks sit inside an
-  <code>if</code> block (or a routine called from one): a conditional write does not reset the variable for every element.</p>
-{% else %}
+<details id="picker" class="picker" {% if not refs %}open{% endif %}>
+  <summary>Pick variables <span class="muted">— choose an instance to list its components, or type part of any variable name</span></summary>
+  <form class="picker-fields" onsubmit="return false;" id="picker-form">
+    <select id="picker-instance" name="instance" hx-get="{% url 'picker' %}" hx-include="#picker-form" hx-target="#picker-results" hx-trigger="change">
+      <option value="">— any variable (module variables, instances, members) —</option>
+      {% for i in instances %}<option value="{{ i.instance_name }}">{{ i.instance_name }} — {{ i.instance_type.user_type_name }}</option>{% endfor %}
+    </select>
+    <input id="picker-filter" name="q" type="search" placeholder="filter (fuzzy)" autocomplete="off"
+           hx-get="{% url 'picker' %}" hx-include="#picker-form" hx-target="#picker-results" hx-trigger="input changed delay:150ms, search">
+  </form>
+  <div id="picker-results" class="picker-results" hx-get="{% url 'picker' %}" hx-include="#picker-form" hx-trigger="load" hx-swap="innerHTML"></div>
+</details>
+<p id="trace-intro" class="lead" {% if refs %}hidden{% endif %}>The timeline shows where in the time step each traced variable is read (○) and written (■), the arcs from a write to the
+  <em>next</em> read show when a computed value is needed, and a dashed arc from the last write back to the first read marks
+  state carried into the next step (prognostic). Faded marks sit inside an <code>if</code> block (or a routine called from
+  one): a conditional write does not reset the variable for every element.</p>
+<div id="trace-views" {% if not refs %}hidden{% endif %}>
 <section class="timeline-section">
   <div class="timeline-controls">
     <label class="check"><input type="checkbox" id="tl-all"> all routines as columns</label>
@@ -39,8 +45,8 @@
   <div id="tl-tooltip" class="tooltip" hidden></div>
 </section>
 <div id="sub-split-view" class="split-container">
-  <div class="left-panel" id="left-panel" data-reload-on-config hx-get="{% url 'trace' %}?{{ request.GET.urlencode }}" hx-trigger="load, reload" hx-swap="innerHTML"></div>
+  <div class="left-panel" id="left-panel" data-reload-on-config hx-get="{% url 'trace' %}?{{ request.GET.urlencode }}" hx-trigger="{% if refs %}load, {% endif %}reload" hx-swap="innerHTML"></div>
   <div class="right-panel" id="right-panel"><p class="muted">Click a mark on the timeline or a routine's details button.</p></div>
 </div>
-{% endif %}
+</div>
 {% endblock %}

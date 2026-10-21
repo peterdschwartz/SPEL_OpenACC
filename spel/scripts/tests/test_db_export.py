@@ -231,6 +231,19 @@ def test_csv_contract(tmp_path):
         read_table(tmp_path / "modules.csv")
 
 
+def test_pointer_components_expand_to_targets(analysis):
+    """`ptrs%tend_ptr` (a module instance whose component points at col_ws%h2osno) resolves to the target."""
+    fm = analysis.module_dict[MOD]
+    ptype = DerivedType("ptr_type", MOD, fpath=str(fm.filepath))
+    ptype.components["tend_ptr"] = Variable("real", "tend_ptr", "", 0, 1, pointer=["col_ws%h2osno", "col_ws%qflx"], ptrscalar=True)
+    analysis.type_dict["ptr_type"] = ptype
+    fm.global_vars["ptrs"] = Variable("ptr_type", "ptrs", "", 0, 1, declaration=MOD)
+    ctx = ExportContext(analysis, {}, Path("/"))
+    assert ctx.resolver.expand("m::ptrs%tend_ptr") == ("m::col_ws%h2osno", "m::col_ws%qflx")
+    assert ctx.resolver.expand("m::col_ws%h2osno") == ("m::col_ws%h2osno",)
+    assert ctx.resolver.expand("m::ptrs") == ("m::ptrs",)
+
+
 def test_export_snapshot_small(analysis, tmp_path):
     meta = {"e3sm_srcroot": str(tmp_path), "e3sm": {"commit": "abc1234def", "branch": "x/y"}, "spel": {}}
     snap = export_snapshot(analysis, meta, tmp_path / "out", roots=[f"{MOD}::root"])

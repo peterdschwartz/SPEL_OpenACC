@@ -1,0 +1,14 @@
+{% for row in rows %}
+<tr id="m-{{ row.m.member_name|slugify }}">
+  <td><code>{{ row.m.member_name }}</code>{% if row.m.pointer %} <span class="muted">ptr</span>{% endif %}</td>
+  <td class="muted">{% if row.m.component_type %}<a href="{% url 'type_detail' row.m.component_type.user_type_name %}">{{ row.m.member_type }}</a>{% else %}{{ row.m.member_type }}{% endif %}{% if row.m.dim %}({{ row.m.dim }}d){% endif %}</td>
+  <td>{{ row.m.subgrid }}</td>
+  <td>{% if row.state %}<span class="badge badge-cat-{{ row.category }}">{{ row.category }}</span>{% endif %}</td>
+  <td class="muted">{{ row.state.n_reads|default:"" }}{% if row.state %}/{{ row.state.n_writes }}{% endif %}</td>
+  <td>{% for r in row.regs %}<span class="badge badge-{{ r.kind }}" title="{{ r.name }} {{ r.long_name }}{% if r.units %} [{{ r.units }}]{% endif %}{% if r.guards %} if {{ r.guards|join:' and ' }}{% endif %}">{{ r.kind }}{% if r.inactive %} (inactive){% endif %}</span> {% endfor %}
+    {% if row.state.restart_unneeded %}<span class="badge badge-off" title="restart-registered but recomputed each step">restart?</span>{% endif %}{% if row.state.restart_missing %}<span class="badge badge-w" title="carried across steps but not in the restart file">no restart?</span>{% endif %}</td>
+  <td>{% if row.key %}<button type="button" class="add-btn" data-add-var="{{ row.key }}" data-label="{{ row.key }}" data-category="{{ row.category }}">add</button>{% endif %}</td>
+</tr>
+{% empty %}
+<tr><td colspan="7" class="muted">No members match.</td></tr>
+{% endfor %}

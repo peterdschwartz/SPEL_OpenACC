@@ -170,7 +170,8 @@ def canonical_summary(ctx: ExportContext, sub, _chain: tuple = ()) -> dict[str, 
             status = ""
             for rw in rws:
                 status = merge_status(status, rw.status)
-            out[canon] = merge_status(out.get(canon, ""), status)
+            for target in ctx.resolver.expand(canon):
+                out[target] = merge_status(out.get(target, ""), status)
         for c in ctx.calls(sub):
             callee = c.callee
             if callee is None or callee.library or callee.record is None or callee.id in _chain:

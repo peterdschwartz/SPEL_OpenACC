@@ -120,3 +120,46 @@ def test_pages_and_json(client, loaded):
     assert "col_ws%h2osno" in html
     r = client.post("/configs/select/", {"config": "base"})
     assert r.status_code == 200 and "configChanged" in r["HX-Trigger"]
+
+
+def test_merge_repeats_and_fuzzy(loaded):
+    from db.app.models import TraceNode
+    from db.app.utils import queries as q
+
+    snap = loaded
+    # duplicate the call to `child` under root: two occurrences should merge into one node ×2
+    child = TraceNode.objects.get(snapshot=snap, order=1)
+    last = TraceNode.objects.filter(snapshot=snap).order_by("-order").first()
+    TraceNode.objects.create(snapshot=snap, order=last.order + 1, parent=child.parent, call_site=child.call_site,
+                             subroutine=child.subroutine, depth=1, size=1)
+    from django.core.cache import cache
+    cache.clear()
+    tree = q.build_tree(snap.pk, None)
+    names = [(c.name, c.count, c.orders) for c in tree[0].children]
+    assert ("child", 2, [1, last.order + 1]) in names and len([n for n in names if n[0] == "child"]) == 1
+    plain = q.build_tree(snap.pk, None, merge=False)
+    assert [c.name for c in plain[0].children].count("child") == 2
+    assert q.occurrence_index(snap.pk)[1] == (1, 2) and q.occurrence_index(snap.pk)[last.order + 1] == (2, 2)
+    assert q.fuzzy_score("h2o", "h2osoi_liq") > q.fuzzy_score("h2o", "qflx_h2osfc") > q.fuzzy_score("h2o", "hr2_so_o")
+    assert q.fuzzy_score("xyz", "h2osoi") is None
+    assert [m for m in q.fuzzy_filter("hs", ["h2osno", "qflx", "h2osoi_liq", "hsx"], lambda s: s)] == ["hsx", "h2osno", "h2osoi_liq"]
+
+
+def test_picker_and_type_members(client, loaded):
+    from db.app.models import PresetConfig
+
+    PresetConfig.objects.create(slug="base", name="Base", data={}, is_default=True)
+    html = client.get("/picker/?instance=col_ws").content.decode()
+    assert html.count('data-add-var="col_ws%') == 3  # every component of the instance
+    html = client.get("/picker/?instance=col_ws&q=h2osn").content.decode()
+    assert 'data-add-var="col_ws%h2osno"' in html and "h2osoi_liq" not in html
+    html = client.get("/picker/?q=col").content.decode()
+    assert 'data-pick-instance="col_ws"' in html
+    html = client.get("/picker/?q=nst").content.decode()
+    assert 'data-add-var="m::nstep"' in html
+    html = client.get("/types/water_state/members/?instance=col_ws&q=qf").content.decode()
+    assert "qflx" in html and "h2osno" not in html
+    r = client.get("/trace_view/")
+    assert r.status_code == 200 and 'id="trace-go"' in r.content.decode()
+    html = client.get("/calltree/m::root").content.decode()
+    assert "×" not in html  # no repeated callees in the mini step

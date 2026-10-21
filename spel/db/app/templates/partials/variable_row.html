@@ -9,7 +9,7 @@
   <td>{{ fs.n_reads }}</td><td>{{ fs.n_writes }}</td><td>{{ fs.n_routines }}</td>
   <td>{% if fs.restart %}✔{% endif %}{% if fs.restart_unneeded %} <span class="badge badge-off" title="restart-registered but recomputed each step">unneeded?</span>{% endif %}{% if fs.restart_missing %} <span class="badge badge-w" title="carried across steps but not restart-registered">missing?</span>{% endif %}</td>
   <td>{% if fs.history %}✔{% if not fs.history_active %} <span class="muted">inactive</span>{% endif %}{% endif %}</td>
-  <td class="row-actions"><a href="{% url 'trace_view' %}?v={{ fs.key|urlencode }}" title="trace">⊕</a>
+  <td class="row-actions"><button type="button" class="add-btn" data-add-var="{{ fs.key }}" data-label="{{ fs.key }}" data-category="{{ category }}">add</button>
     {% if user.is_authenticated %}
     <form hx-post="{% url 'set_override' fs.pk %}" hx-target="#fs-{{ fs.pk }}" hx-swap="outerHTML" class="inline-form">
       <select name="override" title="manual category"><option value="">auto</option>{% for c in "prognostic,diagnostic,intermediate,input,unused"|split:"," %}<option value="{{ c }}" {% if fs.override == c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select>

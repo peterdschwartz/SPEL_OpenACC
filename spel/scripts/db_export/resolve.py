@@ -29,6 +29,8 @@ class GlobalResolver:
         self._cache: dict[tuple[str, str], Optional[ModVar]] = {}
         self._routine_uses: dict[str, list] = {}
         self.unresolved: Counter = Counter()
+        self._instances_by_name: Optional[dict[str, list[ModVar]]] = None
+        self._expand_cache: dict[str, tuple[str, ...]] = {}
 
     # --- names ---
     def resolve(self, sub, name: str) -> Optional[ModVar]:
@@ -140,6 +142,57 @@ class GlobalResolver:
             "member": self.member(dtype, parts),
             "rest": rest,
         }
+
+    # --- pointer components ---
+    def instance_by_name(self, name: str) -> Optional[ModVar]:
+        """The module variable of that name that is a derived-type instance (unique by name in ELM)."""
+        if self._instances_by_name is None:
+            self._instances_by_name = {}
+            for mod, fm in self.mod_dict.items():
+                for vname, var in fm.global_vars.items():
+                    if var.type in self.type_dict:
+                        self._instances_by_name.setdefault(vname.lower(), []).append((mod, vname))
+        hits = self._instances_by_name.get(name.lower(), [])
+        return hits[0] if len(hits) == 1 else None
+
+    def expand(self, canon: str) -> tuple[str, ...]:
+        """
+        A canonical path dereferenced through a pointer component (`mod::ptr_list%tend_ptr%rest`)
+        becomes the canonical paths of the component's recorded targets (`mod2::col_cf%x%rest`),
+        following chains; a path without pointer components is returned as is.
+        """
+        if canon in self._expand_cache:
+            return self._expand_cache[canon]
+        out = tuple(self._expand(canon, set()))
+        self._expand_cache[canon] = out
+        return out
+
+    def _expand(self, canon: str, seen: set) -> list[str]:
+        if canon in seen:
+            return [canon]
+        seen.add(canon)
+        head, _, rest = canon.partition("%")
+        mod, _, name = head.partition("::")
+        dtype = self.dtype_of((mod, name))
+        if dtype is None or not rest:
+            return [canon]
+        parts = rest.split("%")
+        for k in range(len(parts), 0, -1):
+            comp = dtype.components.get("%".join(parts[:k]))
+            targets = list(getattr(comp, "pointer", []) or []) if comp is not None else []
+            if comp is None or not targets:
+                continue
+            tail = "%".join(parts[k:])
+            out: list[str] = []
+            for target in targets:
+                tbase, _, trest = target.lower().partition("%")
+                mv = self.instance_by_name(tbase)
+                if mv is None:
+                    continue
+                new = f"{mv[0]}::{mv[1]}" + (f"%{trest}" if trest else "") + (f"%{tail}" if tail else "")
+                out.extend(self._expand(new, seen))
+            return out or [canon]
+        return [canon]
 
     def canonical(self, sub, path: str) -> Optional[str]:
         """`module::name%rest` for a path used in `sub`, or None."""

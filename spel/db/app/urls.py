@@ -28,9 +28,9 @@ urlpatterns = [
     path("variables/<int:state_id>/override/", views.set_override, name="set_override"),
     # tracing and graphs
     path("trace_view/", views.trace_view, name="trace_view"),
-    path("trace_view/<str:var_name>", views.trace_view, name="trace_view_var"),
     path("trace/", views.trace_vars, name="trace"),
-    path("trace/<str:key>/", views.trace_vars, name="trace_key"),
+    path("picker/", views.picker, name="picker"),
+    path("types/<str:type_name>/members/", views.type_members, name="type_members"),
     path("calltree_view/", views.calltree_view, name="calltree_view"),
     path("diff/", views.diff_view, name="diff"),
     path("diff/<str:tab>/", views.diff_tab, name="diff_tab"),

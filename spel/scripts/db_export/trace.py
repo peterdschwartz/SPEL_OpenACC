@@ -155,7 +155,7 @@ class StaticTrace:
         rest = f"%{rest}" if rest else ""
         if origin in (Origin.GLOBAL, Origin.EXTERNAL):
             canon = self.ctx.resolver.canonical(sub, path)
-            return frozenset({canon}) if canon else frozenset()
+            return frozenset(self.ctx.resolver.expand(canon)) if canon else frozenset()
         if origin is Origin.DUMMY:
             actuals = env.get(base)
             if actuals is None:
@@ -175,6 +175,8 @@ class StaticTrace:
 
     def emit(self, sub, order: int, access: Access, status: str, env: Env, host_env: Optional[Env], guarded: bool = False) -> None:
         conditional = guarded or self.conditional(sub, access.ln)
+        direct = access.origin in (Origin.GLOBAL, Origin.EXTERNAL)
+        plain = self.ctx.resolver.canonical(sub, access.path) if direct else None
         for canon in sorted(self.resolve(sub, access.path, access.origin, env, host_env)):
             key = (order, canon, access.ln, status)
             if key in self._seen:
@@ -188,7 +190,7 @@ class StaticTrace:
                     "status": status,
                     "ln": access.ln,
                     "order": len(self.accesses),
-                    "resolved_from": "global" if access.origin in (Origin.GLOBAL, Origin.EXTERNAL) else "dummy",
+                    "resolved_from": "pointer" if (direct and canon != plain) else ("global" if direct else "dummy"),
                     "conditional": conditional,
                 }
                 | cols

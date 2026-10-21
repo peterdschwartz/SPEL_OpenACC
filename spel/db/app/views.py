@@ -171,39 +171,35 @@ def sub_active_search(request):
 
 
 def var_active_search(request):
-    """Instances, `inst%member` fields and module variables matching the query; `add` mode adds to a trace."""
+    """Instances, `inst%member` fields and module variables matching the query (fuzzy), for the banner."""
     snap, cfg = ctx_for(request)
     needle = (request.POST.get("search") or request.GET.get("search") or "").strip().lower()
-    mode = request.POST.get("mode") or request.GET.get("mode") or "go"
     items = []
     if snap is not None and needle:
-        limit = 12
+        limit = 14
         if "%" in needle:
             inst_part, member_part = needle.split("%", 1)
-            insts = UserTypeInstances.objects.filter(inst_module__snapshot=snap, instance_name__icontains=inst_part).select_related("instance_type")
-            for inst in _startswith(insts, "instance_name", inst_part).order_by("startswith", "instance_name")[:6]:
-                members = TypeDefinitions.objects.filter(user_type=inst.instance_type, member_name__icontains=member_part)
-                for m in _startswith(members, "member_name", member_part).order_by("startswith", "member_name")[:limit]:
-                    items.append({"kind": "field", "key": f"{inst.instance_name}%{m.member_name}", "label": f"{inst.instance_name}%{m.member_name}", "detail": m.member_type})
-                    if len(items) >= limit:
-                        break
+            insts = UserTypeInstances.objects.filter(inst_module__snapshot=snap).select_related("instance_type")
+            for inst in q.fuzzy_filter(inst_part, insts, lambda i: i.instance_name, limit=4):
+                members = TypeDefinitions.objects.filter(user_type=inst.instance_type)
+                for m in q.fuzzy_filter(member_part, members, lambda m: m.member_name, limit=limit):
+                    items.append({"kind": "field", "key": f"{inst.instance_name}%{m.member_name}", "label": f"{inst.instance_name}%{m.member_name}", "detail": m.member_type, "type": inst.instance_type.user_type_name})
         else:
-            insts = _startswith(UserTypeInstances.objects.filter(inst_module__snapshot=snap, instance_name__icontains=needle).select_related("instance_type"), "instance_name", needle)
-            for inst in insts.order_by("startswith", "instance_name")[:6]:
-                items.append({"kind": "instance", "key": f"{inst.instance_name}%", "label": f"{inst.instance_name}%", "detail": inst.instance_type.user_type_name})
-            gl = _startswith(IntrinsicGlobals.objects.filter(snapshot=snap, var_name__icontains=needle).select_related("gv_module"), "var_name", needle)
-            for g in gl.order_by("startswith", "var_name")[:limit]:
+            insts = UserTypeInstances.objects.filter(inst_module__snapshot=snap).select_related("instance_type")
+            for inst in q.fuzzy_filter(needle, insts, lambda i: i.instance_name, limit=5):
+                items.append({"kind": "instance", "key": inst.instance_name, "label": f"{inst.instance_name}%", "detail": inst.instance_type.user_type_name, "type": inst.instance_type.user_type_name})
+            gl = IntrinsicGlobals.objects.filter(snapshot=snap, parameter=False).select_related("gv_module")
+            for g in q.fuzzy_filter(needle, gl, lambda g: g.var_name, limit=limit):
                 items.append({"kind": "global", "key": f"{g.gv_module.module_name}::{g.var_name}", "label": f"{g.gv_module.module_name}::{g.var_name}", "detail": g.var_type})
-            members = _startswith(TypeDefinitions.objects.filter(user_type__snapshot=snap, member_name__icontains=needle).select_related("user_type"), "member_name", needle)
             inst_of = {}
-            for inst in UserTypeInstances.objects.filter(inst_module__snapshot=snap).values_list("instance_type_id", "instance_name"):
-                inst_of.setdefault(inst[0], []).append(inst[1])
-            for m in members.order_by("startswith", "member_name")[:limit]:
-                for inst_name in inst_of.get(m.user_type_id, [])[:3]:
-                    items.append({"kind": "field", "key": f"{inst_name}%{m.member_name}", "label": f"{inst_name}%{m.member_name}", "detail": m.member_type})
-            items.sort(key=lambda it: (not it["label"].lower().startswith(needle), it["label"]))
+            for t_id, iname in UserTypeInstances.objects.filter(inst_module__snapshot=snap).values_list("instance_type_id", "instance_name"):
+                inst_of.setdefault(t_id, []).append(iname)
+            members = TypeDefinitions.objects.filter(user_type__snapshot=snap, user_type_id__in=inst_of)
+            for m in q.fuzzy_filter(needle, members, lambda m: m.member_name, limit=limit):
+                for iname in inst_of.get(m.user_type_id, [])[:3]:
+                    items.append({"kind": "field", "key": f"{iname}%{m.member_name}", "label": f"{iname}%{m.member_name}", "detail": m.member_type})
         items = items[:limit]
-    return render(request, "partials/search/var_active_search.html", {"items": items, "query": needle, "mode": mode, "snapshot": snap, "cfg": cfg})
+    return render(request, "partials/search/var_active_search.html", {"items": items, "query": needle, "snapshot": snap, "cfg": cfg})
 
 
 # ---------------------------------------------------------------- routines
@@ -288,21 +284,12 @@ def type_detail(request, type_name):
     instances = list(UserTypeInstances.objects.filter(instance_type=t).select_related("inst_module").order_by("instance_name"))
     inst = request.GET.get("instance")
     focus = next((i for i in instances if i.instance_name == inst), instances[0] if instances else None)
-    states = {}
-    if focus is not None:
-        states = {fs.member_id: fs for fs in FieldState.objects.filter(snapshot=snap, instance=focus)}
-    regs = {}
-    for r in Registration.objects.filter(snapshot=snap).filter(Q(user_type=t) | Q(instance=focus) if focus else Q(user_type=t)).select_related("member"):
-        if r.member_id:
-            regs.setdefault(r.member_id, []).append(r)
-    members = []
-    for m in TypeDefinitions.objects.filter(user_type=t).select_related("component_type").order_by("position"):
-        fs = states.get(m.pk)
-        members.append({"m": m, "state": fs, "regs": regs.get(m.pk, []), "key": f"{focus.instance_name}%{m.member_name}" if focus else ""})
+    needle = (request.GET.get("q") or "").strip()
+    members = q.member_rows(snap, focus, t, needle)
     procs = TypeProcedure.objects.filter(user_type=t).select_related("subroutine").order_by("binding")
-    cat_counts = Counter(fs.effective_category for fs in states.values())
+    cat_counts = Counter(fs.effective_category for fs in FieldState.objects.filter(snapshot=snap, instance=focus)) if focus else Counter()
     context = base_context(request, snap, cfg) | {
-        "type": t, "instances": instances, "focus": focus, "members": members, "procs": procs,
+        "type": t, "instances": instances, "focus": focus, "members": members, "procs": procs, "needle": needle,
         "categories": [(c, cat_counts.get(c, 0)) for c in CATEGORY_ORDER],
         "extensions": UserTypes.objects.filter(parent=t).order_by("user_type_name"),
     }
@@ -409,28 +396,77 @@ def set_override(request, state_id):
 
 
 # ----------------------------------------------------------------- tracing
-def trace_view(request, var_name=None):
-    """The trace workspace: `?v=col_ws%25h2osoi_liq&v=veg_cf%25npp` (plus snap/cfg)."""
+def trace_view(request):
+    """The trace workspace: a picker builds the list, `?v=col_ws%25h2osoi_liq&v=veg_cf%25npp` is what is traced."""
     snap, cfg = ctx_for(request)
     if snap is None:
         return no_snapshot(request)
     keys = request.GET.getlist("v")
-    if var_name:
-        keys = [var_name] + keys
     refs = q.parse_vars(snap, keys)
     unknown = [k for k in keys if k and not any(r.key == k or r.label == k for r in refs)]
-    context = base_context(request, snap, cfg) | {"refs": refs, "keys": [r.key for r in refs], "unknown": unknown}
+    instances = UserTypeInstances.objects.filter(inst_module__snapshot=snap).select_related("instance_type").order_by("instance_name")
+    context = base_context(request, snap, cfg) | {"refs": refs, "keys": [r.key for r in refs], "unknown": unknown, "instances": instances}
     return render(request, "trace_view.html", context)
 
 
-def trace_vars(request, key=None):
+def _instance(snap, name: str):
+    name = (name or "").strip().lower().split()[0].rstrip("%") if (name or "").strip() else ""
+    if not name:
+        return None
+    return UserTypeInstances.objects.filter(inst_module__snapshot=snap, instance_name=name).select_related("instance_type", "inst_module").first()
+
+
+def picker(request):
+    """Picker results: all components of an instance (fuzzy-narrowed), or matches across instances/variables."""
+    snap, cfg = ctx_for(request)
+    if snap is None:
+        return HttpResponse("")
+    needle = (request.GET.get("q") or "").strip()
+    inst = _instance(snap, request.GET.get("instance"))
+    context = base_context(request, snap, cfg) | {"needle": needle, "instance": inst}
+    if inst is not None:
+        context["rows"] = q.member_rows(snap, inst, inst.instance_type, needle)
+        context["mode"] = "members"
+    else:
+        items = []
+        if needle:
+            insts = UserTypeInstances.objects.filter(inst_module__snapshot=snap).select_related("instance_type")
+            for i in q.fuzzy_filter(needle, insts, lambda i: i.instance_name, limit=8):
+                items.append({"kind": "instance", "key": i.instance_name, "label": f"{i.instance_name}%", "detail": i.instance_type.user_type_name})
+            gl = IntrinsicGlobals.objects.filter(snapshot=snap, parameter=False).select_related("gv_module")
+            for g in q.fuzzy_filter(needle, gl, lambda g: g.var_name, limit=10):
+                items.append({"kind": "global", "key": f"{g.gv_module.module_name}::{g.var_name}", "label": f"{g.gv_module.module_name}::{g.var_name}", "detail": g.var_type + (" · namelist" if g.namelist_group else "")})
+            inst_of: dict[int, list[str]] = {}
+            for t_id, iname in UserTypeInstances.objects.filter(inst_module__snapshot=snap).values_list("instance_type_id", "instance_name"):
+                inst_of.setdefault(t_id, []).append(iname)
+            members = TypeDefinitions.objects.filter(user_type__snapshot=snap, user_type_id__in=inst_of)
+            for m in q.fuzzy_filter(needle, members, lambda m: m.member_name, limit=12):
+                for iname in inst_of.get(m.user_type_id, [])[:4]:
+                    items.append({"kind": "field", "key": f"{iname}%{m.member_name}", "label": f"{iname}%{m.member_name}", "detail": m.member_type})
+        context["items"] = items[:40]
+        context["mode"] = "search"
+    return render(request, "partials/picker_results.html", context)
+
+
+def type_members(request, type_name):
+    """Member rows of a type for one instance, fuzzy-filtered (the type page's filter box)."""
+    snap, cfg = ctx_for(request)
+    if snap is None:
+        return HttpResponse("")
+    t = get_object_or_404(UserTypes, snapshot=snap, user_type_name=type_name.lower())
+    inst = _instance(snap, request.GET.get("instance"))
+    if inst is None:
+        inst = UserTypeInstances.objects.filter(instance_type=t).order_by("instance_name").first()
+    rows = q.member_rows(snap, inst, t, (request.GET.get("q") or "").strip())
+    return render(request, "partials/member_rows.html", {"rows": rows, "snapshot": snap, "cfg": cfg})
+
+
+def trace_vars(request):
     """Textual tree with one marker column per traced variable (routines not touching any are pruned)."""
     snap, cfg = ctx_for(request)
     if snap is None:
         return HttpResponse("")
     keys = request.GET.getlist("v")
-    if key:
-        keys = [key] + keys
     refs = q.parse_vars(snap, keys)
     reach = reachable(snap.pk, cfg["hash"])
     ranges = inactive_ranges(snap.pk, cfg["hash"])
@@ -442,10 +478,13 @@ def trace_vars(request, key=None):
 
     def prune(node) -> bool:
         node.children = [c for c in node.children if prune(c)]
-        hit = node.order in marks
-        if hit:
-            node.marks = {k: q.merge_status(v) for k, v in marks[node.order].items()}
-        return hit or bool(node.children)
+        merged: dict[str, set] = {}
+        for o in node.orders:
+            for k, v in marks.get(o, {}).items():
+                merged.setdefault(k, set()).update(v)
+        if merged:
+            node.marks = {k: q.merge_status(v) for k, v in merged.items()}
+        return bool(merged) or bool(node.children)
 
     tree = [n for n in tree if prune(n)] if refs else tree
     context = base_context(request, snap, cfg) | {"tree": tree, "refs": refs, "var_keys": [r.key for r in refs], "expand_to": 3, "in_step": True}
