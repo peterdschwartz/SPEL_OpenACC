@@ -1,0 +1,8 @@
+<div id="snapshot-picker" class="picker">
+  <label for="snapshot-select" class="picker-label">Snapshot:</label>
+  <select id="snapshot-select" name="snapshot" hx-post="{% url 'select_snapshot' %}" hx-target="#snapshot-picker" hx-swap="outerHTML" hx-trigger="change">
+    {% for s in snapshots %}
+    <option value="{{ s.label }}" {% if snapshot and s.pk == snapshot.pk %}selected{% endif %} title="{{ s.e3sm_branch }} @ {{ s.e3sm_commit|slice:':8' }}">{{ s.label }}</option>
+    {% endfor %}
+  </select>
+</div>

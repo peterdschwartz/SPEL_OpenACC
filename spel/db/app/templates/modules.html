@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Modules · ELM Explorer{% endblock %}
+{% block body %}
+<div class="page-head"><h2>Modules</h2><div class="page-actions"><a class="styled-button" href="{% url 'modgraph' %}">Use graph</a></div></div>
+<table class="catalog">
+  <thead><tr><th>Module</th><th>File</th><th>Routines</th><th>Variables</th><th>Types</th><th>Uses</th></tr></thead>
+  <tbody>{% for m in modules %}<tr><td><a href="{% url 'module_detail' m.module_name %}">{{ m.module_name }}</a></td><td class="muted">{{ m.filepath }}</td><td>{{ m.n_subs }}</td><td>{{ m.n_globals }}</td><td>{{ m.n_types }}</td><td>{{ m.n_uses }}</td></tr>{% endfor %}</tbody>
+</table>
+{% endblock %}

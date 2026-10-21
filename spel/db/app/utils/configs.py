@@ -1,97 +1,63 @@
-from django.utils import timezone
-from datetime import timedelta
-from django.db import models
+"""The active snapshot and namelist configuration of a request (session defaults, URL overrides)."""
 
-from ..models import ConfigProfile, PresetConfig, SubroutineElmtypesByConfig
+from __future__ import annotations
 
-MAX_CONFIG_HASHES = 100
-EVICT_OLDER_THAN_MINUTES = 60
+from typing import Optional
 
-def get_active_config(request):
-    sel = request.session.get("active_config")
-
-    # 1) If nothing selected, pick default preset
-    if not sel:
-        preset = (
-            PresetConfig.objects.filter(is_default=True).first()
-            or PresetConfig.objects.first()
-        )
-        if preset:
-            request.session["active_config"] = {"type": "preset", "slug": preset.slug}
-            return {
-                "kind": "preset",
-                "data": preset.data,
-                "label": preset.name,
-                "hash": preset.preset_hash,
-            }
-        return {"kind": "none", "data": {}, "label": "None", "hash": "none"}
-
-    # 2) Preset selected (public)
-    if sel.get("type") == "preset":
-        preset = PresetConfig.objects.filter(slug=sel.get("slug")).first()
-        if preset:
-            return {
-                "kind": "preset",
-                "data": preset.data,
-                "label": preset.name,
-                "hash": preset.preset_hash,
-            }
-
-    # 3) User config selected (requires login to change/edit, but can view)
-    if sel.get("type") == "user":
-        cfg = ConfigProfile.objects.filter(id=sel.get("id")).first()
-        if cfg:
-            return {
-                "kind": "user",
-                "data": cfg.data or {},
-                "label": cfg.name,
-                "hash": cfg.user_hash,
-            }
-
-    request.session.pop("active_config", None)
-    return get_active_config(request)
+from ..models import ConfigProfile, PresetConfig, Snapshot
+from .helper import compute_config_hash
 
 
-def touch_config_hash(config_hash: str):
-    SubroutineElmtypesByConfig.objects.filter(config_hash=config_hash).update(
-        last_used_at=timezone.now()
-    )
+def active_snapshot(request, label: Optional[str] = None) -> Optional[Snapshot]:
+    """The snapshot named by `label` or the session, else the most recently loaded one."""
+    label = label or request.session.get("active_snapshot")
+    snap = Snapshot.objects.filter(label=label).first() if label else None
+    if snap is None:
+        snap = Snapshot.objects.filter(loaded_at__isnull=False).order_by("-loaded_at").first()
+    if snap is not None and request.session.get("active_snapshot") != snap.label:
+        request.session["active_snapshot"] = snap.label
+    return snap
 
 
-def enforce_config_hash_limit():
-    now = timezone.now()
-    cutoff = now - timedelta(minutes=EVICT_OLDER_THAN_MINUTES)
-
-    # Distinct hashes + min(last_used_at) for each hash
-    hashes_qs = (
-        SubroutineElmtypesByConfig.objects
-        .values("config_hash")
-        .annotate(
-            min_last_used=models.Min("last_used_at"),
-        )
-        .order_by("min_last_used")
-    )
-
-    hashes = list(hashes_qs)
-
-    if len(hashes) <= MAX_CONFIG_HASHES:
-        return
-
-    # Only evict hashes that are "cold"
-    cold_hashes = [h for h in hashes if h["min_last_used"] < cutoff]
-
-    # How many need to go to get back under the limit?
-    excess = len(hashes) - MAX_CONFIG_HASHES
-    if excess <= 0:
-        return
-
-    # Evict the oldest cold hashes up to `excess`
-    to_drop = [h["config_hash"] for h in cold_hashes[:excess]]
-    if not to_drop:
-        return  
-
-    SubroutineElmtypesByConfig.objects.filter(
-        config_hash__in=to_drop
-    ).delete()
+def config_by_key(key: str) -> Optional[dict]:
+    """`preset:<slug>` / `<slug>` / `user:<id>` -> {kind, key, data, label, hash}."""
+    if not key:
+        return None
+    kind, _, ident = key.partition(":")
+    if kind == "user":
+        cfg = ConfigProfile.objects.filter(id=ident).first()
+        if cfg is None:
+            return None
+        return {"kind": "user", "key": f"user:{cfg.id}", "data": cfg.data or {}, "label": cfg.name, "hash": cfg.user_hash}
+    slug = ident if kind == "preset" else key
+    preset = PresetConfig.objects.filter(slug=slug).first()
+    if preset is None:
+        return None
+    return {"kind": "preset", "key": preset.slug, "data": preset.data, "label": preset.name, "hash": preset.preset_hash}
 
 
+def default_config() -> dict:
+    preset = PresetConfig.objects.filter(is_default=True).first() or PresetConfig.objects.first()
+    if preset is None:
+        return {"kind": "none", "key": "", "data": {}, "label": "defaults", "hash": compute_config_hash({})}
+    return {"kind": "preset", "key": preset.slug, "data": preset.data, "label": preset.name, "hash": preset.preset_hash}
+
+
+def active_config(request, key: Optional[str] = None) -> dict:
+    """The configuration named by `key` (URL) or the session, else the default preset."""
+    sel = key or request.session.get("active_config_key")
+    cfg = config_by_key(sel) if sel else None
+    if cfg is None:
+        cfg = default_config()
+    if cfg["key"] and request.session.get("active_config_key") != cfg["key"]:
+        request.session["active_config_key"] = cfg["key"]
+    return cfg
+
+
+def all_configs(request) -> list[dict]:
+    """Presets plus the user's own configurations, for pickers."""
+    out = [{"key": p.slug, "label": p.name, "kind": "preset"} for p in PresetConfig.objects.order_by("name")]
+    if request.user.is_authenticated:
+        out += [{"key": f"user:{c.id}", "label": c.name, "kind": "user"}
+                for c in ConfigProfile.objects.filter(owner=request.user).order_by("name")]
+    return out

@@ -1,8 +1,6 @@
-<form class="search-form" hx-boost="false" onsubmit="return false;" style="position:relative;">
-  <input id="sub-search-input" class="form-control" type="search" name="search" placeholder="Search Subroutines…"
-    autocomplete="off" aria-haspopup="listbox" aria-expanded="true" hx-post="{% url 'sub_active_search' %}"
-    hx-trigger="input changed delay:300ms, keyup[key=='Enter']" hx-target="#sub-search-results"
-    hx-indicator=".htmx-indicator">
-  <div class="htmx-indicator" style="position:absolute; right:.5rem; top:.45rem;">⏳</div>
-  <div id="sub-search-results"></div>
+<form class="search-form" hx-boost="false" onsubmit="return false;">
+  <input id="sub-search-input" class="form-control" type="search" name="search" placeholder="Search routines…" autocomplete="off"
+    hx-post="{% url 'sub_active_search' %}" hx-trigger="input changed delay:250ms, focus" hx-target="#sub-search-results" hx-indicator="#sub-search-ind">
+  <span id="sub-search-ind" class="htmx-indicator">⏳</span>
+  <div id="sub-search-results" class="search-results"></div>
 </form>

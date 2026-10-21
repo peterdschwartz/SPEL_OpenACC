@@ -1,1035 +1,660 @@
-import json
-from collections import defaultdict
+"""
+Pages and HTMX partials of the ELM explorer.
 
-from django import template
+Snapshot and configuration come from the URL (`?snap=`, `?cfg=`) when given,
+else from the session (pickers in the banner), else the latest snapshot and the
+default preset. JSON endpoints for the d3 views live in api.py.
+"""
+
+from __future__ import annotations
+
+import json
+from collections import Counter
+
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import UserCreationForm
-from django.db import connection, models, transaction
-from django.db.models import Case, IntegerField, QuerySet, Value, When
-from django.db.models.functions import Concat
-from django.db.models.query import Prefetch
-from django.http import HttpResponseBadRequest
-from django.shortcuts import HttpResponse, get_object_or_404, redirect, render
-from django.template.loader import render_to_string
+from django.core.paginator import Paginator
+from django.db.models import Case, Count, IntegerField, Q, Value, When
+from django.http import Http404, HttpResponse, HttpResponseBadRequest
+from django.shortcuts import get_object_or_404, redirect, render
 from django.views import View
-from django.views.decorators.http import require_http_methods
+from django.views.decorators.http import require_POST
 
-from .calltree import (
-    annotate_tree,
-    create_calltree_from_sub,
-    get_calltree_for_var,
-    print_node,
-    prune_tree,
-)
-from .gen_html import build_tree_html
 from .models import (
-    ArgAccess,
-    CallsiteBinding,
     ConfigProfile,
+    FieldState,
     FlatIf,
-    FlatIfNamelistVar,
-    IfEvaluationByHash,
     IntrinsicGlobals,
     ModuleDependency,
     Modules,
-    NamelistVariable,
     PresetConfig,
-    PropagatedEffectByLn,
-    SubroutineActiveGlobalVars,
+    Registration,
+    Snapshot,
     SubroutineArgs,
     SubroutineCalltree,
-    SubroutineElmtypesByConfig,
+    SubroutineActiveGlobalVars,
+    SubroutineCode,
     SubroutineIntrinsicGlobals,
     Subroutines,
     TypeDefinitions,
+    TypeProcedure,
     UserTypeInstances,
+    UserTypes,
 )
-from .signals import cache_tree, retrieve_cache_tree
-from .utils.configs import get_active_config
-from .utils.ifs import (
-    compute_if_evals_for_hash,
-    debug_inactive_ifs,
-    filter_access_lns_by_hash,
-    filter_calltree_by_hash,
-)
-from .utils.populate_config_tables import propagate_bindings
-from .utils.tables import VIEWS_TABLE_DICT
-from .utils.view_helper import (
-    combine_many_statuses,
-    reachable_subroutine_ids,
-)
+from .utils import queries as q
+from .utils.configs import active_config, active_snapshot, all_configs, config_by_key
+from .utils.ifs import build_env, ensure_if_evals, inactive_ranges, is_inactive, reachable
 
-register = template.Library()
-
-FORTRAN_TYPES = {"complex", "character", "integer", "real", "logical"}
+CATEGORY_ORDER = ["prognostic", "diagnostic", "intermediate", "input", "unused"]
 
 
-def execute(statement):
-    with connection.cursor() as cur:
-        cur.execute(statement)
+# ------------------------------------------------------------------ context
+def ctx_for(request):
+    """Snapshot + configuration of this request, with the configuration evaluated."""
+    snap = active_snapshot(request, request.GET.get("snap") or request.POST.get("snap"))
+    cfg = active_config(request, request.GET.get("cfg") or request.POST.get("cfg"))
+    if snap is not None:
+        ensure_if_evals(snap, cfg["hash"], cfg["data"])
+    return snap, cfg
 
 
-def var_active_search(request):
-    q = (request.POST.get("search") or "").strip()
-    LIMIT = 12
-    items: list[dict] = []
-
-    if not q:
-        return _render_var_results([], q)
-
-    if "%" in q:
-        inst_part, field_part = _split_instance_field(q)
-        items = _search_instance_fields(inst_part, field_part, limit=LIMIT)
-    else:
-        items = _search_instances_and_globals(q, limit=LIMIT)
-
-    return _render_var_results(items, q)
-
-
-def _render_var_results(items: list[dict], query: str) -> HttpResponse:
-    html = render_to_string(
-        "partials/search/var_active_search.html",
-        {"items": items, "query": query},
-    )
-    return HttpResponse(html)
-
-
-def _startswith_annotate(qs: QuerySet, field_name: str, needle: str) -> QuerySet:
-    """Annotate with integer 'startswith': 0 if field starts with needle, 1 otherwise."""
-    return qs.annotate(
-        startswith=Case(
-            When(**{f"{field_name}__istartswith": needle}, then=Value(0)),
-            default=Value(1),
-            output_field=IntegerField(),
-        )
-    )
-
-
-def _split_instance_field(q: str) -> tuple[str, str]:
-    """Split 'inst%field' into (instance_part, field_part)."""
-    inst_part, field_part = q.split("%", 1)
-    return inst_part.strip(), field_part.strip()
-
-
-def _search_instances_and_globals(needle: str, limit: int) -> list[dict]:
-    inst_items = _instance_items(needle, limit)
-    glob_items = _global_items(needle, limit)
-    merged = [*inst_items, *glob_items]
-    merged.sort(key=lambda x: (x["startswith"], x["label"].lower()))
-    return merged[:limit]
-
-
-def _instance_items(needle: str, limit: int) -> list[dict]:
-    qs = UserTypeInstances.objects.select_related(
-        "inst_module", "instance_type"
-    ).filter(instance_name__icontains=needle)
-    qs = _startswith_annotate(qs, "instance_name", needle).order_by(
-        "startswith", "instance_name", "inst_module__module_name"
-    )[:limit]
-
-    return [
-        {
-            "kind": "instance",
-            "startswith": getattr(r, "startswith", 1),
-            "label": f"{r.inst_module.module_name}::{r.instance_name}%",
-            "qualified": f"{r.instance_name}%",
-        }
-        for r in qs
-    ]
-
-
-def _global_items(needle: str, limit: int) -> list[dict]:
-    qs = IntrinsicGlobals.objects.select_related("gv_module").filter(
-        var_name__icontains=needle
-    )
-    qs = _startswith_annotate(qs, "var_name", needle).order_by(
-        "startswith", "var_name", "gv_module__module_name"
-    )[:limit]
-
-    return [
-        {
-            "kind": "global",
-            "startswith": getattr(g, "startswith", 1),
-            "label": f"{g.gv_module.module_name}::{g.var_name}",
-            "qualified": f"{g.var_name}",
-        }
-        for g in qs
-    ]
-
-
-def _search_instance_fields(inst_part: str, field_part: str, limit: int) -> list[dict]:
-    """Search derived-type fields for instances matching inst_part%field_part."""
-    if not inst_part:
-        return []
-
-    insts = list(
-        _startswith_annotate(
-            UserTypeInstances.objects.select_related(
-                "inst_module", "instance_type"
-            ).filter(instance_name__icontains=inst_part),
-            "instance_name",
-            inst_part,
-        ).order_by("startswith", "instance_name", "inst_module__module_name")[:limit]
-    )
-
-    if not insts:
-        return []
-
-    type_ids = {i.instance_type_id for i in insts}
-    defs_qs = TypeDefinitions.objects.filter(user_type_id__in=type_ids)
-    if field_part:
-        defs_qs = defs_qs.filter(member_name__icontains=field_part)
-
-    defs_qs = _startswith_annotate(defs_qs, "member_name", field_part or "")
-    defs_qs = defs_qs.select_related("user_type", "type_module").order_by(
-        "startswith", "member_name"
-    )[: 5 * limit]
-
-    defs_by_type: dict[int, list[TypeDefinitions]] = {}
-    for d in defs_qs:
-        defs_by_type.setdefault(d.user_type_id, []).append(d)
-
-    items: list[dict] = []
-    for inst in insts:
-        for d in defs_by_type.get(inst.instance_type_id, []):
-            label = (
-                f"{inst.inst_module.module_name}::{inst.instance_name}%{d.member_name}"
-            )
-            items.append(
-                {
-                    "kind": "field",
-                    "startswith": getattr(d, "startswith", 1),
-                    "label": label,
-                    "qualified": f"{inst.instance_name}%{d.member_name}",
-                }
-            )
-            if len(items) >= limit:
-                return _sorted_items(items)
-    return _sorted_items(items)
-
-
-def _sorted_items(items: list[dict]) -> list[dict]:
-    """Sort results consistently by (startswith, label)."""
-    return sorted(items, key=lambda x: (x["startswith"], x["label"].lower()))
-
-
-def sub_active_search(request):
-    q = (request.POST.get("search") or "").strip()
-
-    if not q:
-        html = render_to_string(
-            "partials/search/sub_active_search.html",
-            {
-                "query": q,
-                "results": [],
-            },
-        )
-        return HttpResponse(html)
-
-    # Prioritize names that start with the query, then fall back to icontains
-    qs = (
-        Subroutines.objects.select_related("module")  # pulls Modules in one query
-        .annotate(
-            startswith=Case(
-                When(subroutine_name__istartswith=q, then=Value(0)),
-                default=Value(1),
-                output_field=IntegerField(),
-            ),
-            display_label=Concat("module__module_name", Value("::"), "subroutine_name"),
-        )
-        .filter(subroutine_name__icontains=q)  # search on subroutine only
-        .order_by("startswith", "subroutine_name", "module__module_name")[:10]
-    )
-
-    html = render_to_string(
-        "partials/search/sub_active_search.html",
-        {
-            "results": qs,
-            "query": q,
-        },
-    )
-    return HttpResponse(html)
-
-
-def view_call_tree(request):
-    if request.method == "POST":
-        sub_name = request.POST.get("Subroutine")
-    else:
-        sub_name = "elm_drv"
-    tree_list = create_calltree_from_sub(sub_name)
-    html_tree = build_tree_html(tree_list)
-    context = {"tree": html_tree}
-    return render(request, "partials/call_tree.html", context)
-
-
-def subcall(request):
-    if request.method == "POST":
-        variable = request.POST.get("Variable")
-        if "%" in variable:
-            instance, member = variable.split("%")
-        else:
-            # Assume just an instance.
-            instance = variable
-            member = ""
-    else:
-        instance = "bounds"
-        member = "begc"
-    tree_list, all = get_calltree_for_var(instance, member)
-
-    html_tree = build_tree_html(tree_list)
-    context = {
-        "tree": html_tree,
-        "all": all,
-    }
-    if request.method == "POST":
-        return render(request, "partials/subcall_partial.html", context)
-    return render(request, "partials/subcall_partial.html", context)
-
-
-@require_http_methods(["GET", "POST"])
-def view_table(request, table_name):
-    """
-    Generic Function for printing an SQL table, substituting
-    the foreign keys with as specifcied in the table definiton
-    """
-
-    table = VIEWS_TABLE_DICT[table_name]
-    if not table:
-        return HttpResponse(b"Table not found", status=404)
-
-    model = table["name"]
-    display_fields = table["fields"]
-    title = table["title"]
-    if request.method == "POST":
-        sort_by = request.POST.get("sort_by", None)
-    else:
-        sort_by = None
-
-    foreign_keys = [
-        field.name
-        for field in model._meta.get_fields()
-        if isinstance(field, models.ForeignKey)
-    ]
-    all_objects = model.objects.select_related(*foreign_keys).all()
-
-    if sort_by:
-        sort_field = display_fields[sort_by]
-        all_objects = all_objects.order_by(sort_field.replace(".", "__"))
-
-    rows = []
-    for obj in all_objects:
-        row = []
-        for field_name in display_fields.values():
-            parts = field_name.split(".")
-            value = getattr(obj, parts[0], None)
-            if len(parts) > 1:
-                for attr in parts[1:]:
-                    value = getattr(value, attr, None)
-
-            row.append(value)
-        rows.append(row)
-
-    context = {
-        "all_objects": rows,
-        "field_names": display_fields,
-        "table_name": table_name,
-        "title": table["title"],
-    }
-    # Check if the request is coming from HTMX (for partial table response)
-    if request.headers.get("HX-Request"):
-        return render(request, "partials/dynamic_table.html", context)
-
-    return render(request, "partials/table_view.html", context)
-
-
-def render_calltree(request, sub_name):
-    tree = create_calltree_from_sub(sub_name)
-
-    # retrieve config
-    active = get_active_config(request)  # {"data": {...}, "hash": "...", "label": ...}
-    cfg_hash = active["hash"]
-    active_data = active["data"]
-    compute_if_evals_for_hash(cfg_hash, active_data)
-
-    # Resolve subroutine (the "parent" for calltree and the scope for dtype vars)
-    subroutine = (
-        Subroutines.objects.filter(subroutine_name=sub_name)
-        .select_related("module")
-        .first()
-    )
-    # Build transitive reachable set under active IFs
-    reachable_ids = reachable_subroutine_ids(subroutine, cfg_hash)
-    reachable_names = set(
-        Subroutines.objects.filter(subroutine_id__in=reachable_ids).values_list(
-            "subroutine_name", flat=True
-        )
-    )
-    pruned_tree = prune_tree(
-        tree, hit_set=reachable_names, traversable_set=reachable_names
-    )
-    annotate_tree(pruned_tree)
-
-    context = {
-        "tree": pruned_tree,
-        "sub_name": sub_name,
-        "statuses": {},
-    }
-    return render(request, "partials/calltree.html", context)
-
-
-def debug_pruning(parent_id: int, cfg_hash: str):
-    base = SubroutineCalltree.objects.filter(parent_subroutine=parent_id)
-    if base.count() == 0:
-        return {}
-    parent_sub = Subroutines.objects.get(subroutine_id=parent_id)
-    kept = filter_calltree_by_hash(base, cfg_hash)
+def base_context(request, snap, cfg) -> dict:
     return {
-        "parent_sub": parent_sub.subroutine_name,
-        "edges_total": base.count(),
-        "edges_kept": kept.count(),
-        "children_kept": list(
-            kept.values_list("child_subroutine__subroutine_name", flat=True).distinct()
-        ),
+        "snapshot": snap,
+        "snapshots": Snapshot.objects.filter(loaded_at__isnull=False).order_by("-loaded_at"),
+        "cfg": cfg,
+        "configs": all_configs(request),
+        "qs": f"snap={snap.label}&cfg={cfg['key']}" if snap else "",
     }
 
 
-def sub_view(request, sub_name):
-    context = {"sub_name": sub_name}
-    return render(request, "sub_view.html", context)
+def is_htmx(request) -> bool:
+    return request.headers.get("HX-Request") == "true"
 
 
-def trace_view(request, var_name):
-    context = {"var_name": var_name}
-    return render(request, "trace_view.html", context)
+def no_snapshot(request):
+    return render(request, "home.html", {"snapshots": [], "cfg": None, "configs": [], "no_data": True})
 
 
-def type_details(request, type_name):
-    context = {"type_name": type_name, "details": "Testing type details"}
-
-    return render(
-        request,
-        "partials/type_details.html",
-        context,
-    )
-
-
-def subroutine_details(request, sub_name: str):
-    # Active config (preset or user)
-    active = get_active_config(request)  # {"data": {...}, "hash": "...", "label": ...}
-    cfg_hash = active["hash"]
-    active_data = active["data"].copy()
-    num = compute_if_evals_for_hash(cfg_hash, active_data)
-    num = propagate_bindings(cfg_hash)
-
-    # Resolve subroutine (the "parent" for calltree and the scope for dtype vars)
-    subroutine: Subroutines = (
-        Subroutines.objects.filter(subroutine_name=sub_name)
-        .select_related("module")
-        .first()
-    )
-    if not subroutine:
-        return HttpResponse(b"Subroutine not found.", status=404)
-
-    module = subroutine.module.module_name
-
-    reachable_ids = reachable_subroutine_ids(subroutine, cfg_hash)
-
-    # ---------- Calltree (filter out edges in inactive IF ranges) ----------
-    # inactive = any IfEvaluationByHash range (for this parent) that covers the edge.lineno and is_active == False
-    # --- Calltree (parent == this subroutine) ---
-    calltree_qs = (
-        SubroutineCalltree.objects.filter(parent_subroutine=subroutine)
-        .select_related("child_subroutine__module")
-        .order_by("lineno", "child_subroutine__subroutine_name")
-    )
-    calltree_qs = filter_calltree_by_hash(calltree_qs, cfg_hash)
-
-    # Preserve duplicates & order; include lineno for UI
-    callees = [
-        f"L{edge.lineno} call {edge.child_subroutine.module.module_name}::{edge.child_subroutine.subroutine_name}"
-        for edge in calltree_qs
-    ]
-
-    # When SubroutineElmtypesByConfig is populated, the config ifs are already filtered
-    dtype_qs = SubroutineElmtypesByConfig.objects.filter(subroutine=subroutine).values(
-        "instance__instance_type__user_type_name",
-        "instance__instance_name",
-        "member__member_type",
-        "member__member_name",
-        "status",
-        "ln",
-        "subroutine_id",
-    )
-    # dtype_qs = filter_access_lns_by_hash(
-    #     qs=dtype_qs,
-    #     sub_field="subroutine_id",
-    #     lineno_field="ln",
-    #     config_hash=cfg_hash,
-    # ).order_by("ln")
-
-    groups = defaultdict(list)
-    share_ln = defaultdict(list)
-    for row in dtype_qs.iterator(chunk_size=1000):
-        type_name = row["instance__instance_type__user_type_name"]
-        instance = row["instance__instance_name"]
-        if "c13" in instance:
-            print(row)
-        member_type = row["member__member_type"]
-        member_name = row["member__member_name"]
-        status = row["status"]
-        ln = row["ln"]
-        if member_name is not None:
-            groups[(instance, type_name)].append((member_type, member_name, status, ln))
-            share_ln[ln].append((instance, member_name, status))
-
-    def type_label(x: str):
-        if x not in FORTRAN_TYPES:
-            return f"type({x})"
-        return x
-
-    args = [
-        (type_label(v.arg_type), v.arg_name, v.dim)
-        for v in subroutine.subroutine_args.all()
-    ]
-
-    # propagated_vars = get_propagated_elmtypes(
-    #     reachable_ids=reachable_ids,
-    #     root_sub_id=subroutine.subroutine_id,
-    #     cfg=cfg_hash,
-    # )
-    #
-    # instance_set: set[str] = {x.split("%", 1)[0] for x in propagated_vars}
-    # instances_qs = UserTypeInstances.objects.filter(
-    #     instance_name__in=instance_set
-    # ).select_related("instance_type")
-
-    # instance_qs_by_name = {obj.instance_name: obj for obj in instances_qs}
-    # needed_pairs = set()
-    # for pair in propagated_vars.keys():
-    #     inst, member_path = pair.split("%", 1)
-    #     if not member_path.strip():
-    #         continue
-    #     inst_obj = instance_qs_by_name[inst]
-    #     needed_pairs.add((inst_obj.instance_type.user_type_id, member_path))
-    # needed_type_ids = {x[0] for x in needed_pairs}
-    # needed_members = {x[1] for x in needed_pairs}
-    #
-    # typedef_qs = TypeDefinitions.objects.filter(
-    #     user_type__user_type_id__in=needed_type_ids,
-    #     member_name__in=needed_members,
-    # ).select_related("user_type")
-
-    # type_by_id = {
-    #     (obj.user_type.user_type_id, obj.member_name): obj for obj in typedef_qs
-    # }
-    # for pair, statuses in propagated_vars.items():
-    #     inst, member_name = pair.split("%", 1)
-    #     if not member_name.strip():
-    #         continue
-    #     type_id = instance_qs_by_name[inst].instance_type.user_type_id
-    #     type_obj = type_by_id[(type_id, member_name)]
-    #     type_name = type_obj.user_type.user_type_name
-    #     member_type = type_obj.member_type
-    #     for ln, status, _ in statuses:
-    #         groups[(inst, type_name)].append((member_type, member_name, status, ln))
-
-    grouped = []
-    for instance, type_name in sorted(groups.keys(), key=lambda k: (k[0], k[1])):
-        entries = sorted(groups[(instance, type_name)], key=lambda x: x[1])
-        sts_by_member = defaultdict(list)
-        for ent in entries:
-            sts_by_member[f"{ent[0]}::{ent[1]}"].append(ent[2])
-        overall_sts_by_member = {
-            name: combine_many_statuses(sts) for name, sts in sts_by_member.items()
-        }
-        grouped.append(
-            {
-                "instance": instance,
-                "type_name": type_name,
-                "members": [
-                    {
-                        "type": key.split("::")[0],
-                        "name": key.split("::")[1],
-                        "status": rw,
-                    }
-                    for key, rw in overall_sts_by_member.items()
-                ],
-            }
-        )
-
-    globals_prefetch = Prefetch(
-        "subroutine_global_vars",
-        queryset=(
-            SubroutineIntrinsicGlobals.objects.select_related(
-                "gv_id", "gv_id__gv_module"
-            )
-            .prefetch_related("gv_id__namelist")
-            .order_by("gv_id__var_name")
-        ),
-    )
-    # Pull links with the prefetch now
-    sub_with_globals = (
-        Subroutines.objects.filter(pk=subroutine.pk)
-        .prefetch_related(globals_prefetch)
-        .first()
-    )
-
-    globals_nml, globals_non = [], []
-    for link in sub_with_globals.subroutine_global_vars.all():
-        g = link.gv_id
-        label = f"{g.var_type} {g.var_name}"
-        if list(g.namelist.all()):
-            globals_nml.append(label)
-        else:
-            globals_non.append(label)
-
-    context = {
-        "subroutine": subroutine.subroutine_name,
-        "module": module,
-        "args": args,
-        "callees": callees,
-        "dtype_var_groups": grouped,
-        "globals": globals_non,
-        "nml_vars": globals_nml,
-    }
-
-    return render(request, "partials/subroutine_details.html", context)
-
-
+# -------------------------------------------------------------------- home
 def home(request):
-    return redirect("sub_view", sub_name="elm_drv")
+    snap, cfg = ctx_for(request)
+    if snap is None:
+        return no_snapshot(request)
+    context = base_context(request, snap, cfg)
+    cards = []
+    for s in context["snapshots"]:
+        cats = Counter(FieldState.objects.filter(snapshot=s).values_list("category", flat=True))
+        cards.append({
+            "snapshot": s,
+            "n_subs": Subroutines.objects.filter(snapshot=s, analyzed=True).count(),
+            "n_modules": Modules.objects.filter(snapshot=s).count(),
+            "n_types": UserTypes.objects.filter(snapshot=s).count(),
+            "n_fields": sum(cats.values()),
+            "categories": [(c, cats.get(c, 0)) for c in CATEGORY_ORDER],
+            "findings": FieldState.objects.filter(snapshot=s).filter(Q(restart_unneeded=True) | Q(restart_missing=True)).count(),
+        })
+    context["cards"] = cards
+    drv = q.find_subroutine(snap, "elm_driver::elm_drv")
+    context["driver"] = drv
+    return render(request, "home.html", context)
 
 
-def trace_vars(request, key: str):
-    """ """
-
-    active = get_active_config(request)
-    cfg_hash = active["hash"]
-
-    # Compute reachable set (under active IFs) from your fixed root
-    root_sub = "elm_drv"
-    root_obj = Subroutines.objects.get(subroutine_name=root_sub)
-    reachable_ids = reachable_subroutine_ids(root_obj, cfg_hash)
-
-    reachable_names = set(
-        Subroutines.objects.filter(subroutine_id__in=reachable_ids).values_list(
-            "subroutine_name", flat=True
-        )
-    )
-
-    if "%" in key:
-        status_by_sub = trace_dtype_var(key, cfg_hash, reachable_ids, reachable_names)
-        hitset = set(status_by_sub.keys())
-        inst_name, member_name = key.split("%", 1)
-        member_name = "%" + member_name
-    else:
-        hitset = trace_intrinsic_var(key)
-        inst_name = key
-        member_name = ""
-        status_by_sub = {}
-
-    full_tree = retrieve_cache_tree(sub_names=["elm_drv"])
-    if full_tree is None:
-        full_tree = create_calltree_from_sub("elm_drv")
-        cache_tree(full_tree)
-
-    pruned_tree = prune_tree(full_tree, hitset)
-    annotate_tree(pruned_tree)
-
-    return render(
-        request,
-        "partials/trace_details/trace_tree.html",
-        {
-            "tree": pruned_tree,
-            "instance": inst_name,
-            "member": member_name,
-            "statuses": status_by_sub,
-        },
-    )
+# ----------------------------------------------------------------- pickers
+def snapshot_picker(request):
+    snap, cfg = ctx_for(request)
+    return render(request, "configs/snapshot_selector.html", base_context(request, snap, cfg))
 
 
-def trace_intrinsic_var(key: str):
-    var_type = ""
-    if len(key.split()) == 2:
-        var_type, var_name = key.split()
-    else:
-        var_name = key
-    var_obj = IntrinsicGlobals.objects.get(var_name=var_name)
-    rows_qs = (
-        SubroutineIntrinsicGlobals.objects.filter(gv_id=var_obj)
-        .select_related("subroutine")
-        .values_list("sub_id__subroutine_name")
-        .distinct()
-    )
-    return {x[0] for x in rows_qs}
-
-
-def trace_dtype_var(
-    key: str, cfg_hash: str, reachable_ids: set[int], reachable_names: set[str]
-) -> dict:
-    """ """
-
-    status_by_sub = {}
-    inst_name, member_name = key.split("%", 1)
-
-    arg_qs = (
-        ArgAccess.objects.filter(
-            subroutine__subroutine_id__in=reachable_ids,
-            member_path=member_name,
-        )
-        .values_list("subroutine__subroutine_name", "ln")
-        .distinct()
-    )
-    member_access_by_sub: dict[str, set[int]] = defaultdict(set)
-    for t in arg_qs:
-        member_access_by_sub[t[0]].add(t[1])
-
-    # Rows where this member is referenced AND its ln is NOT covered by inactive IFs
-    rows_qs = (
-        SubroutineElmtypesByConfig.objects.filter(var_name=inst_name, member_path=member_name,cfg_hash=cfg_hash)
-        .select_related("subroutine")
-        .order_by("subroutine__subroutine_name", "ln")
-    )
-
-    triples = rows_qs.values_list(
-        "subroutine__subroutine_name",
-        "status",
-        "ln",
-    ).distinct()
-
-    # Aggregate in Python
-    tmp_statuses = defaultdict(list)  # sub -> [status,...]
-
-    for sub_name, st, ln in triples:
-        if sub_name not in reachable_names:
-            continue
-        tmp_statuses[sub_name].append(st)
-
-    for sub_name, sts in tmp_statuses.items():
-        status_by_sub[sub_name] = combine_many_statuses(sts)
-
-    return status_by_sub
-
-
-def _infer_dtype(var_type: str) -> str:
-    """
-    Map your IntrinsicGlobals.var_type strings to a coarse dtype.
-    Adjust mapping to your real values (Fortran types, etc.).
-    """
-    t = (var_type or "").lower()
-    if any(k in t for k in ["logical", "bool"]):
-        return "bool"
-    if any(k in t for k in ["int", "integer"]):
-        return "int"
-    if any(k in t for k in ["real", "double", "float"]):
-        return "float"
-    return "str"
-
-
-def _coerce_value(dtype: str, raw: str):
-    if dtype == "bool":
-        return str(raw).lower() in {"1", "true", "yes", "on", "y", "t"}
-    if dtype == "int":
-        return int(raw)
-    if dtype == "float":
-        return float(raw)
-    return str(raw)
-
-
-@login_required
-def config_editor(request, config_id: int):
-    config = get_object_or_404(ConfigProfile, id=config_id, owner=request.user)
-    # Pull all configurable vars
-    nml = NamelistVariable.objects.select_related(
-        "active_var_id",
-        "active_var_id__gv_module",
-    ).all()
-
-    rows = []
-    data = config.data or {}
-    for nv in nml:
-        ig: IntrinsicGlobals = nv.active_var_id
-        dtype = _infer_dtype(str(ig.var_type))
-        key = str(ig.var_id)  # use var_id as JSON key to avoid rename issues
-        # Fallback to intrinsic default/value if not overridden
-        raw = str(ig.value)
-        if "=" in raw:
-            raw = raw.split("=")[1]
-        current = data.get(key, raw)
-
-        # Normalize checkbox truthy value for bool UI
-        if dtype == "bool":
-            current = str(current).lower() in {"1", "true", "yes", "on", "y", "t"}
-
-        rows.append(
-            {
-                "ig": ig,
-                "key": key,
-                "dtype": dtype,
-                "current": current,
-            }
-        )
-
-    return render(
-        request,
-        "configs/editor.html",
-        {
-            "config": config,
-            "rows": rows,
-        },
-    )
-
-
-@login_required
-@transaction.atomic
-def set_config_value(request, config_id: int, var_id: int):
-    """
-    HTMX endpoint to set a single config value. Expects form field 'value'.
-     - Coerces to the right type based on IntrinsicGlobals.var_type
-     - Saves into ConfigProfile.data JSON by var_id
-     - Returns the updated row partial for HTMX swap, including error message if coercion fails.
-    """
-    if request.method != "POST":
-        return HttpResponseBadRequest(b"POST required")
-
-    config = get_object_or_404(ConfigProfile, id=config_id, owner=request.user)
-    ig = get_object_or_404(IntrinsicGlobals, var_id=var_id)
-
-    dtype = _infer_dtype(ig.var_type)
-    raw = request.POST.get("value", "")
-
-    try:
-        # Special case checkbox unchecked: HTMX won't send "value"
-        if dtype == "bool" and "value" not in request.POST:
-            coerced = False
-        else:
-            coerced = _coerce_value(dtype, raw)
-    except Exception as e:
-        # Re-render the row with error message
-        return render(
-            request,
-            "configs/row.html",
-            {
-                "config": config,
-                "ig": ig,
-                "key": str(ig.var_id),
-                "dtype": dtype,
-                "current": raw,
-                "error": str(e),
-            },
-            status=400,
-        )
-
-    # Save override into JSON by var_id
-    data = dict(config.data or {})
-    data[str(ig.var_id)] = coerced
-    config.data = data
-    config.save(update_fields=["data"])
-
-    # Return the updated row (HTMX swap)
-    return render(
-        request,
-        "configs/row.html",
-        {
-            "config": config,
-            "ig": ig,
-            "key": str(ig.var_id),
-            "dtype": dtype,
-            "current": coerced,
-        },
-    )
-
-
-@require_http_methods(["POST"])
-def recompute_if_evals(request, config_id=None):
-    """
-    If config_id is provided: recompute for that user config (must belong to the user).
-    Otherwise: recompute for the current active config (preset or user). If nothing
-    is active, get_active_config() should fall back to the default preset.
-    """
-    if config_id is not None:
-        # lock to owner; if you want admins to recompute any, relax this check
-        cfg = get_object_or_404(ConfigProfile, id=config_id, owner=request.user)
-        data = cfg.data or {}
-        cfg_hash = cfg.config_hash
-        label = cfg.name
-    else:
-        active = get_active_config(
-            request
-        )  # {"data": {...}, "hash": "...", "label": "..."}
-        data = active["data"] or {}
-        cfg_hash = active["hash"]
-        label = active["label"]
-        if not cfg_hash:
-            return HttpResponseBadRequest("No active configuration to recompute.")
-
-    written = compute_if_evals_for_hash(active["hash"], active["data"])
-    return HttpResponse(f"Recomputed {written} IFs for {active['label']}")
-
-
-def config_start(request):
-    if not request.user.is_authenticated:
-        # send to login, and return here after
-        login_url = f"{settings.LOGIN_URL}?next=/configs/"
-        return redirect(login_url)
-    cfg, _ = ConfigProfile.objects.get_or_create(
-        owner=request.user, name="Default", defaults={"data": {}}
-    )
-    return redirect("config_editor", config_id=cfg.id)
-
-
-@require_http_methods(["POST"])
-def select_config_htmx(request):
-    """
-    HTMX endpoint. Expects form field 'config' with value:
-      - 'preset:<slug>' OR
-      - 'user:<id>'
-    Sets session and returns the updated picker partial.
-    Also triggers a global 'configChanged' event with the new hash+label.
-    """
-    raw = request.POST.get("config", "")
-    if raw.startswith("preset:"):
-        slug = raw.split(":", 1)[1]
-        p = PresetConfig.objects.filter(slug=slug).first()
-        if not p:
-            return HttpResponseBadRequest(b"Unknown preset")
-        request.session["active_config"] = {"type": "preset", "slug": p.slug}
-
-    elif raw.startswith("user:"):
-        try:
-            cid = int(raw.split(":", 1)[1])
-        except ValueError:
-            return HttpResponseBadRequest(b"Bad user config id")
-        c = ConfigProfile.objects.filter(id=cid, owner=request.user).first()
-        if not c:
-            return HttpResponseBadRequest(b"Config not found or not yours")
-        request.session["active_config"] = {"type": "user", "id": c.id}
-
-    else:
-        return HttpResponseBadRequest(b"Bad value")
-
-    # Re-render the picker
-    resp = config_picker(request)
-
-    # Add HX-Trigger so other parts of the page can refresh
-    active = get_active_config(request)
-    trigger = {
-        "configChanged": {
-            "hash": active["hash"],
-            "label": active["label"],
-            "kind": active["kind"],
-        }
-    }
-    if isinstance(resp, HttpResponse):
-        resp["HX-Trigger"] = json.dumps(trigger)
+@require_POST
+def select_snapshot(request):
+    label = request.POST.get("snapshot", "")
+    snap = Snapshot.objects.filter(label=label).first()
+    if snap is not None:
+        request.session["active_snapshot"] = snap.label
+    snap, cfg = ctx_for(request)
+    resp = render(request, "configs/snapshot_selector.html", base_context(request, snap, cfg))
+    resp["HX-Trigger"] = json.dumps({"snapshotChanged": {"label": snap.label if snap else ""}})
     return resp
 
 
 def config_picker(request):
-    """Return the dropdown partial with current active + all options."""
-    active = get_active_config(request)
-    presets = PresetConfig.objects.order_by("-is_default", "name")
-    user_configs = (
-        ConfigProfile.objects.filter(owner=request.user).order_by("name")
-        if request.user.is_authenticated
-        else []
-    )
-    preset_tag = [(p, active["label"] == p.name) for p in presets]
-    user_cfgs = [(c, active["label"] == c.name) for c in user_configs]
-
-    return render(
-        request,
-        "configs/selector.html",
-        {
-            "active": active,
-            "presets": preset_tag,
-            "user_configs": user_cfgs,
-        },
-    )
+    snap, cfg = ctx_for(request)
+    return render(request, "configs/selector.html", base_context(request, snap, cfg))
 
 
-def select_preset(request, slug):
-    preset = get_object_or_404(PresetConfig, slug=slug)
-    request.session["active_config"] = {"type": "preset", "slug": preset.slug}
-    return redirect(request.GET.get("next") or request.META.get("HTTP_REFERER") or "/")
+@require_POST
+def select_config_htmx(request):
+    key = request.POST.get("config", "")
+    if config_by_key(key) is not None:
+        request.session["active_config_key"] = key
+    snap, cfg = ctx_for(request)
+    resp = render(request, "configs/selector.html", base_context(request, snap, cfg))
+    resp["HX-Trigger"] = json.dumps({"configChanged": {"key": cfg["key"], "hash": cfg["hash"], "label": cfg["label"]}})
+    return resp
+
+
+def nml_values(request):
+    snap, cfg = ctx_for(request)
+    rows = []
+    if snap is not None:
+        defaults = IntrinsicGlobals.objects.filter(snapshot=snap).exclude(namelist_group="").select_related("gv_module").order_by("var_name")
+        for g in defaults:
+            if g.var_name in cfg["data"]:
+                rows.append({"module": g.gv_module.module_name, "name": g.var_name, "value": cfg["data"][g.var_name], "source": "config", "group": g.namelist_group})
+            else:
+                rows.append({"module": g.gv_module.module_name, "name": g.var_name, "value": g.value, "source": "default", "group": g.namelist_group})
+        known = {r["name"] for r in rows}
+        for name, value in sorted(cfg["data"].items()):
+            if name not in known:
+                rows.append({"module": "", "name": name, "value": value, "source": "config (not analyzed)", "group": ""})
+    rows.sort(key=lambda r: (r["source"] != "config", r["name"]))
+    return render(request, "configs/values_modal.html", {"rows": rows, "cfg": cfg, "snapshot": snap})
+
+
+# ------------------------------------------------------------------ search
+def _startswith(qs, field_name, needle):
+    return qs.annotate(startswith=Case(When(**{f"{field_name}__istartswith": needle}, then=Value(0)), default=Value(1), output_field=IntegerField()))
+
+
+def sub_active_search(request):
+    snap, cfg = ctx_for(request)
+    needle = (request.POST.get("search") or request.GET.get("search") or "").strip()
+    results = []
+    if snap is not None and needle:
+        qs = Subroutines.objects.filter(snapshot=snap, subroutine_name__icontains=needle).select_related("module")
+        results = _startswith(qs, "subroutine_name", needle).order_by("startswith", "-analyzed", "subroutine_name")[:12]
+    return render(request, "partials/search/sub_active_search.html", {"results": results, "query": needle, "snapshot": snap, "cfg": cfg})
+
+
+def var_active_search(request):
+    """Instances, `inst%member` fields and module variables matching the query; `add` mode adds to a trace."""
+    snap, cfg = ctx_for(request)
+    needle = (request.POST.get("search") or request.GET.get("search") or "").strip().lower()
+    mode = request.POST.get("mode") or request.GET.get("mode") or "go"
+    items = []
+    if snap is not None and needle:
+        limit = 12
+        if "%" in needle:
+            inst_part, member_part = needle.split("%", 1)
+            insts = UserTypeInstances.objects.filter(inst_module__snapshot=snap, instance_name__icontains=inst_part).select_related("instance_type")
+            for inst in _startswith(insts, "instance_name", inst_part).order_by("startswith", "instance_name")[:6]:
+                members = TypeDefinitions.objects.filter(user_type=inst.instance_type, member_name__icontains=member_part)
+                for m in _startswith(members, "member_name", member_part).order_by("startswith", "member_name")[:limit]:
+                    items.append({"kind": "field", "key": f"{inst.instance_name}%{m.member_name}", "label": f"{inst.instance_name}%{m.member_name}", "detail": m.member_type})
+                    if len(items) >= limit:
+                        break
+        else:
+            insts = _startswith(UserTypeInstances.objects.filter(inst_module__snapshot=snap, instance_name__icontains=needle).select_related("instance_type"), "instance_name", needle)
+            for inst in insts.order_by("startswith", "instance_name")[:6]:
+                items.append({"kind": "instance", "key": f"{inst.instance_name}%", "label": f"{inst.instance_name}%", "detail": inst.instance_type.user_type_name})
+            gl = _startswith(IntrinsicGlobals.objects.filter(snapshot=snap, var_name__icontains=needle).select_related("gv_module"), "var_name", needle)
+            for g in gl.order_by("startswith", "var_name")[:limit]:
+                items.append({"kind": "global", "key": f"{g.gv_module.module_name}::{g.var_name}", "label": f"{g.gv_module.module_name}::{g.var_name}", "detail": g.var_type})
+            members = _startswith(TypeDefinitions.objects.filter(user_type__snapshot=snap, member_name__icontains=needle).select_related("user_type"), "member_name", needle)
+            inst_of = {}
+            for inst in UserTypeInstances.objects.filter(inst_module__snapshot=snap).values_list("instance_type_id", "instance_name"):
+                inst_of.setdefault(inst[0], []).append(inst[1])
+            for m in members.order_by("startswith", "member_name")[:limit]:
+                for inst_name in inst_of.get(m.user_type_id, [])[:3]:
+                    items.append({"kind": "field", "key": f"{inst_name}%{m.member_name}", "label": f"{inst_name}%{m.member_name}", "detail": m.member_type})
+            items.sort(key=lambda it: (not it["label"].lower().startswith(needle), it["label"]))
+        items = items[:limit]
+    return render(request, "partials/search/var_active_search.html", {"items": items, "query": needle, "mode": mode, "snapshot": snap, "cfg": cfg})
+
+
+# ---------------------------------------------------------------- routines
+def sub_view(request, sub_name):
+    snap, cfg = ctx_for(request)
+    if snap is None:
+        return no_snapshot(request)
+    sub = q.find_subroutine(snap, sub_name)
+    if sub is None:
+        raise Http404(f"no routine {sub_name} in snapshot {snap.label}")
+    context = base_context(request, snap, cfg) | {"sub": sub, "sub_name": sub.sub_id}
+    return render(request, "sub_view.html", context)
+
+
+def render_calltree(request, sub_name):
+    """Textual step tree below the routine's first call in the step (config-pruned)."""
+    snap, cfg = ctx_for(request)
+    if snap is None:
+        return HttpResponse("")
+    sub = q.find_subroutine(snap, sub_name)
+    if sub is None:
+        raise Http404(sub_name)
+    reach = reachable(snap.pk, cfg["hash"])
+    keep_inactive = request.GET.get("inactive") == "1"
+    tree = q.build_tree(snap.pk, reach, root_sub_pk=sub.pk, keep_inactive=keep_inactive)
+    in_step = q.first_occurrence(snap.pk, sub.pk) is not None
+    context = base_context(request, snap, cfg) | {"tree": tree, "sub": sub, "in_step": in_step, "expand_to": 2, "var_keys": [], "keep_inactive": keep_inactive}
+    return render(request, "partials/calltree.html", context)
+
+
+def subroutine_details(request, sub_name):
+    snap, cfg = ctx_for(request)
+    if snap is None:
+        return HttpResponse("")
+    sub = q.find_subroutine(snap, sub_name)
+    if sub is None:
+        raise Http404(sub_name)
+    ranges = inactive_ranges(snap.pk, cfg["hash"])
+    dtype_groups, globals_ = q.routine_accesses(sub, ranges)
+    callees = q.routine_callees(sub, ranges)
+    callers = (SubroutineCalltree.objects.filter(child_subroutine=sub).select_related("parent_subroutine", "parent_subroutine__module").order_by("parent_subroutine__subroutine_name", "lineno"))
+    gates = []
+    for fi in FlatIf.objects.filter(subroutine=sub, nml_gated=True).order_by("start_ln"):
+        gates.append({"start": fi.start_ln, "end": fi.end_ln, "kind": fi.kind, "text": fi.condition_text, "active": not is_inactive(ranges, sub.pk, fi.start_ln + 1 if fi.end_ln > fi.start_ln else fi.start_ln) if fi.end_ln >= fi.start_ln else True})
+    args = list(SubroutineArgs.objects.filter(subroutine=sub).select_related("user_type").order_by("position"))
+    code = SubroutineCode.objects.filter(subroutine=sub).first()
+    lines = []
+    if code is not None:
+        for i, text in enumerate(code.text.split("\n")):
+            ln = code.startline + i
+            lines.append({"ln": ln, "text": text, "inactive": is_inactive(ranges, sub.pk, ln)})
+    regs = Registration.objects.filter(subroutine=sub).select_related("member", "instance", "global_var", "user_type").order_by("ln")
+    context = base_context(request, snap, cfg) | {
+        "sub": sub, "args": args, "callees": callees, "callers": callers, "dtype_groups": dtype_groups,
+        "globals": [g for g in globals_ if not g["namelist"]], "nml_vars": [g for g in globals_ if g["namelist"]],
+        "gates": gates, "lines": lines, "registrations": regs, "focus_ln": request.GET.get("ln"),
+        "in_step": q.first_occurrence(snap.pk, sub.pk) is not None,
+    }
+    return render(request, "partials/subroutine_details.html", context)
+
+
+# ------------------------------------------------------------- types/modules
+def types_view(request):
+    snap, cfg = ctx_for(request)
+    if snap is None:
+        return no_snapshot(request)
+    types = []
+    cat_counts = {}
+    for t, cat, n in FieldState.objects.filter(snapshot=snap, instance__isnull=False).values_list("instance__instance_type_id", "category").annotate(n=Count("pk")).values_list("instance__instance_type_id", "category", "n"):
+        cat_counts.setdefault(t, Counter())[cat] += n
+    for t in UserTypes.objects.filter(snapshot=snap).select_related("module", "parent").annotate(n_members=Count("user_type_def", distinct=True), n_instances=Count("instance_type", distinct=True)).order_by("user_type_name"):
+        counts = cat_counts.get(t.pk, Counter())
+        types.append({"type": t, "categories": [(c, counts.get(c, 0)) for c in CATEGORY_ORDER], "total": sum(counts.values())})
+    return render(request, "types.html", base_context(request, snap, cfg) | {"types": types})
+
+
+def type_detail(request, type_name):
+    snap, cfg = ctx_for(request)
+    if snap is None:
+        return no_snapshot(request)
+    t = get_object_or_404(UserTypes, snapshot=snap, user_type_name=type_name.lower())
+    instances = list(UserTypeInstances.objects.filter(instance_type=t).select_related("inst_module").order_by("instance_name"))
+    inst = request.GET.get("instance")
+    focus = next((i for i in instances if i.instance_name == inst), instances[0] if instances else None)
+    states = {}
+    if focus is not None:
+        states = {fs.member_id: fs for fs in FieldState.objects.filter(snapshot=snap, instance=focus)}
+    regs = {}
+    for r in Registration.objects.filter(snapshot=snap).filter(Q(user_type=t) | Q(instance=focus) if focus else Q(user_type=t)).select_related("member"):
+        if r.member_id:
+            regs.setdefault(r.member_id, []).append(r)
+    members = []
+    for m in TypeDefinitions.objects.filter(user_type=t).select_related("component_type").order_by("position"):
+        fs = states.get(m.pk)
+        members.append({"m": m, "state": fs, "regs": regs.get(m.pk, []), "key": f"{focus.instance_name}%{m.member_name}" if focus else ""})
+    procs = TypeProcedure.objects.filter(user_type=t).select_related("subroutine").order_by("binding")
+    cat_counts = Counter(fs.effective_category for fs in states.values())
+    context = base_context(request, snap, cfg) | {
+        "type": t, "instances": instances, "focus": focus, "members": members, "procs": procs,
+        "categories": [(c, cat_counts.get(c, 0)) for c in CATEGORY_ORDER],
+        "extensions": UserTypes.objects.filter(parent=t).order_by("user_type_name"),
+    }
+    return render(request, "type_detail.html", context)
+
+
+def modules_view(request):
+    snap, cfg = ctx_for(request)
+    if snap is None:
+        return no_snapshot(request)
+    mods = Modules.objects.filter(snapshot=snap).annotate(
+        n_subs=Count("subroutine_module", distinct=True), n_globals=Count("global_var", distinct=True),
+        n_types=Count("user_type_module", distinct=True), n_uses=Count("moduledependency", distinct=True),
+    ).order_by("module_name")
+    return render(request, "modules.html", base_context(request, snap, cfg) | {"modules": mods})
+
+
+def module_detail(request, module_name):
+    snap, cfg = ctx_for(request)
+    if snap is None:
+        return no_snapshot(request)
+    mod = get_object_or_404(Modules, snapshot=snap, module_name=module_name.lower())
+    subs = Subroutines.objects.filter(module=mod).order_by("startline")
+    globals_ = IntrinsicGlobals.objects.filter(gv_module=mod).order_by("var_name")
+    instances = UserTypeInstances.objects.filter(inst_module=mod).select_related("instance_type").order_by("instance_name")
+    types = UserTypes.objects.filter(module=mod).order_by("user_type_name")
+    uses = (ModuleDependency.objects.filter(module=mod, in_head=True).values("dep_module_name", "dep_module__module_name").annotate(n=Count("pk")).order_by("dep_module_name"))
+    used_by = (ModuleDependency.objects.filter(dep_module=mod).values("module__module_name").annotate(n=Count("pk")).order_by("module__module_name"))
+    context = base_context(request, snap, cfg) | {"mod": mod, "subs": subs, "globals": globals_, "instances": instances, "types": types, "uses": uses, "used_by": used_by}
+    return render(request, "module_detail.html", context)
+
+
+# ----------------------------------------------------------- variable catalog
+def variables_view(request):
+    snap, cfg = ctx_for(request)
+    if snap is None:
+        return no_snapshot(request)
+    g = request.GET
+    qs = FieldState.objects.filter(snapshot=snap).select_related("instance", "instance__instance_type", "member", "global_var", "global_var__gv_module", "first_trace_node__subroutine")
+    if g.get("q"):
+        needle = g["q"].lower()
+        qs = qs.filter(Q(member__member_name__icontains=needle) | Q(global_var__var_name__icontains=needle) | Q(instance__instance_name__icontains=needle))
+    per_config = g.get("per_config") == "1"
+    cats = config_categories(snap, cfg["hash"]) if per_config else None
+    if g.get("category") and not per_config:
+        qs = qs.filter(Q(category=g["category"]) | Q(override=g["category"]))
+    if g.get("subgrid"):
+        qs = qs.filter(member__subgrid=g["subgrid"])
+    if g.get("instance"):
+        qs = qs.filter(instance__instance_name=g["instance"])
+    if g.get("kind") == "inst":
+        qs = qs.filter(instance__isnull=False)
+    elif g.get("kind") == "global":
+        qs = qs.filter(global_var__isnull=False)
+    for flag in ("restart", "history"):
+        if g.get(flag) in ("0", "1"):
+            qs = qs.filter(**{flag: g[flag] == "1"})
+    if g.get("finding") == "restart_unneeded":
+        qs = qs.filter(restart_unneeded=True)
+    elif g.get("finding") == "restart_missing":
+        qs = qs.filter(restart_missing=True)
+    elif g.get("finding") == "overridden":
+        qs = qs.exclude(override="")
+    order = g.get("order") or "name"
+    order_map = {"name": ("instance__instance_name", "member__member_name", "global_var__var_name"), "routines": ("-n_routines",), "writes": ("-n_writes",), "reads": ("-n_reads",), "first": ("first_trace_node__order",)}
+    qs = qs.order_by(*order_map.get(order, order_map["name"]))
+    rows = []
+    if per_config:
+        wanted = g.get("category")
+        for fs in qs:
+            cat = cats.get(q.state_key(fs), "unused")
+            if wanted and cat != wanted:
+                continue
+            rows.append((fs, cat))
+        paginator = Paginator(rows, 100)
+    else:
+        paginator = Paginator(qs, 100)
+    page = paginator.get_page(g.get("page"))
+    items = [(r[0], r[1]) if per_config else (r, r.effective_category) for r in page.object_list]
+    instances = UserTypeInstances.objects.filter(inst_module__snapshot=snap).order_by("instance_name").values_list("instance_name", flat=True)
+    context = base_context(request, snap, cfg) | {
+        "page": page, "items": items, "filters": g, "instances": instances, "categories": CATEGORY_ORDER, "per_config": per_config,
+        "subgrid_levels": [("p", "patch"), ("c", "column"), ("l", "landunit"), ("t", "topounit"), ("g", "gridcell")],
+    }
+    template = "partials/variables_table.html" if is_htmx(request) else "variables.html"
+    return render(request, template, context)
+
+
+def config_categories(snap, cfg_hash):
+    return q.config_categories(snap, cfg_hash)
 
 
 @login_required
-def select_user_config(request, config_id):
-    cfg = get_object_or_404(ConfigProfile, id=config_id, owner=request.user)
-    request.session["active_config"] = {"type": "user", "id": cfg.id}
-    num = compute_if_evals_for_hash()
-    return redirect(request.GET.get("next") or request.META.get("HTTP_REFERER") or "/")
+@require_POST
+def set_override(request, state_id):
+    fs = get_object_or_404(FieldState, pk=state_id)
+    value = request.POST.get("override", "")
+    if value not in ("", *CATEGORY_ORDER):
+        return HttpResponseBadRequest("bad category")
+    fs.override = value
+    fs.override_note = request.POST.get("note", "")[:500]
+    fs.save(update_fields=["override", "override_note"])
+    return render(request, "partials/variable_row.html", {"fs": fs, "category": fs.effective_category, "snapshot": fs.snapshot, "cfg": active_config(request)})
 
 
+# ----------------------------------------------------------------- tracing
+def trace_view(request, var_name=None):
+    """The trace workspace: `?v=col_ws%25h2osoi_liq&v=veg_cf%25npp` (plus snap/cfg)."""
+    snap, cfg = ctx_for(request)
+    if snap is None:
+        return no_snapshot(request)
+    keys = request.GET.getlist("v")
+    if var_name:
+        keys = [var_name] + keys
+    refs = q.parse_vars(snap, keys)
+    unknown = [k for k in keys if k and not any(r.key == k or r.label == k for r in refs)]
+    context = base_context(request, snap, cfg) | {"refs": refs, "keys": [r.key for r in refs], "unknown": unknown}
+    return render(request, "trace_view.html", context)
+
+
+def trace_vars(request, key=None):
+    """Textual tree with one marker column per traced variable (routines not touching any are pruned)."""
+    snap, cfg = ctx_for(request)
+    if snap is None:
+        return HttpResponse("")
+    keys = request.GET.getlist("v")
+    if key:
+        keys = [key] + keys
+    refs = q.parse_vars(snap, keys)
+    reach = reachable(snap.pk, cfg["hash"])
+    ranges = inactive_ranges(snap.pk, cfg["hash"])
+    marks: dict[int, dict[str, set]] = {}
+    for ref in refs:
+        for row in q.trace_rows(snap, ref, reach, ranges):
+            marks.setdefault(row["c"], {}).setdefault(ref.key, set()).add(row["s"])
+    tree = q.build_tree(snap.pk, reach)
+
+    def prune(node) -> bool:
+        node.children = [c for c in node.children if prune(c)]
+        hit = node.order in marks
+        if hit:
+            node.marks = {k: q.merge_status(v) for k, v in marks[node.order].items()}
+        return hit or bool(node.children)
+
+    tree = [n for n in tree if prune(n)] if refs else tree
+    context = base_context(request, snap, cfg) | {"tree": tree, "refs": refs, "var_keys": [r.key for r in refs], "expand_to": 3, "in_step": True}
+    return render(request, "partials/trace_tree.html", context)
+
+
+# ------------------------------------------------------------------ graphs
+def calltree_view(request):
+    snap, cfg = ctx_for(request)
+    if snap is None:
+        return no_snapshot(request)
+    root = request.GET.get("root", "")
+    return render(request, "calltree_view.html", base_context(request, snap, cfg) | {"root": root})
+
+
+def modgraph_view(request):
+    snap, cfg = ctx_for(request)
+    if snap is None:
+        return no_snapshot(request)
+    return render(request, "modgraph.html", base_context(request, snap, cfg))
+
+
+# -------------------------------------------------------------------- diff
+def parse_side(request, name):
+    """`snap-label:cfg-key` (either part optional) -> (Snapshot, cfg dict)."""
+    raw = request.GET.get(name, "")
+    if not raw and (request.GET.get(f"{name}_snap") or request.GET.get(f"{name}_cfg")):
+        raw = f"{request.GET.get(f'{name}_snap', '')}:{request.GET.get(f'{name}_cfg', '')}"
+    label, _, key = raw.partition(":") if ":" in raw else ("", "", raw)
+    if raw and ":" not in raw and Snapshot.objects.filter(label=raw).exists():
+        label, key = raw, ""
+    snap = Snapshot.objects.filter(label=label).first() if label else active_snapshot(request)
+    cfg = config_by_key(key) if key else active_config(request)
+    if cfg is None:
+        cfg = active_config(request)
+    if snap is not None:
+        ensure_if_evals(snap, cfg["hash"], cfg["data"])
+    return snap, cfg
+
+
+def diff_view(request):
+    snap, cfg = ctx_for(request)
+    if snap is None:
+        return no_snapshot(request)
+    a_snap, a_cfg = parse_side(request, "a")
+    b_snap, b_cfg = parse_side(request, "b")
+    context = base_context(request, snap, cfg) | {
+        "a": {"snap": a_snap, "cfg": a_cfg, "raw": request.GET.get("a", "")},
+        "b": {"snap": b_snap, "cfg": b_cfg, "raw": request.GET.get("b", "")},
+        "tabs": [("routines", "Reached routines"), ("namelist", "Namelist values"), ("ifs", "Flipped if blocks"), ("fields", "Variable categories"), ("access", "Routine accesses")],
+    }
+    return render(request, "diff.html", context)
+
+
+def diff_tab(request, tab):
+    a_snap, a_cfg = parse_side(request, "a")
+    b_snap, b_cfg = parse_side(request, "b")
+    if a_snap is None or b_snap is None:
+        return HttpResponse("<p>Pick two sides.</p>")
+    same_snapshot = a_snap.pk == b_snap.pk
+    context = {"a_snap": a_snap, "a_cfg": a_cfg, "b_snap": b_snap, "b_cfg": b_cfg, "same_snapshot": same_snapshot, "tab": tab}
+    if tab == "routines":
+        ra, rb = reachable(a_snap.pk, a_cfg["hash"]), reachable(b_snap.pk, b_cfg["hash"])
+        ids_a = set(Subroutines.objects.filter(pk__in=ra.sub_ids).values_list("sub_id", flat=True))
+        ids_b = set(Subroutines.objects.filter(pk__in=rb.sub_ids).values_list("sub_id", flat=True))
+        context |= {"only_a": sorted(ids_a - ids_b), "only_b": sorted(ids_b - ids_a), "both": len(ids_a & ids_b)}
+    elif tab == "namelist":
+        env_a, env_b = build_env(a_snap, a_cfg["data"]), build_env(b_snap, b_cfg["data"])
+        names = sorted(set(env_a) | set(env_b))
+        context["rows"] = [(n, env_a.get(n, "—"), env_b.get(n, "—")) for n in names if env_a.get(n) != env_b.get(n)]
+        context["n_same"] = sum(1 for n in names if env_a.get(n) == env_b.get(n))
+    elif tab == "ifs":
+        if same_snapshot:
+            ia = inactive_ranges(a_snap.pk, a_cfg["hash"])
+            ib = inactive_ranges(b_snap.pk, b_cfg["hash"])
+            flips = []
+            subs = {s.pk: s for s in Subroutines.objects.filter(pk__in=set(ia) | set(ib))}
+            for sub_pk in set(ia) | set(ib):
+                sa, sb = set(ia.get(sub_pk, [])), set(ib.get(sub_pk, []))
+                for start, end in sorted(sa ^ sb):
+                    fi = FlatIf.objects.filter(subroutine_id=sub_pk, start_ln=start, end_ln=end).first()
+                    flips.append({"sub": subs[sub_pk], "start": start, "end": end, "text": fi.condition_text if fi else "", "active_a": (start, end) not in sa, "active_b": (start, end) not in sb})
+            flips.sort(key=lambda f: (f["sub"].sub_id, f["start"]))
+            context["flips"] = flips
+    elif tab == "fields":
+        ca = q.config_categories(a_snap, a_cfg["hash"])
+        cb = q.config_categories(b_snap, b_cfg["hash"])
+        label_a = _state_labels(a_snap)
+        label_b = _state_labels(b_snap) if not same_snapshot else label_a
+        by_label_a = {label_a.get(k): v for k, v in ca.items() if k in label_a}
+        by_label_b = {label_b.get(k): v for k, v in cb.items() if k in label_b}
+        changes = []
+        for label in sorted(set(by_label_a) | set(by_label_b)):
+            va, vb = by_label_a.get(label, "—"), by_label_b.get(label, "—")
+            if va != vb:
+                changes.append((label, va, vb))
+        context["changes"] = changes
+        context["n_same"] = len(set(by_label_a) & set(by_label_b)) - len([c for c in changes if c[1] != "—" and c[2] != "—"])
+    elif tab == "access":
+        context["rows"] = _access_diff(a_snap, a_cfg, b_snap, b_cfg)
+    return render(request, f"partials/diff_{tab}.html", context)
+
+
+def _state_labels(snap) -> dict[tuple, str]:
+    out = {}
+    for inst, member, gvar, iname, mname, gname, gmod in FieldState.objects.filter(snapshot=snap).values_list(
+        "instance_id", "member_id", "global_var_id", "instance__instance_name", "member__member_name", "global_var__var_name", "global_var__gv_module__module_name"
+    ):
+        out[("i", inst, member) if inst else ("g", gvar)] = f"{iname}%{mname}" if inst else f"{gmod}::{gname}"
+    return out
+
+
+def _access_diff(a_snap, a_cfg, b_snap, b_cfg, limit=400):
+    """Per routine (present on both sides): module-variable accesses (path, status) only on one side."""
+    def summary(snap, cfg):
+        reach = reachable(snap.pk, cfg["hash"])
+        ranges = inactive_ranges(snap.pk, cfg["hash"])
+        subs = {pk: sid for pk, sid in Subroutines.objects.filter(pk__in=reach.sub_ids).values_list("pk", "sub_id")}
+        acc: dict[str, dict[str, set]] = {}
+        for sub_pk, path, status, ln in SubroutineActiveGlobalVars.objects.filter(subroutine_id__in=subs).values_list("subroutine_id", "path", "status", "ln"):
+            if not is_inactive(ranges, sub_pk, ln):
+                acc.setdefault(subs[sub_pk], {}).setdefault(path, set()).update(status)
+        for sub_pk, path, status, ln in SubroutineIntrinsicGlobals.objects.filter(sub_id_id__in=subs).values_list("sub_id_id", "path", "status", "gv_ln"):
+            if not is_inactive(ranges, sub_pk, ln):
+                acc.setdefault(subs[sub_pk], {}).setdefault(path, set()).update(status)
+        return {s: {p: "".join(sorted(st)) for p, st in d.items()} for s, d in acc.items()}
+    sa, sb = summary(a_snap, a_cfg), summary(b_snap, b_cfg)
+    rows = []
+    for sub_id in sorted(set(sa) & set(sb)):
+        da, db = sa[sub_id], sb[sub_id]
+        diff = [(p, da.get(p, "—"), db.get(p, "—")) for p in sorted(set(da) | set(db)) if da.get(p) != db.get(p)]
+        if diff:
+            rows.append({"sub_id": sub_id, "diff": diff[:50], "n": len(diff)})
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+# ----------------------------------------------------------------- configs
+def config_start(request):
+    if not request.user.is_authenticated:
+        messages.info(request, "Sign in to edit namelist configurations.")
+        return redirect(f"{settings.LOGIN_URL}?next=/configs/")
+    cfg, _ = ConfigProfile.objects.get_or_create(owner=request.user, name="Default", defaults={"data": {}})
+    return redirect("config_editor", config_id=cfg.id)
+
+
+def _editor_rows(snap, config):
+    rows = []
+    for g in IntrinsicGlobals.objects.filter(snapshot=snap).exclude(namelist_group="").select_related("gv_module").order_by("namelist_group", "var_name"):
+        rows.append({"ig": g, "current": config.data.get(g.var_name, g.value), "overridden": g.var_name in config.data})
+    return rows
+
+
+@login_required
+def config_editor(request, config_id):
+    snap, cfg = ctx_for(request)
+    config = get_object_or_404(ConfigProfile, id=config_id, owner=request.user)
+    if snap is None:
+        return no_snapshot(request)
+    context = base_context(request, snap, cfg) | {"config": config, "rows": _editor_rows(snap, config), "my_configs": ConfigProfile.objects.filter(owner=request.user).order_by("name")}
+    return render(request, "configs/editor.html", context)
+
+
+@login_required
+@require_POST
+def set_config_value(request, config_id, var_name):
+    snap, cfg = ctx_for(request)
+    config = get_object_or_404(ConfigProfile, id=config_id, owner=request.user)
+    ig = get_object_or_404(IntrinsicGlobals, snapshot=snap, var_name=var_name.lower())
+    value = (request.POST.get("value") or "").strip()
+    if request.POST.get("reset") or value == "" or value == ig.value:
+        config.data.pop(ig.var_name, None)
+    else:
+        config.data[ig.var_name] = value
+    config.save(update_fields=["data"])
+    return render(request, "configs/row.html", {"config": config, "ig": ig, "current": config.data.get(ig.var_name, ig.value), "overridden": ig.var_name in config.data})
+
+
+@login_required
+@require_POST
+def new_config(request):
+    name = (request.POST.get("name") or "").strip()[:128]
+    if not name:
+        return HttpResponseBadRequest("name required")
+    base = config_by_key(request.POST.get("base", "")) or {"data": {}}
+    config, _ = ConfigProfile.objects.get_or_create(owner=request.user, name=name, defaults={"data": dict(base["data"])})
+    request.session["active_config_key"] = f"user:{config.id}"
+    return redirect("config_editor", config_id=config.id)
+
+
+# ------------------------------------------------------------------- auth
 class SignupView(View):
     template_name = "registration/signup.html"
 
     def get(self, request):
-        if not getattr(settings, "REGISTRATION_OPEN", True):
-            messages.error(request, "Registration is closed.")
-            return redirect("login")
+        if not settings.REGISTRATION_OPEN:
+            return HttpResponse("Registration is closed", status=403)
         return render(request, self.template_name, {"form": UserCreationForm()})
 
     def post(self, request):
-        if not getattr(settings, "REGISTRATION_OPEN", True):
-            messages.error(request, "Registration is closed.")
-            return redirect("login")
-
-        invite = request.POST.get("invite_code", "").strip()
-        required = getattr(settings, "INVITE_CODE", "")
-        if required and invite != required:
-            form = UserCreationForm(request.POST)
-            form.add_error(None, "Invalid invite code.")
-            return render(request, self.template_name, {"form": form})
-
+        if not settings.REGISTRATION_OPEN:
+            return HttpResponse("Registration is closed", status=403)
         form = UserCreationForm(request.POST)
-        if not form.is_valid():
-            return render(request, self.template_name, {"form": form})
-
-        user = form.save()
-        login(request, user)  # auto-login
-        messages.success(request, "Welcome!")
-        next_url = request.GET.get("next") or settings.LOGIN_REDIRECT_URL or "/"
-        return redirect(next_url)
-
-
-def nml_values(request):
-    active = get_active_config(request)
-    data = active["data"] or {}
-
-    nml = NamelistVariable.objects.select_related(
-        "active_var_id", "active_var_id__gv_module"
-    ).all()
-    rows = []
-    for nv in nml:
-        ig: IntrinsicGlobals = nv.active_var_id
-        key = str(ig.var_name)
-        effective = data.get(key, ig.value)
-        source = "config" if key in data else "default"
-        rows.append(
-            {
-                "module": ig.gv_module.module_name,
-                "name": ig.var_name,
-                "value": effective,
-                "source": source,
-            }
-        )
-
-    rows.sort(key=lambda r: (r["module"].lower(), r["name"].lower()))
-    config_rows = [r for r in rows if r["source"] == "config"]
-    default_rows = [r for r in rows if r["source"] == "default"]
-
-    return render(
-        request,
-        "configs/values_modal.html",
-        {
-            "active_label": active["label"],
-            "active_kind": active["kind"],
-            "config_rows": config_rows,
-            "default_rows": default_rows,
-        },
-    )
+        invite = request.POST.get("invite_code", "")
+        if settings.INVITE_CODE and invite != settings.INVITE_CODE:
+            form.add_error(None, "Invalid invite code")
+        if form.is_valid():
+            user = form.save()
+            login(request, user)
+            return redirect("home")
+        return render(request, self.template_name, {"form": form})

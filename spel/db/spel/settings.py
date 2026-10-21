@@ -6,16 +6,21 @@ from dotenv import load_dotenv
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-load_dotenv(BASE_DIR / "local.env")
-
-ALLOWED_HOSTS = ["localhost", "127.0.0.1"]
+# Local overrides (never committed); see .env.example for the variables.
+load_dotenv(BASE_DIR / ".env")
 
 # --- Core security ---
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")  # NEVER hardcode in prod
 DEBUG = os.getenv("DJANGO_DEBUG", "False").lower() == "true"
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY") or (
+    "insecure-dev-key-set-DJANGO_SECRET_KEY" if DEBUG else None
+)
+if not SECRET_KEY:
+    raise RuntimeError("DJANGO_SECRET_KEY must be set when DJANGO_DEBUG is not true")
 
 # Add your server IP and domain(s)
-ALLOWED_HOSTS = os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",")
+ALLOWED_HOSTS = [h for h in os.getenv("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost").split(",") if h]
+if DEBUG:  # a developer's runserver always answers on localhost
+    ALLOWED_HOSTS += [h for h in ("127.0.0.1", "localhost") if h not in ALLOWED_HOSTS]
 
 # If you terminate TLS in Nginx (typical), keep this so Django knows when a request was HTTPS
 SECURE_PROXY_SSL_HEADER =os.getenv("DJANGO_SECURE_PROXY_SSL_HEADER", "False").lower() == "true" 
@@ -76,20 +81,38 @@ TEMPLATES = [
 
 
 WSGI_APPLICATION = "db.spel.wsgi.application"
-DATABASES = {
+# SQLite by default (local development, tests); MariaDB/MySQL when DB_ENGINE=mysql.
+if os.getenv("DB_ENGINE", "sqlite").lower() == "mysql":
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.mysql",
+            "NAME": os.getenv("DB_NAME", "spelapp"),
+            "USER": os.getenv("DB_USER", "djuser"),
+            "PASSWORD": os.getenv("DB_PASSWORD", ""),
+            "HOST": os.getenv("DB_HOST", "127.0.0.1"),
+            "PORT": os.getenv("DB_PORT", "3306"),
+            "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "3600")),
+            "OPTIONS": {
+                "autocommit": True,
+                "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+                "connect_timeout": 10,
+                "charset": "utf8mb4",
+            },
+        }
+    }
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": Path(os.getenv("SPEL_DB_PATH", BASE_DIR / "explorer.sqlite3")),
+        }
+    }
+
+# Per-process cache for config evaluations and reachability sets.
+CACHES = {
     "default": {
-        "ENGINE": "django.db.backends.mysql",
-        "NAME": os.getenv("DB_NAME", "spelapp"),
-        "USER": os.getenv("DB_USER", "djuser"),
-        "PASSWORD": os.getenv("DB_PASSWORD", ""),
-        "HOST": os.getenv("DB_HOST", "127.0.0.1"),
-        "PORT": os.getenv("DB_PORT", "3306"),
-        "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "3600")),
-        "OPTIONS": {
-            "autocommit": True,
-            "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
-            "connect_timeout": 10,
-        },
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "spel-explorer",
     }
 }
 
@@ -124,15 +147,15 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 
 STATIC_URL = "/static/"
-STATIC_ROOT = Path(os.getenv("STATIC_ROOT", "/opt/app/static"))
+STATIC_ROOT = Path(os.getenv("STATIC_ROOT", BASE_DIR / "staticfiles"))
 
 MEDIA_URL = "/media/"
-MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", "/opt/app/media"))
+MEDIA_ROOT = Path(os.getenv("MEDIA_ROOT", BASE_DIR / "media"))
 
 LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/"
-REGISTRATION_OPEN = True
-INVITE_CODE = "e3sm-2025"  # set via env: os.environ["INVITE_CODE"]
+REGISTRATION_OPEN = os.getenv("REGISTRATION_OPEN", "True").lower() == "true"
+INVITE_CODE = os.getenv("INVITE_CODE", "")  # empty: no invite code required
 SESSION_COOKIE_AGE = 60 * 60 * 24 * 14  # 14 days
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 

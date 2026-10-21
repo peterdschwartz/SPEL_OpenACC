@@ -40,7 +40,7 @@ from pathlib import Path
 
 from spel.transforms.compact.holders import base_routine, embedded_holders, nutrient_manifest
 from spel.transforms.compact.inventory import DRIVER_ID
-from spel.transforms.compact.registrations import parse_routine
+from spel.scripts.registrations import parse_routine
 from spel.transforms.compact.select import Polymorphic, Selection, statement_end
 from spel.scripts.fortran_parser.scope_walk import AssignEvent
 from spel.scripts.fortran_parser.spel_ast import (

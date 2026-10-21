@@ -1,31 +1,46 @@
 {% extends "base.html" %}
-
 {% load static %}
-
+{% block title %}Trace · ELM Explorer{% endblock %}
 {% block extrahead %}
-<script src="{% static 'js/toggle.js' %}" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js" integrity="sha512-vc58qvvBdrDR4etbxMdlTt4GBQk1qjvyORR2nrsPsFPyrs+/u5c3+1Ct6upOgdZoIl7eq6k3a1UPDSNAQi/32A==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="{% static 'js/timeline.js' %}" defer></script>
 {% endblock %}
-
 {% block body %}
-{% include 'banner.html' %}
-
-<button
-  id="toggle-all-button"
-  data-toggle-all
-  data-target="#left-panel"
-  aria-pressed="false"
-  class="expand-all"
->
-  Expand all
-</button>
-
-<div id="sub-split-view" class="split-container">
-  <div class="left-panel" id="left-panel" hx-get="{% url 'trace' key=var_name %}" hx-trigger="load, configChanged from:body"
-    hx-swap="innerHTML">
-  </div>
-  <div class="right-panel" id="right-panel">
+<div class="page-head">
+  <h2>Variable trace</h2>
+  <div class="chips" id="chips">
+    {% for r in refs %}
+    <span class="chip chip-{{ r.kind }}" data-key="{{ r.key }}">
+      <span class="chip-swatch" data-swatch="{{ forloop.counter0 }}"></span>{{ r.label }}
+      {% if r.state %}<span class="badge badge-cat-{{ r.state.effective_category }}" title="static category">{{ r.state.effective_category }}</span>{% endif %}
+      <a href="#" class="chip-remove" data-remove-var="{{ r.key }}" title="remove">×</a>
+    </span>
+    {% endfor %}
+    {% for k in unknown %}<span class="chip chip-unknown" title="not found in this snapshot">{{ k }} <a href="#" class="chip-remove" data-remove-var="{{ k }}">×</a></span>{% endfor %}
+    <div class="toolbar-item search-item add-var">{% include 'partials/search/var_search_form.html' with mode="add" %}</div>
   </div>
 </div>
-
-
+{% if not refs %}
+<p class="lead">Add variables with the search box above: an instance field such as <code>col_ws%h2osoi_liq</code>, or a module
+  variable such as <code>elm_varctl::use_crop</code>. The timeline shows where in the time step each one is read (○) and
+  written (■), the arcs from a write to the <em>next</em> read show when a computed value is needed, and a dashed arc from
+  the last write back to the first read marks state carried into the next step (prognostic). Faded marks sit inside an
+  <code>if</code> block (or a routine called from one): a conditional write does not reset the variable for every element.</p>
+{% else %}
+<section class="timeline-section">
+  <div class="timeline-controls">
+    <label class="check"><input type="checkbox" id="tl-all"> all routines as columns</label>
+    <label class="check"><input type="checkbox" id="tl-arcs" checked> arcs</label>
+    <span class="legend"><span class="mark-r">○</span> read <span class="mark-w">■</span> write <span class="mark-rw">◆</span> read+write
+      <span class="arc-next">—</span> next read <span class="arc-carried">- -</span> carried to next step</span>
+    <span id="tl-status" class="muted"></span>
+  </div>
+  <div id="timeline-wrap" class="timeline-wrap"><svg id="timeline" data-src="{% url 'api_timeline' %}"></svg></div>
+  <div id="tl-tooltip" class="tooltip" hidden></div>
+</section>
+<div id="sub-split-view" class="split-container">
+  <div class="left-panel" id="left-panel" data-reload-on-config hx-get="{% url 'trace' %}?{{ request.GET.urlencode }}" hx-trigger="load, reload" hx-swap="innerHTML"></div>
+  <div class="right-panel" id="right-panel"><p class="muted">Click a mark on the timeline or a routine's details button.</p></div>
+</div>
+{% endif %}
 {% endblock %}

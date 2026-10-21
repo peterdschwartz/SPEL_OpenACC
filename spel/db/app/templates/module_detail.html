@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}{{ mod.module_name }} · ELM Explorer{% endblock %}
+{% block body %}
+<h2>module {{ mod.module_name }} <small class="muted">{{ mod.filepath }}</small></h2>
+<div class="columns">
+  <section><h3>Routines ({{ subs|length }})</h3><ul class="plain">{% for s in subs %}<li><a href="{% url 'sub_view' s.sub_id %}">{{ s.subroutine_name }}</a>{% if not s.analyzed %} <span class="muted">(outside the step)</span>{% endif %}{% if s.is_internal %} <span class="muted">internal</span>{% endif %}</li>{% endfor %}</ul></section>
+  <section><h3>Types ({{ types|length }}) and instances ({{ instances|length }})</h3>
+    <ul class="plain">{% for t in types %}<li>type <a href="{% url 'type_detail' t.user_type_name %}">{{ t.user_type_name }}</a></li>{% endfor %}
+    {% for i in instances %}<li><code>{{ i.instance_name }}</code> : <a href="{% url 'type_detail' i.instance_type.user_type_name %}?instance={{ i.instance_name }}">{{ i.instance_type.user_type_name }}</a></li>{% endfor %}</ul>
+    <h3>Variables ({{ globals|length }})</h3>
+    <ul class="plain">{% for g in globals %}<li><code>{{ g.var_name }}</code> <span class="muted">{{ g.var_type }}{% if g.parameter %} parameter{% endif %}{% if g.namelist_group %} · namelist {{ g.namelist_group }}{% endif %}</span> {% if not g.parameter %}<a href="{% url 'trace_view' %}?v={{ mod.module_name }}::{{ g.var_name }}" title="trace">⊕</a>{% endif %}</li>{% endfor %}</ul></section>
+  <section><h3>Uses ({{ uses|length }})</h3><ul class="plain">{% for u in uses %}<li>{% if u.dep_module__module_name %}<a href="{% url 'module_detail' u.dep_module__module_name %}">{{ u.dep_module_name }}</a>{% else %}<span class="muted">{{ u.dep_module_name }} (external)</span>{% endif %} <span class="muted">{{ u.n }}</span></li>{% endfor %}</ul>
+    <h3>Used by ({{ used_by|length }})</h3><ul class="plain">{% for u in used_by %}<li><a href="{% url 'module_detail' u.module__module_name %}">{{ u.module__module_name }}</a> <span class="muted">{{ u.n }}</span></li>{% endfor %}</ul></section>
+</div>
+{% endblock %}

@@ -478,9 +478,35 @@ def subset(args):
 
 
 def export(args):
-    from spel.scripts.export_objects import export_table_csv
+    """Write the analysis (elm_drv cache, or a case pickle) as database CSVs."""
+    import json
+    import logging
+    from pathlib import Path
 
-    export_table_csv(args.commit)
+    from spel.scripts.analysis_cache import ANALYSIS_PICKLE, META_FILE, cache_dir, current_meta
+    from spel.scripts.config import spel_output_dir, unittests_dir
+    from spel.scripts.db_export.snapshot import default_label, export_snapshot
+    from spel.scripts.export_objects import _load_pickle, unpickle_case
+    from spel.scripts.logging_configs import get_logger
+
+    logger = get_logger("SPEL", level=logging.INFO)
+    roots = None
+    if args.case:
+        case_dir = unittests_dir / args.case
+        fut = unpickle_case(case_dir)
+        meta = current_meta() | {"roots": list(fut.primary_subroutines)}
+        roots = list(fut.primary_subroutines)
+    else:
+        cache = cache_dir()
+        if not (cache / ANALYSIS_PICKLE).is_file():
+            raise SystemExit(f"No elm_drv analysis cache at {cache}; run `spel analyze` first")
+        meta = json.loads((cache / META_FILE).read_text())
+        fut = _load_pickle(cache / ANALYSIS_PICKLE, srcroot=Path(meta["e3sm_srcroot"]))
+    label = args.label or default_label(meta) + (f"+{args.case}" if args.case else "")
+    out_dir = Path(args.output) if args.output else spel_output_dir / "db-export" / label
+    export_snapshot(fut, meta, out_dir, label=label, case=args.case, roots=roots, logger=logger)
+    print(f"Snapshot '{label}' written to {out_dir}")
+    print(f"Load it with: python spel/db/manage.py update_all_data {out_dir}")
 
 
 def diff(args):
@@ -1010,12 +1036,20 @@ def main():
     subset_parser.set_defaults(func=subset)
 
     # Parser for 'spel export'
-    export_parser = subparsers.add_parser("export", help="Run the export command")
+    export_parser = subparsers.add_parser(
+        "export", help="Write the elm_drv analysis as CSVs for the database (spel/db)"
+    )
     export_parser.add_argument(
-        "-c",
-        required=True,
-        dest="commit",
-        help="Casename of the pickled unit test (spel/scripts/fut_<casename>.pkl)",
+        "-o", "--output", default=None,
+        help="Output directory (default script-output/db-export/<label>)",
+    )
+    export_parser.add_argument(
+        "--label", default=None,
+        help="Snapshot label (default <e3sm branch>@<commit>)",
+    )
+    export_parser.add_argument(
+        "--case", default=None,
+        help="Export a case's pickle (unit-tests/<case>/fut.pkl) instead of the elm_drv cache",
     )
     export_parser.set_defaults(func=export)
 

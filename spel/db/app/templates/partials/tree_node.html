@@ -1,0 +1,26 @@
+{% load mapping logic %}
+<li class="node {% if not node.active %}inactive{% endif %} {% if node.cut %}cut{% endif %}" data-order="{{ node.order }}">
+  <div class="row">
+    {% if node.children %}
+    {% with is_open=current_depth|lt:expand_to %}
+    <span class="toggler checkbox" role="button" tabindex="0" aria-expanded="{{ is_open|yesno:'true,false' }}" aria-controls="child-{{ node.uid }}">{{ node.name }}</span>
+    {% endwith %}
+    {% else %}
+    <span class="parent {% if not node.analyzed %}ghost{% endif %}">{{ node.name }}{% if node.cut %} <small title="recursive call, not expanded">↺</small>{% endif %}</span>
+    {% endif %}
+    {% for key in var_keys %}
+      {% with status=node.marks|get_item:key %}
+      <span class="badge badge-{{ status|default:'dash' }}" title="{{ key }}">{{ status|default:'·' }}</span>
+      {% endwith %}
+    {% endfor %}
+    <button type="button" class="details-btn" aria-label="View details" title="Details"
+      hx-get="{% url 'subroutine_details' node.sub_id %}" hx-target="#right-panel" hx-swap="innerHTML"></button>
+  </div>
+  {% if node.children %}
+  {% with is_open=current_depth|lt:expand_to %}
+  <ul id="child-{{ node.uid }}" class="child {% if is_open %}active{% endif %}">
+    {% for ch in node.children %}{% include "partials/tree_node.html" with node=ch current_depth=current_depth|add:"1" %}{% endfor %}
+  </ul>
+  {% endwith %}
+  {% endif %}
+</li>

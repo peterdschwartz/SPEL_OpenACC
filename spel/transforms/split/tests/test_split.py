@@ -11,7 +11,7 @@ from spel.scripts.fortran_parser.spel_ast import AccessStatement, ModuleConstruc
 from spel.scripts.module_resolver import ModuleResolver
 from spel.scripts.types import LineTuple, LogicalLineIterator
 from spel.scripts.utilityFunctions import Variable
-from spel.transforms.compact.registrations import parse_routine
+from spel.scripts.registrations import parse_routine
 from spel.transforms.split.modules import (
     SplitError,
     Splitter,

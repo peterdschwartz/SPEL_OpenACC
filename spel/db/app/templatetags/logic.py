@@ -1,5 +1,7 @@
 from django import template
+
 register = template.Library()
+
 
 @register.filter
 def lt(a, b):
@@ -8,6 +10,7 @@ def lt(a, b):
     except Exception:
         return False
 
+
 @register.filter
 def lte(a, b):
     try:
@@ -15,3 +18,7 @@ def lte(a, b):
     except Exception:
         return False
 
+
+@register.filter
+def split(value, sep=","):
+    return [v for v in str(value).split(sep) if v]

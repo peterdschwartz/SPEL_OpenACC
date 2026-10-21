@@ -1,0 +1,3 @@
+<p>{{ changes|length }} variables change category under the configuration (categories recomputed from the accesses each configuration reaches).</p>
+<table class="catalog"><thead><tr><th>Variable</th><th>A</th><th>B</th><th></th></tr></thead>
+<tbody>{% for label, a, b in changes %}<tr><td>{{ label }}</td><td><span class="badge badge-cat-{{ a }}">{{ a }}</span></td><td><span class="badge badge-cat-{{ b }}">{{ b }}</span></td><td><a href="{% url 'trace_view' %}?v={{ label|urlencode }}&snap={{ a_snap.label }}&cfg={{ a_cfg.key }}">⊕ A</a> <a href="{% url 'trace_view' %}?v={{ label|urlencode }}&snap={{ b_snap.label }}&cfg={{ b_cfg.key }}">⊕ B</a></td></tr>{% endfor %}</tbody></table>

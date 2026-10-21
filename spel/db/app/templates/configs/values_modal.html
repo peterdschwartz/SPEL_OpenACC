@@ -1,123 +1,22 @@
 <dialog id="nml-modal" class="nml-modal">
   <form method="dialog" class="nml-modal__header">
-    <h3 style="margin:0;">Namelist values — {{ active_label }}{% if active_kind %} ({{ active_kind }}){% endif %}</h3>
+    <h3>Namelist values — {{ cfg.label }} <small>on {{ snapshot.label }}</small></h3>
     <button class="nml-close" value="close" aria-label="Close">&times;</button>
   </form>
-
   <div class="nml-modal__body">
-    <div class="nml-table-wrap">
-      <table class="nml-table">
-        <thead>
-          <tr>
-            <th >Variable</th>
-            <th >Value</th>
-            <th >Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for r in config_rows %}
-          <tr>
-            <td>{{ r.module }}::{{ r.name }}</td>
-            <td><code>{{ r.value }}</code></td>
-            <td>
-              <span class="badge badge-config">config</span>
-            </td>
-          </tr>
-          {% endfor %}
-          {% for r in default_rows %}
-          <tr>
-            <td>{{ r.module }}::{{ r.name }}</td>
-            <td><code>{{ r.value }}</code></td>
-            <td>
-              <span class="badge badge-default">default</span>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    <table class="nml-table">
+      <thead><tr><th>Variable</th><th>Group</th><th>Value</th><th>Source</th></tr></thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>{% if r.module %}<span class="muted">{{ r.module }}::</span>{% endif %}<a href="{% url 'trace_view' %}?v={{ r.module }}::{{ r.name }}">{{ r.name }}</a></td>
+          <td class="muted">{{ r.group }}</td>
+          <td><code>{{ r.value }}</code></td>
+          <td><span class="badge badge-{{ r.source|slice:':6' }}">{{ r.source }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
 </dialog>
-<script>
-  // Open the dialog as soon as this fragment is inserted into the DOM
-  (function () {
-    var dlg = document.getElementById('nml-modal');
-    if (dlg && typeof dlg.showModal === 'function') {
-      dlg.showModal();
-    }
-  })();
-</script>
-
-<style>
-  .nml-modal {
-    width: min(960px, 95vw);
-    border: none;
-    border-radius: 10px;
-    padding: 0;
-  }
-
-  .nml-modal::backdrop {
-    background: rgba(0, 0, 0, .35);
-  }
-
-  .nml-modal__header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: .75rem 1rem;
-    background: #007baa;
-    color: white;
-    border-radius: 10px 10px 0 0;
-  }
-
-  .nml-modal__body {
-    padding: 1rem;
-  }
-
-  .nml-close {
-    background: transparent;
-    color: white;
-    font-size: 1.5rem;
-    border: none;
-    cursor: pointer;
-  }
-
-  .nml-table-wrap {
-    max-height: 60vh;
-    overflow: auto;
-    border: 1px solid #e0e0e0;
-    border-radius: 8px;
-  }
-
-  .nml-table {
-    width: 100%;
-    border-collapse: collapse;
-  }
-
-  .nml-table th,
-  .nml-table td {
-    padding: .5rem .6rem;
-    border-bottom: 1px solid #eee;
-    vertical-align: top;
-  }
-
-  .badge {
-    display: inline-block;
-    padding: .15rem .45rem;
-    border-radius: 999px;
-    font-size: .75rem;
-    line-height: 1;
-  }
-
-  .badge-config {
-    background: #e8f4ff;
-    color: #0b63a7;
-    border: 1px solid #cfe7ff;
-  }
-
-  .badge-default {
-    background: #f3f3f3;
-    color: #444;
-    border: 1px solid #e6e6e6;
-  }
-</style>
+<script>(function(){var d=document.getElementById('nml-modal'); if(d&&d.showModal){d.showModal(); d.addEventListener('close',function(){d.remove();});}})();</script>

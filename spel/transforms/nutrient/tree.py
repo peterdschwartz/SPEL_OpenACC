@@ -3,7 +3,7 @@ A routine as SPEL's parser sees it, tied back to its source lines.
 
 procedures.py compares statements as source text (string case matters) and
 merge.py rewrites routines line by line. Both take the routine's structure
-from the parse tree (compact.registrations.parse_routine): which statements
+from the parse tree (registrations.parse_routine): which statements
 are declarations, plain statements, loops, ifs and their branches, associate
 blocks, with their first and last lines (`lineno`, `end_ln`), and the
 conditions guarding each statement. The source is read only for a
@@ -46,7 +46,7 @@ from spel.scripts.fortran_parser.spel_ast import (
 )
 from spel.scripts.types import directive_sentinel
 from spel.scripts.fortran_parser.spel_ast import Identifier
-from spel.transforms.compact.registrations import _norm, parse_routine
+from spel.scripts.registrations import _norm, parse_routine
 
 SPECS = (VariableDecl, UseStatement, ImplicitNoneStatement)
 LOOPS = (DoLoop, DoWhile, AssociateConstruct)

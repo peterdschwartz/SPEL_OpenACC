@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Diff · ELM Explorer{% endblock %}
+{% block body %}
+<h2>Diff mode</h2>
+<form class="diff-form" method="get">
+  <fieldset><legend>A</legend>
+    <select name="a_snap">{% for s in snapshots %}<option value="{{ s.label }}" {% if s.pk == a.snap.pk %}selected{% endif %}>{{ s.label }}</option>{% endfor %}</select>
+    <select name="a_cfg">{% for c in configs %}<option value="{{ c.key }}" {% if c.key == a.cfg.key %}selected{% endif %}>{{ c.label }}</option>{% endfor %}</select>
+  </fieldset>
+  <fieldset><legend>B</legend>
+    <select name="b_snap">{% for s in snapshots %}<option value="{{ s.label }}" {% if s.pk == b.snap.pk %}selected{% endif %}>{{ s.label }}</option>{% endfor %}</select>
+    <select name="b_cfg">{% for c in configs %}<option value="{{ c.key }}" {% if c.key == b.cfg.key %}selected{% endif %}>{{ c.label }}</option>{% endfor %}</select>
+  </fieldset>
+  <button class="styled-button">Compare</button>
+</form>
+<p class="muted">A = <strong>{{ a.cfg.label }}</strong> on {{ a.snap.label }} · B = <strong>{{ b.cfg.label }}</strong> on {{ b.snap.label }}</p>
+<div class="tabs" role="tablist">
+  {% for t, label in tabs %}
+  <button role="tab" class="tab" hx-get="{% url 'diff_tab' t %}?{{ request.GET.urlencode }}" hx-target="#diff-body" hx-swap="innerHTML" {% if t == "routines" %}hx-trigger="load, click"{% endif %}>{{ label }}</button>
+  {% endfor %}
+</div>
+<div id="diff-body"><p class="muted">Loading…</p></div>
+{% endblock %}

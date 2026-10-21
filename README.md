@@ -17,8 +17,8 @@ What SPEL does:
   configuration or ELM COMPSET**. Variables and code paths that are only reachable under, e.g.,
   `use_crop = .true.` are identified as such rather than being reported unconditionally.
 - **Source-to-source modification** — script-driven edits such as OpenACC pragma insertion.
-- **Database export** — analysis results can be serialized and exported as CSV for a Django web
-  app that lets you browse ELM's structure and call flow in a browser.
+- **Database export** — the whole-driver analysis is exported as CSVs for a Django/HTMX web
+  app: call tree, variable tracing timeline, prognostic/diagnostic catalog, namelist diff mode.
 
 > ELM is the only project supported today.
 
@@ -38,7 +38,8 @@ pip install -e .
 
 This installs the `spel` console script (`[project.scripts]` → `spel.cli:main`).
 Django (the database / web app) and PyTorch (`spel sample`/`spel train`) are optional extras:
-`pip install -e '.[db]'`, `pip install -e '.[ml]'`, or `'.[db,ml]'` for both.
+`pip install -e '.[db]'` (`'.[mysql]'` adds the MariaDB driver, `'.[db-test]'` pytest-django),
+`pip install -e '.[ml]'`, or `'.[db,ml]'` for both.
 
 ### Pointing SPEL at E3SM
 
@@ -113,7 +114,7 @@ All commands are subcommands of `spel`. Run `spel <command> --help` for the auth
 | [`spel acc2omp`](#spel-acc2omp) | Translate modules' OpenACC directives to OpenMP (to run multithreaded with gfortran) |
 | [`spel compact`](#spel-compact) | Inventory flux fields for a compact subgrid layout, and rewrite a type's fields to use it |
 | [`spel diff`](#spel-diff) | Compare two netCDF files and report relative error |
-| [`spel export`](#spel-export) | Turn a pickled unit test into database CSVs |
+| [`spel export`](#spel-export) | Write the `elm_drv` analysis as database CSVs (a snapshot) |
 | [`spel config`](#spel-config) | Print the resolved E3SM/ELM source paths |
 | [`spel upload`](#spel-upload) | rsync the netCDF interface files to a remote machine |
 | [`spel repl`](#spel-repl) | Drop into an IPython shell wired to the Fortran parser |
@@ -519,21 +520,24 @@ spel diff --ref <reference>.nc --test <test>.nc [-v <variable>]
 
 ### `spel export`
 
-Loads a pickled unit test and writes one CSV per database table into
-`spel/db/app/management/commands/csv/`.
+Writes the cached `elm_drv` analysis (see [`spel analyze`](#spel-analyze)) as one CSV per table of
+the database, plus `snapshot.json` (E3SM/SPEL commits, analysis date, row counts), into a directory:
 
 ```bash
-spel export -c <casename>
+spel export                                   # -> script-output/db-export/<branch>@<commit>/
+spel export --srcroot ~/E3SM -o /tmp/x --label master-2026-10
+spel export --case canflux                    # a case's pickle (unit-tests/canflux/fut.pkl) instead
 ```
 
-> **Note:** `-c` is the **casename** of the pickle (`fut_<casename>.pkl`), *not* a git hash.
-> A common convention is to name cases after the E3SM commit they were generated from, which is
-> why older docs described this flag as a commit — but any casename works.
-
-Tables emitted include modules and module dependencies, subroutines, subroutine arguments, the
-call tree, derived-type definitions and instances, active derived-type variables per subroutine,
-intrinsic globals, namelist-guarded `if` blocks, namelist cascades, per-line argument access,
-call bindings, and propagated access.
+The label names the *snapshot* in the database; several snapshots (branches, commits) can be
+loaded side by side. The tables are the modules, derived types and their components, module
+variables (with namelist membership), routines (with their source text), arguments, call sites and
+argument bindings, per-line accesses (direct and through callees), if blocks (namelist-gated ones
+flagged), `hist_addfld*`/`restartvar` registrations, the static step trace (every routine call of
+one `elm_drv` time step in execution order, and every read/write of a module variable along it,
+with dummies resolved to the actuals bound at each call) and the derived per-variable *field state*
+(see [Database / web interface](#database--web-interface)). The exporter is
+`spel/scripts/db_export/`; `schema.py` lists the columns.
 
 ### `spel config`
 
@@ -595,8 +599,8 @@ spel/scripts/fut_<casename>.pkl
 ### Why it matters
 
 The pickle is the analysis artifact. Parsing all of ELM is expensive, so downstream tooling
-(`spel export`, the ML pipeline, ad-hoc analysis scripts) re-loads the pickle instead of
-re-analyzing the source.
+(`spel export --case`, the ML pipeline, ad-hoc analysis scripts) re-loads the pickle instead of
+re-analyzing the source. `spel export` without `--case` reads the `elm_drv` cache instead.
 
 ### Portability across machines and checkouts
 
@@ -616,7 +620,7 @@ spel create -s canopyfluxes -c 4637ab7 --db
 
 # Machine B — set E3SM_SRCROOT in spel/scripts/config.py to the local clone, then:
 spel config                 # sanity-check the paths
-spel export -c 4637ab7      # -> spel/db/app/management/commands/csv/*.csv
+spel export --case 4637ab7  # -> script-output/db-export/<label>+4637ab7/
 ```
 
 The only requirement is that the local E3SM checkout contains the same files the pickle refers
@@ -641,17 +645,32 @@ fut.type_dict         # dict[str, DerivedType]
 
 ## Database / web interface
 
-The CSVs produced by `spel export` feed a Django app (`spel/db/`) that renders ELM's module
-graph, subroutine call trees, derived-type usage, and namelist/COMPSET-conditional behavior in a
-browser. Django management commands under
-`spel/db/app/management/commands/` import the CSVs (`update_all_data --all` loads everything).
-Running the app needs the `db` extra (`pip install -e '.[db]'`).
+A Django app (`spel/db/`, HTMX plus a little d3) lets scientists and new team members browse one
+ELM time step: the call tree pruned by a namelist configuration, each routine's arguments, accesses,
+gates and source; a multi-variable *trace* with a timeline of where in the step each variable is
+read and written (arcs from a write to its next read, a dashed arc for state carried into the next
+step); a *variable catalog* classifying every field as **prognostic** (read before the step's first
+unconditional write: its value carries over), **diagnostic** (written first, registered for
+history), **intermediate** (written first, not output), **input** (only read) or **unused**, with
+restart/history registrations and their mismatches (restart-registered but recomputed every step;
+carried but not in the restart file); derived-type and module pages; a module `use` graph; and a
+*diff mode* comparing two namelist configurations or two snapshots.
 
-An instance is already hosted on AWS, so most users never need to run the web app or understand
-its internals — point your browser at the hosted deployment and use `spel export` only if you
-are contributing new analysis data.
+```bash
+pip install -e '.[db]'                       # Django ('.[mysql]' adds the MariaDB driver)
+cp spel/db/.env.example spel/db/.env          # optional; SQLite needs no settings
+spel analyze && spel export                   # the analysis as CSVs
+python spel/db/manage.py migrate
+python spel/db/manage.py update_all_data script-output/db-export/<label>   # --replace to reload
+python spel/db/manage.py import_presets       # namelist presets (COMPSET lnd_in values)
+python spel/db/manage.py runserver
+```
 
----
+`update_all_data --list` shows the loaded snapshots. Namelist configurations are evaluated on
+first use with SPEL's if evaluator; every page takes `?snap=<label>&cfg=<preset slug>` so views are
+shareable. Signed-in users can create their own configurations in the namelist editor and override
+a variable's category by hand (overrides survive a `--replace`). The hosted instance uses MariaDB
+(`DB_ENGINE=mysql` in `.env`; `reset_db.sh` rebuilds it from an export directory).
 
 ## Testing
 

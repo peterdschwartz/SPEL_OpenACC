@@ -1,29 +1,28 @@
 {% extends "base.html" %}
-{% load static %}
-
+{% block title %}Namelist editor{% endblock %}
 {% block body %}
-{% include 'banner.html' %}
 <h1>Configuration: {{ config.name }}</h1>
-
+<p class="muted">Values differing from the analyzed defaults are stored by variable name. Select this configuration in the
+  toolbar ("My configs") to apply it; its evaluation happens on first use.</p>
 <div class="config-toolbar">
-  <button class="styled-button" hx-post="{% url 'recompute_if_evals' config.id %}" hx-swap="none">
-    Recompute IFs
-  </button>
+  <form method="post" action="{% url 'new_config' %}" class="inline-form">{% csrf_token %}
+    <input type="text" name="name" placeholder="New configuration name" required>
+    <select name="base">
+      <option value="">start from defaults</option>
+      {% for c in configs %}<option value="{{ c.key }}">copy {{ c.label }}</option>{% endfor %}
+    </select>
+    <button class="styled-button">Create</button>
+  </form>
+  {% if my_configs|length > 1 %}
+  <span class="muted">Mine:</span>
+  {% for c in my_configs %}<a href="{% url 'config_editor' c.id %}" {% if c.id == config.id %}class="current"{% endif %}>{{ c.name }}</a> {% endfor %}
+  {% endif %}
 </div>
-
 <table class="config-table">
-  <thead>
-    <tr>
-      <th>Variable</th>
-      <th>Type</th>
-      <th>Module</th>
-      <th>Value</th>
-      <th></th>
-    </tr>
-  </thead>
+  <thead><tr><th>Group</th><th>Variable</th><th>Type</th><th>Default</th><th>Value</th><th></th></tr></thead>
   <tbody>
     {% for row in rows %}
-    {% include "configs/row.html" with ig=row.ig key=row.key dtype=row.dtype current=row.current %}
+    {% include "configs/row.html" with ig=row.ig current=row.current overridden=row.overridden %}
     {% endfor %}
   </tbody>
 </table>

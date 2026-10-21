@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Module graph · ELM Explorer{% endblock %}
+{% block extrahead %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js" integrity="sha512-vc58qvvBdrDR4etbxMdlTt4GBQk1qjvyORR2nrsPsFPyrs+/u5c3+1Ct6upOgdZoIl7eq6k3a1UPDSNAQi/32A==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="{% static 'js/modgraph.js' %}" defer></script>
+{% endblock %}
+{% block body %}
+<div class="page-head"><h2>Module <code>use</code> graph</h2>
+  <div class="page-actions inline-form">
+    <input type="search" id="mg-search" placeholder="highlight module…">
+    <label>min imports <input type="range" id="mg-min" min="1" max="30" value="3"> <span id="mg-min-val">3</span></label>
+    <label class="check"><input type="checkbox" id="mg-labels" checked> labels</label>
+  </div></div>
+<p class="muted">An arrow from A to B means A <code>use</code>s B at module scope; its width is the number of imported names. Node
+  size follows the number of routines. Drag to rearrange, scroll to zoom, click a module to open it.</p>
+<div id="modgraph-wrap" class="graph-wrap"><svg id="modgraph" data-src="{% url 'api_modgraph' %}" data-mod-url="{% url 'module_detail' 'X' %}"></svg></div>
+<div id="mg-tooltip" class="tooltip" hidden></div>
+{% endblock %}

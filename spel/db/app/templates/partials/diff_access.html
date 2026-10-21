@@ -1,0 +1,6 @@
+<p>{{ rows|length }} routines (reached on both sides) access different module variables or with a different status.</p>
+{% for r in rows %}
+<details><summary><code>{{ r.sub_id }}</code> <span class="muted">{{ r.n }} differences</span></summary>
+<table class="compact"><thead><tr><th>Variable</th><th>A</th><th>B</th></tr></thead><tbody>
+{% for p, a, b in r.diff %}<tr><td><code>{{ p }}</code></td><td><span class="badge badge-{{ a }}">{{ a }}</span></td><td><span class="badge badge-{{ b }}">{{ b }}</span></td></tr>{% endfor %}</tbody></table></details>
+{% empty %}<p class="muted">No differences.</p>{% endfor %}

@@ -1,49 +1,31 @@
 {% load static %}
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-  <title>ELM Database</title>
+  <meta charset="utf-8">
+  <title>{% block title %}ELM Explorer{% endblock %}</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <script defer src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.7/dist/htmx.min.js"
-    integrity="sha384-ZBXiYtYQ6hJ2Y0ZNoYuI+Nq5MqWBr+chMrS/RkXpNzQCApHEhOt2aY8EJgqwHLkJ"
-    crossorigin="anonymous"></script>
-
-  <link rel="stylesheet"
-   href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+    integrity="sha384-ZBXiYtYQ6hJ2Y0ZNoYuI+Nq5MqWBr+chMrS/RkXpNzQCApHEhOt2aY8EJgqwHLkJ" crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css"
+    media="(prefers-color-scheme: light)">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css"
+    media="(prefers-color-scheme: dark)">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/fortran.min.js"></script>
-  <script>
-    hljs.configure({cssSelector: 'code'});
-    hljs.highlightAll();
-  </script>
   <link rel="stylesheet" href="{% static 'css/styles.css' %}">
-
-
-  {% block extrahead %}
-  {% endblock %}
+  <script src="{% static 'js/toggle.js' %}" defer></script>
+  <script src="{% static 'js/explorer.js' %}" defer></script>
+  {% block extrahead %}{% endblock %}
 </head>
-
-<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}' data-snap="{{ snapshot.label }}" data-cfg="{{ cfg.key }}">
+  {% include 'banner.html' %}
   {% if messages %}
-  <ul class="messagelist">{% for message in messages %}
-    <li{% if message.tags %} class="{{ message.tags }}" {% endif %}>{{ message }}</li>
-      {% endfor %}
-  </ul>
+  <ul class="messagelist">{% for message in messages %}<li class="{{ message.tags }}">{{ message }}</li>{% endfor %}</ul>
   {% endif %}
+  <main class="page">
   {% block body %}{% endblock %}
+  </main>
+  <div id="modal-root"></div>
 </body>
-
-  <script>
-  document.body.addEventListener('htmx:afterSwap', function (event) {
-    // event.target is the element that was swapped into
-    const swapped = event.target;
-
-    // Find any <pre><code> or inline <code> with language- classes inside it
-    swapped.querySelectorAll('pre code, code[class*="language-"]').forEach(function (block) {
-      hljs.highlightElement(block);
-    });
-  });
-</script>
-
 </html>

@@ -1,0 +1,19 @@
+{% load logic %}
+<tr id="fs-{{ fs.pk }}">
+  <td>{% if fs.instance %}<a href="{% url 'type_detail' fs.instance.instance_type.user_type_name %}?instance={{ fs.instance.instance_name }}#m-{{ fs.member.member_name|slugify }}">{{ fs.instance.instance_name }}%{{ fs.member.member_name }}</a>
+      {% else %}<a href="{% url 'module_detail' fs.global_var.gv_module.module_name %}">{{ fs.global_var.gv_module.module_name }}</a>::{{ fs.global_var.var_name }}{% endif %}</td>
+  <td class="muted">{% if fs.member %}{{ fs.member.member_type }}{% if fs.member.dim %}({{ fs.member.dim }}d){% endif %}{% else %}{{ fs.global_var.var_type }}{% endif %}</td>
+  <td>{{ fs.member.subgrid|default:"" }}</td>
+  <td><span class="badge badge-cat-{{ category }}">{{ category }}</span>{% if fs.override %} <span class="muted" title="{{ fs.override_note }}">(manual; analysis: {{ fs.category }})</span>{% endif %}</td>
+  <td>{% if fs.first_trace_node %}<span class="badge badge-{{ fs.first_status }}">{{ fs.first_status }}</span> <a href="{% url 'sub_view' fs.first_trace_node.subroutine.sub_id %}">{{ fs.first_trace_node.subroutine.subroutine_name }}</a>{% endif %}</td>
+  <td>{{ fs.n_reads }}</td><td>{{ fs.n_writes }}</td><td>{{ fs.n_routines }}</td>
+  <td>{% if fs.restart %}✔{% endif %}{% if fs.restart_unneeded %} <span class="badge badge-off" title="restart-registered but recomputed each step">unneeded?</span>{% endif %}{% if fs.restart_missing %} <span class="badge badge-w" title="carried across steps but not restart-registered">missing?</span>{% endif %}</td>
+  <td>{% if fs.history %}✔{% if not fs.history_active %} <span class="muted">inactive</span>{% endif %}{% endif %}</td>
+  <td class="row-actions"><a href="{% url 'trace_view' %}?v={{ fs.key|urlencode }}" title="trace">⊕</a>
+    {% if user.is_authenticated %}
+    <form hx-post="{% url 'set_override' fs.pk %}" hx-target="#fs-{{ fs.pk }}" hx-swap="outerHTML" class="inline-form">
+      <select name="override" title="manual category"><option value="">auto</option>{% for c in "prognostic,diagnostic,intermediate,input,unused"|split:"," %}<option value="{{ c }}" {% if fs.override == c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select>
+      <input type="text" name="note" placeholder="note" value="{{ fs.override_note }}"><button class="link-button">set</button>
+    </form>
+    {% endif %}</td>
+</tr>

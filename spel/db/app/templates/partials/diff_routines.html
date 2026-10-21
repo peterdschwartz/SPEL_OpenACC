@@ -1,0 +1,5 @@
+<p>{{ both }} routines are reached in both. <span class="badge badge-off">{{ only_a|length }} only in A</span> <span class="badge badge-on">{{ only_b|length }} only in B</span></p>
+<div class="columns">
+  <section><h4>Only reached in A</h4><ul class="plain">{% for s in only_a %}<li><a href="{% url 'sub_view' s %}?snap={{ a_snap.label }}&cfg={{ a_cfg.key }}">{{ s }}</a></li>{% empty %}<li class="muted">none</li>{% endfor %}</ul></section>
+  <section><h4>Only reached in B</h4><ul class="plain">{% for s in only_b %}<li><a href="{% url 'sub_view' s %}?snap={{ b_snap.label }}&cfg={{ b_cfg.key }}">{{ s }}</a></li>{% empty %}<li class="muted">none</li>{% endfor %}</ul></section>
+</div>

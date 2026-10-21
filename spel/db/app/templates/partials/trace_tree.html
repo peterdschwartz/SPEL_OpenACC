@@ -1,0 +1,10 @@
+{% if refs %}
+<div class="tree-head"><span>Routines touching the traced variables</span>
+  <span class="cols">{% for r in refs %}<span class="badge col-head" title="{{ r.key }}" data-swatch="{{ forloop.counter0 }}">{{ r.label|truncatechars:18 }}</span>{% endfor %}</span>
+  <button data-toggle-all data-target="#left-panel" class="link-button">expand all</button></div>
+{% endif %}
+{% if tree %}
+<ul id="SubTree" class="tree">
+  {% for n in tree %}{% include "partials/tree_node.html" with node=n current_depth=0 %}{% endfor %}
+</ul>
+{% else %}<p class="muted">No routine in the active configuration touches these variables.</p>{% endif %}

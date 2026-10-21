@@ -8,8 +8,6 @@ from dotenv import load_dotenv
 scripts_dir = Path(os.path.dirname(__file__))
 spel_dir = Path(f"{scripts_dir}/../../").resolve()
 database_app = spel_dir / "spel" / "db"
-database_csv =  database_app / "app/management/commands/csv/"
-presets = database_app / "app/management/comands/presets/"
 unittests_dir = spel_dir / "unit-tests/"
 spel_mods_dir = spel_dir / "SourceFiles/"
 # Scratch dir for generated files; `spel validate` gives each parallel

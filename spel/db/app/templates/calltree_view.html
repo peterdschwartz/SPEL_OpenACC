@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Tree graph · ELM Explorer{% endblock %}
+{% block extrahead %}
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js" integrity="sha512-vc58qvvBdrDR4etbxMdlTt4GBQk1qjvyORR2nrsPsFPyrs+/u5c3+1Ct6upOgdZoIl7eq6k3a1UPDSNAQi/32A==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="{% static 'js/calltree.js' %}" defer></script>
+{% endblock %}
+{% block body %}
+<div class="page-head"><h2>The time step as a tree</h2>
+  <div class="page-actions">
+    <form id="ct-form" class="inline-form" onsubmit="return false;">
+      <input type="text" id="ct-root" name="root" value="{{ root }}" placeholder="root routine (default elm_drv)">
+      <label class="check"><input type="checkbox" id="ct-inactive"> show pruned</label>
+      <label>depth <input type="number" id="ct-depth" min="1" max="12" value="3" style="width:4em"></label>
+      <button class="styled-button" id="ct-reload">Draw</button>
+    </form>
+  </div></div>
+<p class="muted">Click a node to expand or collapse it, double-click to open the routine. Node size follows the subtree size;
+  grey nodes are pruned by the active configuration, dashed ones are routines SPEL did not analyze, ↺ marks a recursive call.</p>
+<div id="calltree-wrap" class="graph-wrap"><svg id="calltree" data-src="{% url 'api_calltree' %}" data-sub-url="{% url 'sub_view' 'X' %}"></svg></div>
+<div id="ct-tooltip" class="tooltip" hidden></div>
+{% endblock %}

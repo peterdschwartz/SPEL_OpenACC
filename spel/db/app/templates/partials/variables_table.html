@@ -1,0 +1,14 @@
+<p class="muted">{{ page.paginator.count }} variables{% if per_config %} · categories evaluated under {{ cfg.label }}{% endif %}</p>
+<table class="catalog">
+  <thead><tr><th>Variable</th><th>Type</th><th>Level</th><th>Category</th><th>First access</th><th>Reads</th><th>Writes</th><th>Routines</th><th>Restart</th><th>History</th><th></th></tr></thead>
+  <tbody>
+    {% for fs, category in items %}{% include "partials/variable_row.html" %}{% endfor %}
+  </tbody>
+</table>
+{% if page.has_other_pages %}
+<div class="pager">
+  {% if page.has_previous %}<a hx-get="{% url 'variables' %}?{{ filters.urlencode }}&page={{ page.previous_page_number }}" hx-target="#variables-table" href="#">‹ prev</a>{% endif %}
+  <span>page {{ page.number }} / {{ page.paginator.num_pages }}</span>
+  {% if page.has_next %}<a hx-get="{% url 'variables' %}?{{ filters.urlencode }}&page={{ page.next_page_number }}" hx-target="#variables-table" href="#">next ›</a>{% endif %}
+</div>
+{% endif %}

@@ -70,7 +70,13 @@ def flatten_if(
     # First, the main IF
     start_ln = if_node.lineno
     end_ln = if_node.end_ln
-    flat_blocks.append(FlatIfs(start=start_ln, end=end_ln, cond=g_if, kind=IfType.IF))
+    if end_ln < 0:
+        # `if (cond) stmt` on one line: the parser records no end line
+        end_ln = start_ln
+        kind = IfType.SIMPLE
+    else:
+        kind = IfType.IF
+    flat_blocks.append(FlatIfs(start=start_ln, end=end_ln, cond=g_if, kind=kind))
 
     for stmt in nested_ifs(if_node.consequence.statements):
         flat_blocks.extend(flatten_if(stmt, g_if))

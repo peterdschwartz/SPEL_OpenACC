@@ -22,7 +22,11 @@ dependencies = [
 
 [project.optional-dependencies]
 # Django web app / database (spel/db)
-db = ["Django>=5.1.2", "mysqlclient"]
+db = ["Django>=5.1.2"]
+# MariaDB/MySQL backend for the hosted instance (DB_ENGINE=mysql)
+mysql = ["mysqlclient"]
+# Loader/view tests under spel/db
+db-test = ["pytest-django"]
 # NN emulator training (`spel sample`, `spel train`)
 ml = ["torch", "scikit-learn"]
 
@@ -34,3 +38,8 @@ include = ["spel*"]
 
 [project.scripts]
 spel = "spel.cli:main"
+
+[tool.pytest.ini_options]
+# Django tests under spel/db need the `db-test` extra; `db.spel.settings` resolves with spel/ on the path
+pythonpath = ["spel"]
+DJANGO_SETTINGS_MODULE = "db.spel.settings"

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Variables · ELM Explorer{% endblock %}
+{% block body %}
+<h2>Variable catalog</h2>
+<p class="lead">Every derived-type instance field and module variable the time step touches (or that is registered for
+  history/restart). <strong>prognostic</strong>: read before it is written (its value carries from the previous step);
+  <strong>diagnostic</strong>: written first and registered for history; <strong>intermediate</strong>: written first, not
+  output; <strong>input</strong>: only read; <strong>unused</strong>: never touched in the step.</p>
+<form id="var-filters" class="filters" hx-get="{% url 'variables' %}" hx-target="#variables-table" hx-swap="innerHTML" hx-trigger="change, submit, input changed delay:300ms from:#q" hx-push-url="true">
+  <input type="hidden" name="snap" value="{{ snapshot.label }}"><input type="hidden" name="cfg" value="{{ cfg.key }}">
+  <input id="q" type="search" name="q" placeholder="name contains…" value="{{ filters.q }}">
+  <select name="category"><option value="">any category</option>{% for c in categories %}<option value="{{ c }}" {% if filters.category == c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select>
+  <select name="kind"><option value="">fields and globals</option><option value="inst" {% if filters.kind == "inst" %}selected{% endif %}>instance fields</option><option value="global" {% if filters.kind == "global" %}selected{% endif %}>module variables</option></select>
+  <select name="instance"><option value="">any instance</option>{% for i in instances %}<option value="{{ i }}" {% if filters.instance == i %}selected{% endif %}>{{ i }}</option>{% endfor %}</select>
+  <select name="subgrid"><option value="">any level</option>{% for s, label in subgrid_levels %}<option value="{{ s }}" {% if filters.subgrid == s %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+  <select name="restart"><option value="">restart: any</option><option value="1" {% if filters.restart == "1" %}selected{% endif %}>restart-registered</option><option value="0" {% if filters.restart == "0" %}selected{% endif %}>not in restart</option></select>
+  <select name="history"><option value="">history: any</option><option value="1" {% if filters.history == "1" %}selected{% endif %}>history-registered</option><option value="0" {% if filters.history == "0" %}selected{% endif %}>no history</option></select>
+  <select name="finding"><option value="">findings: any</option>
+    <option value="restart_unneeded" {% if filters.finding == "restart_unneeded" %}selected{% endif %}>in restart but not carried</option>
+    <option value="restart_missing" {% if filters.finding == "restart_missing" %}selected{% endif %}>carried but not in restart</option>
+    <option value="overridden" {% if filters.finding == "overridden" %}selected{% endif %}>manually overridden</option></select>
+  <select name="order"><option value="name" {% if filters.order == "name" %}selected{% endif %}>by name</option><option value="routines" {% if filters.order == "routines" %}selected{% endif %}>most routines</option><option value="writes" {% if filters.order == "writes" %}selected{% endif %}>most writes</option><option value="reads" {% if filters.order == "reads" %}selected{% endif %}>most reads</option><option value="first" {% if filters.order == "first" %}selected{% endif %}>first touched</option></select>
+  <label class="check"><input type="checkbox" name="per_config" value="1" {% if per_config %}checked{% endif %}> categories under the active config</label>
+</form>
+<div id="variables-table">{% include "partials/variables_table.html" %}</div>
+{% endblock %}

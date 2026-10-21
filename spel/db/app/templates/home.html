@@ -1,29 +1,40 @@
 {% extends "base.html" %}
-{% load static %}
-
-{% block extrahead %}
-<script src="{% static 'js/toggle.js' %}" defer></script>
-{% endblock %}
-
 {% block body %}
-
-{% include 'banner.html' %}
-
-<h1> {{ title }} <a href="{% url 'sub_view' 'elm_drv' %}" class="return-link">Subroutine View</a></h1>
-
-<form hx-post="{% url 'subcall' %}" hx-target="#active-view" hx-swap="innerHTML">
-    <label for="Variable">Enter Global Variable (inst%member):</label>
-    <input type="text" id="Variable" name="Variable" required>
-    <button type="submit">Submit</button>
-</form>
-<br />
-<button id="toggle-all-button">Toggle All</button>
-<br />
-
-<!-- Button to load the subroutine_calltree content -->
-<div id="subroutine-container" hx-get="{% url 'subcall' %}" hx-trigger="load" hx-target="this" hx-swap="innerHTML">
-    Loading...
+{% if no_data %}
+<h1>ELM Explorer</h1>
+<p>No analysis snapshot is loaded yet. Export one and load it:</p>
+<pre><code>spel analyze
+spel export
+python spel/db/manage.py update_all_data script-output/db-export/&lt;label&gt;
+python spel/db/manage.py import_presets</code></pre>
+{% else %}
+<h1>E3SM Land Model — code explorer</h1>
+<p class="lead">Static analysis of one ELM time step (<code>elm_drv</code>): which routines run, which fields they read and
+  write, and how that changes with the namelist. Pick a snapshot (an analyzed E3SM checkout) and a configuration in the
+  toolbar; every page follows them.</p>
+<div class="cards">
+  <a class="card" href="{% url 'sub_view' 'elm_driver::elm_drv' %}"><h3>Call tree</h3><p>The time step as a tree of calls, pruned by the active namelist configuration, with each routine's arguments, accesses, gates and source.</p></a>
+  <a class="card" href="{% url 'trace_view' %}"><h3>Variable trace</h3><p>Follow several variables through the step: which routines touch them, in what order, and when a value written is next needed.</p></a>
+  <a class="card" href="{% url 'variables' %}"><h3>Variable catalog</h3><p>Every instance field and module variable classified as prognostic, diagnostic, intermediate, input or unused; restart/history registrations and their mismatches.</p></a>
+  <a class="card" href="{% url 'diff' %}"><h3>Diff mode</h3><p>Compare two namelist configurations, or two snapshots: reachable routines, flipped if blocks, access sets and categories.</p></a>
+  <a class="card" href="{% url 'types' %}"><h3>Types</h3><p>Derived types, their members by subgrid level, instances and registrations.</p></a>
+  <a class="card" href="{% url 'modgraph' %}"><h3>Modules</h3><p>Module <code>use</code> graph and per-module contents.</p></a>
 </div>
-
-
+<h2>Snapshots</h2>
+<div class="snapshot-cards">
+  {% for c in cards %}
+  <div class="snapshot-card {% if c.snapshot.pk == snapshot.pk %}active{% endif %}">
+    <h3>{{ c.snapshot.label }}</h3>
+    <dl>
+      <dt>E3SM</dt><dd>{{ c.snapshot.e3sm_branch }} <code>{{ c.snapshot.e3sm_commit|slice:':8' }}</code>{% if c.snapshot.elm_diff %} <span class="badge badge-w">uncommitted</span>{% endif %}</dd>
+      <dt>SPEL</dt><dd>{{ c.snapshot.spel_branch }} <code>{{ c.snapshot.spel_commit|slice:':8' }}</code></dd>
+      <dt>Analyzed</dt><dd>{{ c.snapshot.analysis_created_at|date:"Y-m-d H:i" }} · loaded {{ c.snapshot.loaded_at|date:"Y-m-d H:i" }}</dd>
+      <dt>Size</dt><dd>{{ c.n_subs }} routines in the step · {{ c.n_modules }} modules · {{ c.n_types }} types · {{ c.n_fields }} fields</dd>
+      <dt>Categories</dt><dd class="cat-bar">{% for cat, n in c.categories %}<a class="badge badge-cat-{{ cat }}" href="{% url 'variables' %}?snap={{ c.snapshot.label }}&category={{ cat }}" title="{{ cat }}">{{ cat }} {{ n }}</a>{% endfor %}</dd>
+      <dt>Findings</dt><dd><a href="{% url 'variables' %}?snap={{ c.snapshot.label }}&finding=restart_unneeded">{{ c.findings }} restart/carried mismatches</a></dd>
+    </dl>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
 {% endblock %}

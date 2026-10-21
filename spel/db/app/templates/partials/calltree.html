@@ -1,10 +1,9 @@
-<h3>Call Tree Root: {{sub_name}}</h3>
-{% if tree %}
-<ul id="SubTree">
-  {% for n in tree %}
-  {% include "partials/trace_details/trace_node.html" with node=n current_depth=0 expand_to=2 statuses=statuses %}
-  {% endfor %}
+{% if not in_step %}
+<p class="muted">{{ sub.sub_id }} is not called in the elm_drv time step (initialization, restart or history code).</p>
+{% elif tree %}
+<ul id="SubTree" class="tree">
+  {% for n in tree %}{% include "partials/tree_node.html" with node=n current_depth=0 %}{% endfor %}
 </ul>
 {% else %}
-<em>No matches.</em>
+<p class="muted">The active configuration never reaches {{ sub.subroutine_name }}.</p>
 {% endif %}

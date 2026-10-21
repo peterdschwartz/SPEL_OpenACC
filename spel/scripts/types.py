@@ -1085,6 +1085,7 @@ class NameList:
         self.name: str = name
         self.group: str = group
         self.variable: Optional[Variable] = None
+        self.filepath: str = ""  # file of the namelist statement (find_all_namelist)
 
     def __str__(self) -> str:
         type_str = self.variable.type if self.variable else ""

@@ -51,7 +51,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from spel.scripts.fortran_parser.spel_ast import AssociateConstruct, Identifier, IfConstruct, VariableDecl
-from spel.transforms.compact.registrations import _norm
+from spel.scripts.registrations import _norm
 from spel.transforms.nutrient.common import ORDER, Family
 from spel.transforms.nutrient.extract import CORE, ExtractError
 from spel.transforms.nutrient.procedures import compare_procedure

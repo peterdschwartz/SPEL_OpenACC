@@ -17,6 +17,7 @@ from spel.scripts.fortran_parser.spel_parser import Parser
 from spel.scripts.fortran_parser.tracing import Trace
 from spel.scripts.module_resolver import ModuleResolver, ModuleScopes
 from spel.scripts.record_access import AccessMaps
+from spel.scripts.registrations import Registration
 from spel.scripts.helper_functions import combine_many_statuses, find_child_subroutines
 from spel.scripts.logging_configs import get_logger, set_logger_level
 from spel.scripts.LoopConstructs import Loop
@@ -125,6 +126,8 @@ class Subroutine(object):
         self.logger.info(f"Analyzing {self.module}::{self.name}")
         self.flat_ifs: list[FlatIfs] = []
         self.ifs_analyzed: bool = False
+        # hist_addfld*/restartvar calls of this routine (registrations.find_registrations)
+        self.registrations: list[Registration] = []
         self.syntax_tree: Optional[SubroutineDefinitionConstruct] = None
 
         # Populated by walk_syntax_tree; source of truth for routine data

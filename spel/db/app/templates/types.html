@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Types · ELM Explorer{% endblock %}
+{% block body %}
+<h2>Derived types</h2>
+<table class="catalog">
+  <thead><tr><th>Type</th><th>Module</th><th>Extends</th><th>Members</th><th>Instances</th><th>Field categories (all instances)</th></tr></thead>
+  <tbody>{% for t in types %}
+    <tr><td><a href="{% url 'type_detail' t.type.user_type_name %}">{{ t.type.user_type_name }}</a></td>
+      <td><a href="{% url 'module_detail' t.type.module.module_name %}">{{ t.type.module.module_name }}</a></td>
+      <td>{% if t.type.parent %}<a href="{% url 'type_detail' t.type.parent.user_type_name %}">{{ t.type.parent.user_type_name }}</a>{% endif %}</td>
+      <td>{{ t.type.n_members }}</td><td>{{ t.type.n_instances }}</td>
+      <td class="cat-bar">{% for cat, n in t.categories %}{% if n %}<span class="badge badge-cat-{{ cat }}" title="{{ cat }}">{{ n }}</span>{% endif %}{% endfor %}</td></tr>
+  {% endfor %}</tbody>
+</table>
+{% endblock %}

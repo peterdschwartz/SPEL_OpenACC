@@ -1,8 +1,8 @@
-<form class="search-form" hx-boost="false" onsubmit="return false;" style="position:relative;">
-  <input id="var-search-input" class="form-control" type="search" name="search" placeholder="Search variables…"
-    autocomplete="off" aria-haspopup="listbox" aria-expanded="false" hx-post="{% url 'var_active_search' %}"
-    hx-trigger="input changed delay:300ms, keyup[key=='Enter']" hx-target="#var-search-results"
-    hx-indicator=".htmx-indicator">
-  <div class="htmx-indicator" style="position:absolute; right:.5rem; top:.45rem;">⏳</div>
-  <div id="var-search-results"></div>
+<form class="search-form" hx-boost="false" onsubmit="return false;">
+  <input id="var-search-input{% if mode == 'add' %}-add{% endif %}" class="form-control" type="search" name="search" autocomplete="off"
+    placeholder="{% if mode == 'add' %}Add a variable (inst%member or name)…{% else %}Search variables…{% endif %}"
+    hx-post="{% url 'var_active_search' %}" hx-vals='{"mode": "{{ mode|default:'go' }}"}'
+    hx-trigger="input changed delay:250ms, focus" hx-target="next .search-results" hx-indicator="next .htmx-indicator">
+  <span class="htmx-indicator">⏳</span>
+  <div class="search-results"></div>
 </form>

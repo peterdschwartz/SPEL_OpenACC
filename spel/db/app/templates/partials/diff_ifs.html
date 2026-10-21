@@ -1,0 +1,5 @@
+{% if not same_snapshot %}<p class="muted">If-block flips are only compared within one snapshot (line numbers differ across checkouts).</p>
+{% else %}<p>{{ flips|length }} namelist-gated branches flip between A and B.</p>
+<table class="catalog"><thead><tr><th>Routine</th><th>Lines</th><th>Condition</th><th>A</th><th>B</th></tr></thead>
+<tbody>{% for f in flips %}<tr><td><a href="{% url 'sub_view' f.sub.sub_id %}">{{ f.sub.subroutine_name }}</a></td><td>{{ f.start|add:1 }}–{{ f.end|add:1 }}</td><td><code>{{ f.text }}</code></td>
+<td><span class="badge {% if f.active_a %}badge-on{% else %}badge-off{% endif %}">{{ f.active_a|yesno:'active,inactive' }}</span></td><td><span class="badge {% if f.active_b %}badge-on{% else %}badge-off{% endif %}">{{ f.active_b|yesno:'active,inactive' }}</span></td></tr>{% endfor %}</tbody></table>{% endif %}

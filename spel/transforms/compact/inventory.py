@@ -52,7 +52,7 @@ from spel.transforms.compact.holders import (
     find_holder,
     is_data_only,
 )
-from spel.transforms.compact.registrations import (
+from spel.scripts.registrations import (
     Registration,
     line_guards,
     parse_routine,
@@ -340,7 +340,7 @@ def type_registrations(sub_dict: dict, dtype, type_dict: Optional[dict] = None) 
         if sub is None:
             continue
         tree = parse_routine(sub.filepath, sub.startline, sub.endline)
-        out.extend(registrations(tree))
+        out.extend(r for r in registrations(tree) if r.base == "this")
     for cname, holder in embedded_holders(type_dict, dtype) if type_dict else []:
         for binding in ("init", "init_history", "restart"):
             sid = base_routine(sub_dict, holder, binding)
@@ -349,7 +349,8 @@ def type_registrations(sub_dict: dict, dtype, type_dict: Optional[dict] = None) 
                 continue
             tree = parse_routine(sub.filepath, sub.startline, sub.endline)
             for g in registrations(tree):
-                out.append(replace(g, field=f"{cname}%{g.field}"))
+                if g.base == "this":
+                    out.append(replace(g, field=f"{cname}%{g.field}"))
     return out
 
 

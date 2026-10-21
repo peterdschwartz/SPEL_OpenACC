@@ -1,11 +1,85 @@
-<div class="details-pane">
-  <h3>{{module}}::{{ subroutine }}</h3>
+<div class="details-pane" data-focus-ln="{{ focus_ln }}">
+  <h3><a href="{% url 'sub_view' sub.sub_id %}">{{ sub.module.module_name|default:'lib' }}::{{ sub.subroutine_name }}</a>
+    {% if sub.is_function %}<span class="badge">function</span>{% endif %}
+    {% if sub.library %}<span class="badge badge-dash">external</span>{% elif not sub.analyzed %}<span class="badge badge-dash">not analyzed</span>{% endif %}
+    {% if not in_step %}<span class="badge badge-dash" title="never called in elm_drv">outside the step</span>{% endif %}
+  </h3>
+  <p class="muted">{{ sub.filepath }} lines {{ sub.startline|add:1 }}–{{ sub.end_stmt_ln|add:1 }}
+    {% if sub.module %}· <a href="{% url 'module_detail' sub.module.module_name %}">module</a>{% endif %}</p>
 
-   {% include "partials/details/callees.html" %}
-   {% include "partials/details/arguments.html" %}
-   {% include "partials/details/global_vars.html" %}
+  {% if gates %}
+  <details open><summary>Namelist gates ({{ gates|length }})</summary>
+    <ul class="plain">{% for g in gates %}
+      <li><span class="badge {% if g.active %}badge-on{% else %}badge-off{% endif %}">{{ g.active|yesno:'active,inactive' }}</span>
+        <a href="#L{{ g.start }}" data-goto-line="{{ g.start }}">L{{ g.start|add:1 }}–{{ g.end|add:1 }}</a> <code>{{ g.kind|lower }} {{ g.text }}</code></li>
+    {% endfor %}</ul>
+  </details>
+  {% endif %}
 
-   {% include "partials/details/dtype_vars.html" %}
+  <details open><summary>Arguments ({{ args|length }})</summary>
+    <table class="compact"><tbody>{% for a in args %}
+      <tr><td><code>{{ a.arg_name }}</code></td><td class="muted">{{ a.arg_type }}{% if a.dim %}({{ a.dim }}d){% endif %}</td>
+        <td><span class="badge badge-{{ a.intent|default:'dash' }}">{{ a.intent|default:'?' }}</span></td>
+        <td>{% if a.optional %}<span class="muted">optional</span>{% endif %}{% if a.user_type %}<a href="{% url 'type_detail' a.user_type.user_type_name %}">{{ a.user_type.user_type_name }}</a>{% endif %}</td></tr>
+    {% endfor %}</tbody></table>
+  </details>
 
+  <details open><summary>Derived-type fields ({{ dtype_groups|length }} instances)</summary>
+    {% for grp in dtype_groups %}
+    <div class="dtype-group">
+      <div class="group-head"><a href="{% url 'type_detail' grp.type %}?instance={{ grp.instance }}">{{ grp.instance }}</a> <span class="muted">{{ grp.type }}</span></div>
+      <ul class="plain">{% for m in grp.members %}
+        <li class="var-row"><code>{{ m.name }}</code> <span class="badge badge-{{ m.status }}">{{ m.status }}</span>
+          <span class="lines">{% for ln in m.lines %}<a href="#L{{ ln }}" data-goto-line="{{ ln }}">{{ ln|add:1 }}</a>{% endfor %}</span>
+          <a class="trace-link" title="trace {{ m.key }}" href="{% url 'trace_view' %}?v={{ m.key|urlencode }}" data-add-var="{{ m.key }}">⊕ trace</a></li>
+      {% endfor %}</ul>
+    </div>
+    {% empty %}<p class="muted">None.</p>{% endfor %}
+  </details>
+
+  <details><summary>Namelist variables read ({{ nml_vars|length }})</summary>
+    <ul class="plain">{% for g in nml_vars %}
+      <li class="var-row"><code>{{ g.name }}</code> <span class="muted">{{ g.module }}</span> <span class="badge badge-{{ g.status }}">{{ g.status }}</span>
+        <span class="lines">{% for ln in g.lines %}<a href="#L{{ ln }}" data-goto-line="{{ ln }}">{{ ln|add:1 }}</a>{% endfor %}</span>
+        <a class="trace-link" href="{% url 'trace_view' %}?v={{ g.key|urlencode }}" data-add-var="{{ g.key }}">⊕ trace</a></li>
+    {% endfor %}</ul>
+  </details>
+
+  <details><summary>Other module variables ({{ globals|length }})</summary>
+    <ul class="plain">{% for g in globals %}
+      <li class="var-row"><code>{{ g.name }}</code> <span class="muted">{{ g.module }}{% if g.parameter %} · parameter{% endif %}</span> <span class="badge badge-{{ g.status }}">{{ g.status }}</span>
+        <span class="lines">{% for ln in g.lines %}<a href="#L{{ ln }}" data-goto-line="{{ ln }}">{{ ln|add:1 }}</a>{% endfor %}</span>
+        {% if not g.parameter %}<a class="trace-link" href="{% url 'trace_view' %}?v={{ g.key|urlencode }}" data-add-var="{{ g.key }}">⊕ trace</a>{% endif %}</li>
+    {% endfor %}</ul>
+  </details>
+
+  <details><summary>Calls ({{ callees|length }}) · called by ({{ callers|length }})</summary>
+    <ul class="plain">{% for c in callees %}
+      <li><a href="#L{{ c.ln }}" data-goto-line="{{ c.ln }}">L{{ c.ln|add:1 }}</a>
+        {% if c.resolved %}<a href="{% url 'sub_view' c.sub_id %}">{{ c.name }}</a>{% else %}<span class="muted" title="unresolved callee">{{ c.name }}?</span>{% endif %}
+        <span class="muted">{{ c.kind }}</span>{% if c.gated %} <span class="badge badge-off">gated off</span>{% endif %}{% if c.resolved and not c.analyzed %} <span class="badge badge-dash">external</span>{% endif %}</li>
+    {% endfor %}</ul>
+    {% if callers %}<div class="group-head">Called by</div>
+    <ul class="plain">{% for c in callers %}<li><a href="{% url 'sub_view' c.parent_subroutine.sub_id %}">{{ c.parent_subroutine.subroutine_name }}</a> <span class="muted">L{{ c.lineno|add:1 }}</span></li>{% endfor %}</ul>{% endif %}
+  </details>
+
+  {% if registrations %}
+  <details><summary>History/restart registrations ({{ registrations|length }})</summary>
+    <ul class="plain">{% for r in registrations %}
+      <li><span class="badge badge-{{ r.kind }}">{{ r.kind }}</span> <code>{{ r.base }}{% if r.field %}%{{ r.field }}{% endif %}</code> → <strong>{{ r.name }}</strong>
+        {% if r.long_name %}<span class="muted">{{ r.long_name }}</span>{% endif %}{% if r.units %} <span class="muted">[{{ r.units }}]</span>{% endif %}
+        {% if r.inactive %}<span class="badge badge-dash">inactive</span>{% endif %}
+        {% if r.guards %}<span class="muted">if {{ r.guards|join:" and " }}</span>{% endif %}
+        <a href="#L{{ r.ln }}" data-goto-line="{{ r.ln }}">L{{ r.ln|add:1 }}</a></li>
+    {% endfor %}</ul>
+  </details>
+  {% endif %}
+
+  {% if lines %}
+  <details open><summary>Source ({{ lines|length }} lines; dimmed lines are gated off by the configuration)</summary>
+    <div class="source">
+      {% for l in lines %}<div class="srcline {% if l.inactive %}inactive{% endif %}" id="L{{ l.ln }}"><span class="lno">{{ l.ln|add:1 }}</span><code class="language-fortran">{{ l.text }}</code></div>{% endfor %}
+    </div>
+  </details>
+  {% endif %}
 </div>
-

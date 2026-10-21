@@ -1,35 +1,18 @@
 {% extends "base.html" %}
-
-{% load static %}
-
-{% block extrahead %}
-<script src="{% static 'js/toggle.js' %}" defer></script>
-{% endblock %}
-
+{% block title %}{{ sub.subroutine_name }} · ELM Explorer{% endblock %}
 {% block body %}
-{% include 'banner.html' %}
-
-<br />
-<button
-  id="toggle-all-button"
-  data-toggle-all
-  data-target="#left-panel"
-  aria-pressed="false"
-  class="expand-all"
->
-  Expand all
-</button>
-<br />
-
-<div id="sub-split-view" class="split-container">
-  <div class="left-panel" id="left-panel" hx-get="{% url 'calltree' sub_name=sub_name %}" hx-trigger="load, configChanged from:body"
-    hx-swap="innerHTML">
-  </div>
-  <div class="right-panel" id="right-panel" hx-get="{% url 'subroutine_details' sub_name=sub_name %}" hx-trigger="load, configChanged from:body"
-    hx-target="#right-panel" hx-swap="innerHTML">
-    {% include "partials/subroutine_details.html" with sub_name=sub_name %}
+<div class="page-head">
+  <h2>{{ sub.module.module_name|default:'lib' }}::{{ sub.subroutine_name }}</h2>
+  <div class="page-actions">
+    <button data-toggle-all data-target="#left-panel" aria-pressed="false" class="styled-button">Expand all</button>
+    <label class="check"><input type="checkbox" id="show-inactive" data-param="inactive" data-target="#left-panel"> show routines pruned by the config</label>
+    <a class="styled-button" href="{% url 'calltree_view' %}?root={{ sub.sub_id }}">Tree graph</a>
   </div>
 </div>
-
-
+<div id="sub-split-view" class="split-container">
+  <div class="left-panel" id="left-panel" data-reload-on-config
+       hx-get="{% url 'calltree' sub.sub_id %}" hx-trigger="load, reload" hx-swap="innerHTML" hx-include="#show-inactive"></div>
+  <div class="right-panel" id="right-panel" data-reload-on-config
+       hx-get="{% url 'subroutine_details' sub.sub_id %}" hx-trigger="load, reload" hx-swap="innerHTML"></div>
+</div>
 {% endblock %}

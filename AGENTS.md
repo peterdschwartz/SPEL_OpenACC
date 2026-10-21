@@ -172,6 +172,33 @@ Do this in a scratch directory so `.mod`/`.o` files don't land in the repo.
 - OpenACC directives are comments to the parser; `spel/transforms/acc_directives.py` parses them
   from the source and `acc_to_omp.py` attaches them to the analyzed loops.
 
+## Database and web app (`spel export`, `spel/db`)
+
+- Pipeline: `spel analyze` → `spel export` (CSVs + `snapshot.json` in `script-output/db-export/<label>/`,
+  code in `spel/scripts/db_export/`, columns in `schema.py`) → `python spel/db/manage.py
+  update_all_data DIR [--replace]` (`spel/db/app/management/loaders.py`) → `import_presets`.
+  `spel/scripts/export_objects.py` only holds the pickle helpers now.
+- Everything in the DB belongs to a `Snapshot`; the models keep their old names (`Modules`,
+  `Subroutines`, `SubroutineCalltree`, ...) plus `Snapshot`, `SubroutineCode`, `TypeProcedure`,
+  `Registration`, `TraceNode`/`TraceAccess` (the static step: a DFS from `elm_drv` in source order,
+  dummies resolved to the actuals bound at each call) and `FieldState`. Line numbers stay 0-based.
+- Categories (`spel/scripts/db_export/fieldstate.py::categorize`, also used by the views per
+  configuration): prognostic = a read before the step's first *unconditional* write (or only
+  conditional writes); input = read only; diagnostic = unconditional write first + history
+  registration; intermediate = unconditional write first, no history; unused. "Conditional" =
+  inside a plain (non-namelist) if block or in a routine called from one (`TraceAccess.conditional`).
+  Registration flags are facts; `restart_unneeded` / `restart_missing` are findings for review.
+- `hist_addfld*`/`restartvar` calls are recorded by the analysis (`spel/scripts/registrations.py`,
+  `Subroutine.registrations`) by parsing the original routine bodies; the edited `src/` copies keep
+  them commented out. Analysis attributes the export reads need `spel analyze` again after changes.
+- Settings: SQLite by default (`spel/db/explorer.sqlite3`, gitignored); `DB_ENGINE=mysql` for the
+  hosted MariaDB. `spel/db/.env` is gitignored (template `.env.example`); never commit secrets.
+- Tests: `spel/scripts/tests/test_db_export.py` (no Django), `spel/db/app/tests/` (pytest-django,
+  in-memory SQLite; skipped without the `db-test` extra). Evaluation and reachability are cached
+  in LocMem for 10 minutes: restart `runserver` after reloading a snapshot.
+- UI: HTMX 2 partials + bespoke JS (`static/js/{explorer,timeline,calltree,modgraph,toggle}.js`);
+  d3 v7 (cdnjs) only for the timeline, tree graph and module graph. Pages take `?snap=&cfg=`.
+
 ## Compact layout (`spel compact`)
 
 - Design and rules: `spel/transforms/compact/DESIGN.md`; deferred fields: `DEFERRED.md`.

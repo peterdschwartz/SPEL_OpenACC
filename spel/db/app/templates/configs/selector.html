@@ -1,26 +1,17 @@
-<div id="config-picker" class="config-picker" style="display:flex;align-items:center;gap:.5rem;">
-  <label for="config-select" style="font-weight:600;">Config:</label>
-
-  <select id="config-select" name="config" hx-post="{% url 'select_config_htmx' %}" hx-target="#config-picker"
-    hx-swap="outerHTML" hx-trigger="change">
+<div id="config-picker" class="picker">
+  <label for="config-select" class="picker-label">Config:</label>
+  <select id="config-select" name="config" hx-post="{% url 'select_config_htmx' %}" hx-target="#config-picker" hx-swap="outerHTML" hx-trigger="change">
     <optgroup label="Presets">
-      {% for p, flag in presets %}
-      <option value="preset:{{ p.slug }}" {% if flag %}selected{% endif %}>
-        {{ p.name }}
-      </option>
-      {% endfor %}
+      {% for c in configs %}{% if c.kind == "preset" %}
+      <option value="{{ c.key }}" {% if c.key == cfg.key %}selected{% endif %}>{{ c.label }}</option>
+      {% endif %}{% endfor %}
     </optgroup>
-
-    {% if request.user.is_authenticated and user_configs %}
+    {% if request.user.is_authenticated %}
     <optgroup label="My configs">
-      {% for c, flag in user_configs %}
-      <option value="user:{{ c.id }}" {% if flag %}selected {% endif %}>
-        {{ c.name }}
-      </option>
-      {% endfor %}
+      {% for c in configs %}{% if c.kind == "user" %}
+      <option value="{{ c.key }}" {% if c.key == cfg.key %}selected{% endif %}>{{ c.label }}</option>
+      {% endif %}{% endfor %}
     </optgroup>
     {% endif %}
   </select>
-
-
 </div>

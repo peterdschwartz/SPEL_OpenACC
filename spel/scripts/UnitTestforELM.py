@@ -38,6 +38,7 @@ from spel.scripts.record_access import (
     single_instance_actuals,
 )
 from spel.scripts.nml.analyze_ifs import get_if_blocks
+from spel.scripts.registrations import find_registrations
 from spel.scripts.nml.analyze_namelist import (
     check_subs_for_nml_guarded_vars,
     find_all_namelist,
@@ -642,6 +643,9 @@ def process_subroutines_for_unit_test(
 
         if nml_dict:
             find_nml_ifs(sub_dict, nml_dict)
+
+    n_regs = find_registrations(sub_dict, unit_test.logger)
+    unit_test.logger.info(f"Recorded {n_regs} history/restart registrations")
 
     return
 

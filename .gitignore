@@ -50,7 +50,7 @@ Thumbs.db
 **/.ccls-cache
 **/__pycache__/*
 **/app/management/commands/csv/
-**/scripts/database/csv/
+script-output/db-export/
 *.egg-info/
 .sfdx/
 
@@ -70,3 +70,11 @@ Thumbs.db
 schema.pdf
 schema.svg
 **.pdf
+
+# Django app: local env and SQLite database
+spel/db/.env
+spel/db/*.env
+!spel/db/.env.example
+*.sqlite3
+spel/db/staticfiles/
+spel/db/media/

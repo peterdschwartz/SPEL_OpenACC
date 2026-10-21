@@ -187,6 +187,7 @@ def find_all_namelist() -> dict[str, NameList]:
         entries[filename].append(line_number)
 
     nml_lines: list[LineTuple] = []
+    file_of_ln: dict[int, str] = {}
     for fn, lns in entries.items():
         in_stream = open(fn, "r")
         lines = in_stream.readlines()
@@ -194,7 +195,9 @@ def find_all_namelist() -> dict[str, NameList]:
             lines=[LineTuple(ln=ln, line=line) for ln, line in enumerate(lines)]
         )
         for ln in lns:
-            nml_lines.append(line_iter.get_full_line(ln))
+            full = line_iter.get_full_line(ln)
+            file_of_ln[full.ln] = fn
+            nml_lines.append(full)
 
     # Now Parse!
     parser = Parser(lines=nml_lines)
@@ -202,5 +205,7 @@ def find_all_namelist() -> dict[str, NameList]:
     for stmt in program.statements:
         assert isinstance(stmt, NameListStatement), "Expected only NameListStatement"
         for var in stmt.vars:
-            namelist_dict[var] = NameList(name=var, group=stmt.namelist_group)
+            nml = NameList(name=var, group=stmt.namelist_group)
+            nml.filepath = file_of_ln.get(stmt.lineno, "")
+            namelist_dict[var] = nml
     return namelist_dict

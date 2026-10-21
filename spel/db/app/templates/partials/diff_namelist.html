@@ -1,0 +1,3 @@
+<p>{{ rows|length }} namelist variables differ ({{ n_same }} identical).</p>
+<table class="catalog"><thead><tr><th>Variable</th><th>A</th><th>B</th></tr></thead>
+<tbody>{% for name, a, b in rows %}<tr><td><code>{{ name }}</code></td><td><code>{{ a }}</code></td><td><code>{{ b }}</code></td></tr>{% endfor %}</tbody></table>

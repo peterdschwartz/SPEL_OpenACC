@@ -1,5 +1,5 @@
 """Registrations of a nutrient base type: component paths, templated names, species guards."""
-from spel.transforms.compact.registrations import parse_routine, registrations
+from spel.scripts.registrations import parse_routine, registrations
 
 SRC = """
 subroutine vegetation_nutrient_flux_init_history(this, begp, endp)
