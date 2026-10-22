@@ -733,7 +733,7 @@ def _subset_capture_module(
   !!! Inputs/outputs are captured every capture_freq model steps, for a
   !!! gridcell subset (spel_select_subset)
   use shr_kind_mod, only : r8 => shr_kind_r8
-  use decompMod, only : bounds_type, get_proc_bounds
+  use decompMod, only : bounds_type, get_proc_bounds, get_proc_clumps, get_clump_bounds
   use elm_time_manager, only : get_nstep
   use spmdMod, only : masterproc, iam, npes, mpicom, MPI_INTEGER, MPI_MAX, MPI_MIN
   use nc_io, only : spel_io_type, spel_subset_type, nc_subset_set_level, nc_subset_count, &
@@ -749,6 +749,7 @@ def _subset_capture_module(
   type(spel_io_type) :: io_constants, io_inputs, io_outputs
   type(spel_subset_type), target :: spel_sub
   type(bounds_type) :: spel_bounds_sub
+  integer :: spel_clump_begg = -1
   logical :: spel_writer = .false.
   logical :: capturing = .false.
 contains
@@ -765,7 +766,7 @@ contains
         call nc_subset_deactivate()
       end if
     end if
-    capturing = spel_writer .and. mod(get_nstep(), capture_freq) == 0
+    capturing = spel_writer .and. bounds%begg == spel_clump_begg .and. mod(get_nstep(), capture_freq) == 0
     if (capturing) then
 {compact_pre}      call nc_subset_activate(spel_sub)
       call write_elmtypes(io_inputs, spel_bounds_sub{inst_args})

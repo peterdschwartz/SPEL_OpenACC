@@ -65,6 +65,36 @@ Production profiling and large (e.g. crop, `--preset crop-perf`) reference runs.
   runtime may try the login node's GPU and loop forever printing `Failing in Thread:1`.
 - `cprnc` is `/global/cfs/cdirs/e3sm/tools/cprnc/cprnc`; restart files need `-m`.
 
+### Chrysalis (LCRC, AMD EPYC, 64 cores/node)
+
+CPU crop-performance runs, which moved here from Perlmutter. Recorded on 2026-10-21.
+
+- `spel` comes from `~/spel-py314` (spack Python 3.14; `~/myenv` is 3.11, too old). Unit tests build with
+  Intel: `source ~/spel-intel-env.sh` (the ELM case's `.env_mach_specific.sh`, `SPEL_FC=ifx`), also for
+  `spel validate --test-env`. There is no gfortran netcdf build here.
+- E3SM checkouts: `~/integration/E3SM` (upstream bishtgautam/lnd/add-t-meshes-v3 @ e5aa4e3094,
+  the baseline) and its worktree `~/E3SM-gpu-refactor` (peterdschwartz/lnd/gpu-refactor-nutrient-types,
+  which contains the crop-perf branch). Only these two are compared.
+- Handoff notes and user mods: `/lcrc/group/e3sm/ac.schwartzpd/crop_case_files`
+  (`CHRYSALIS_HANDOFF.md`, `user_mods/stride8_chrys`). Inputs: `/lcrc/group/e3sm/ac.schwartzpd/crop_inputdata`
+  (`stride8/` in inputdata layout, `spin30m_restart/` = the 0003-07-01 stride-8 restart; the paramfile
+  is a symlink into `crop_reduced_inputdata/`).
+- Stride-8 cases are the workhorse. Full 1024-task t-lr25 cases (16 nodes, debug queue) run only when the
+  user asks: `./e3sm_casegen.sh --preset crop-perf --res t-lr25 --no-crops` and `--with-crops
+  --compressed-cft --remove-zero-weight-urban`. The non-crop and 50-pft t-lr25 surfdata are in shared
+  inputdata; the domain and `MOSART_u.oi6to18.lr25.nc` aren't, and casegen takes them from
+  `COMPRESSED_CFT_DIR` for any t-lr25 case.
+- `e3sm_casegen.sh --preset crop-perf` detects Chrysalis by hostname: `chrysalis`, Intel, cases under
+  `/lcrc/group/e3sm/$USER/scratch/chrys/E3SM_testings`, debug queue (account `e3sm`, up to 20 nodes).
+  It forces NTHRDS=1 and 64 MPI tasks per node: the default layout for these compsets is 32 tasks x 2 threads.
+- Stride-8 summer window (128 tasks = 2 nodes, the same gridcells per rank as Perlmutter's 1024-task case):
+  `./e3sm_casegen.sh --preset crop-perf --res ELM_USRDAT --with-crops --user-mods
+  /lcrc/group/e3sm/ac.schwartzpd/crop_case_files/user_mods/stride8_chrys --ntasks 128 --no-daily-history
+  --finidat <spin30m restart> --name-suffix stride8.spin30m --srcroot <checkout>`. CIME accepts the
+  absolute `finidat`. Builds run on the login node; batch jobs need the user's OK. CIME's
+  case-directory git can race with the job right after `case.submit` (`index.lock` exists): resubmit.
+- `cprnc` is `/lcrc/group/e3sm/tools/cprnc/cprnc`.
+
 ## Generated vs. hand-edited files
 
 - `SourceFiles/nc_io.F90` is **generated**. Edit `spel/scripts/io/netcdf_io.py`, then
