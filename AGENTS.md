@@ -267,8 +267,10 @@ feature that needs to know what a statement *is* or which names it uses must get
 - `hist_addfld*`/`restartvar` calls are recorded by the analysis (`spel/scripts/registrations.py`,
   `Subroutine.registrations`) by parsing the original routine bodies; the edited `src/` copies keep
   them commented out. Analysis attributes the export reads need `spel analyze` again after changes.
-- Settings: SQLite by default (`spel/db/explorer.sqlite3`, gitignored); `DB_ENGINE=mysql` for the
-  hosted MariaDB. `spel/db/.env` is gitignored (template `.env.example`); never commit secrets.
+- Settings: SQLite by default (`spel/db/explorer.sqlite3`, gitignored), also for the hosted site
+  (`SPEL_DB_PATH`, deployment in `spel/db/DEPLOY.md`); `DB_ENGINE=mysql` switches to MariaDB. All
+  queries go through the ORM; the only backend-specific code is SQLite PRAGMAs guarded by
+  `connection.vendor`. Keep it that way. `spel/db/.env` is gitignored (template `.env.example`); never commit secrets.
 - Tests: `spel/scripts/tests/test_db_export.py` (no Django), `spel/db/app/tests/` (pytest-django,
   in-memory SQLite; skipped without the `db-test` extra). Evaluation and reachability are cached
   in LocMem for 10 minutes: restart `runserver` after reloading a snapshot.

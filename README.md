@@ -826,7 +826,8 @@ restart `runserver` after reloading a snapshot.
 ### Deploying
 
 The app needs a server (it queries the database and evaluates configurations per request); static
-hosting such as GitHub Pages is not enough. On a VM behind Nginx or Caddy:
+hosting such as GitHub Pages is not enough. Step-by-step notes for nginx, gunicorn and SQLite on
+an Ubuntu VM (AWS Lightsail) are in [`spel/db/DEPLOY.md`](spel/db/DEPLOY.md). In short:
 
 - Set `DJANGO_SECRET_KEY`, `DJANGO_DEBUG=0`, `DJANGO_ALLOWED_HOSTS=<host>` and
   `DJANGO_CSRF_TRUSTED_ORIGINS=https://<host>` in `spel/db/.env` (template: `.env.example`, never
@@ -835,8 +836,9 @@ hosting such as GitHub Pages is not enough. On a VM behind Nginx or Caddy:
   Django under gunicorn or similar.
 - Give the VM a fixed (Elastic) IP, point a DNS `A` record at it, and get a certificate with
   Let's Encrypt (`certbot --nginx -d <host>`, or Caddy does it itself).
-- The hosted instance uses MariaDB (`DB_ENGINE=mysql`; `reset_db.sh` rebuilds it from an export
-  directory). SQLite works for a single small instance.
+- The database is a single SQLite file (`SPEL_DB_PATH`), which suits a read-mostly site on one
+  instance. MariaDB (`DB_ENGINE=mysql`, `reset_db.sh`) is supported for many concurrent writers;
+  switching needs no code changes.
 
 ### Reporting problems
 

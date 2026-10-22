@@ -23,7 +23,12 @@ if DEBUG:  # a developer's runserver always answers on localhost
     ALLOWED_HOSTS += [h for h in ("127.0.0.1", "localhost") if h not in ALLOWED_HOSTS]
 
 # If you terminate TLS in Nginx (typical), keep this so Django knows when a request was HTTPS
-SECURE_PROXY_SSL_HEADER =os.getenv("DJANGO_SECURE_PROXY_SSL_HEADER", "False").lower() == "true" 
+# Behind nginx terminating TLS: trust its X-Forwarded-Proto header (Django wants the header/value pair)
+SECURE_PROXY_SSL_HEADER = (
+    ("HTTP_X_FORWARDED_PROTO", "https")
+    if os.getenv("DJANGO_SECURE_PROXY_SSL_HEADER", "False").lower() == "true"
+    else None
+)
 
 # HTTPS settings
 SECURE_SSL_REDIRECT = os.getenv("DJANGO_SECURE_SSL_REDIRECT", "False").lower() == "true"
