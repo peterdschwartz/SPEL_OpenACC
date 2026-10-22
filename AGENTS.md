@@ -85,7 +85,7 @@ CPU crop-performance runs, which moved here from Perlmutter. Recorded on 2026-10
   inputdata; the domain and `MOSART_u.oi6to18.lr25.nc` aren't, and casegen takes them from
   `COMPRESSED_CFT_DIR` for any t-lr25 case.
 - `e3sm_casegen.sh --preset crop-perf` detects Chrysalis by hostname: `chrysalis`, Intel, cases under
-  `/lcrc/group/e3sm/$USER/scratch/chrys/E3SM_testings`, debug queue (account `e3sm`, up to 20 nodes).
+  `/lcrc/globalscratch/$USER/E3SM_testings`, debug queue (account `e3sm`, up to 20 nodes).
   It forces NTHRDS=1 and 64 MPI tasks per node: the default layout for these compsets is 32 tasks x 2 threads.
 - Stride-8 summer window (128 tasks = 2 nodes, the same gridcells per rank as Perlmutter's 1024-task case):
   `./e3sm_casegen.sh --preset crop-perf --res ELM_USRDAT --with-crops --user-mods
@@ -93,6 +93,11 @@ CPU crop-performance runs, which moved here from Perlmutter. Recorded on 2026-10
   --finidat <spin30m restart> --name-suffix stride8.spin30m --srcroot <checkout>`. CIME accepts the
   absolute `finidat`. Builds run on the login node; batch jobs need the user's OK. CIME's
   case-directory git can race with the job right after `case.submit` (`index.lock` exists): resubmit.
+- Put CIME cases and all SPEL unit tests on `/lcrc/globalscratch/ac.schwartzpd` (the user's choice,
+  2026-10-22); `/lcrc/group/e3sm` (fs2) is nearly full and briefly ran out of space on 2026-10-21.
+  `SPEL/unit-tests` is a symlink to `/lcrc/globalscratch/ac.schwartzpd/spel-unit-tests`; keep only
+  symlinks in the SPEL tree. The earlier cases (stride-8, baseline t-lr25) are still under
+  `/lcrc/group/e3sm/ac.schwartzpd/scratch/chrys/E3SM_testings`.
 - `cprnc` is `/lcrc/group/e3sm/tools/cprnc/cprnc`.
 
 ## Generated vs. hand-edited files

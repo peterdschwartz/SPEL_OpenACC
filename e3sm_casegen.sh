@@ -97,7 +97,7 @@ Usage: $(basename "$0") [options]
                        --group E3SM_testings --auto-name --share --build, and per host
                          Perlmutter: --mach pm-cpu --compiler '' --scratch \$SCRATCH
                          Chrysalis:  --mach chrysalis --compiler intel
-                                     --scratch /lcrc/group/e3sm/\$USER/scratch/chrys
+                                     --scratch /lcrc/globalscratch/\$USER
                                      NTHRDS=1 --max-mpitasks-per-node 64 (the
                                      default layout is 32 tasks x 2 threads)
                        Options after it override it; combine with
@@ -132,7 +132,7 @@ while [ $# -gt 0 ]; do
                case "$(hostname -f)" in
                   chr*)
                      mach=chrysalis; compiler=intel; nthrds=1; max_mpitasks_per_node=64
-                     scratch=/lcrc/group/e3sm/$USER/scratch/chrys ;;
+                     scratch=/lcrc/globalscratch/$USER ;;
                   *)
                      mach=pm-cpu; compiler=""
                      scratch=${SCRATCH:?SCRATCH is not set} ;;
