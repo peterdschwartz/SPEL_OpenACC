@@ -488,16 +488,21 @@ class CascadeDependence(models.Model):
 
 
 class CascadePair(models.Model):
-    """A single mapping (nml_val -> cascade_val), e.g. (.false. -> 0), (.true. -> 10)."""
+    """
+    One trigger's value in a mapping (nml_val -> cascade_val), e.g. (.false. -> 0).
+    A cascade on several namelist variables has one dependence per trigger; the
+    rows of one mapping share `pair_key` and it applies when all of them match.
+    """
 
     objects = models.Manager()
     pair_id = models.AutoField(primary_key=True)
     dependence = models.ForeignKey(CascadeDependence, on_delete=models.CASCADE, related_name="pairs")
+    pair_key = models.IntegerField(default=0)
     nml_val = models.CharField(max_length=64)
     cascade_val = models.CharField(max_length=64)
 
     class Meta:
-        constraints = [UniqueConstraint(fields=("dependence", "nml_val", "cascade_val"), name="unique_pair")]
+        constraints = [UniqueConstraint(fields=("dependence", "pair_key", "nml_val", "cascade_val"), name="unique_pair")]
 
 
 class FlatIf(models.Model):

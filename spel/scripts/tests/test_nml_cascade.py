@@ -158,3 +158,22 @@ def test_integer_cascade_to_trigger():
     both = cascade_to_triggers(AnyOf((Expectation("num_pcropp", "> 0"), Expectation("num_ppercropp", "> 0"))))
     assert "num_pcropp" not in both.variable_names() and "num_ppercropp" not in both.variable_names()
     assert simplify(both) == Expectation("use_crop", "True")
+
+
+def test_multi_trigger_cascades():
+    # carbon_only and friends follow suplnitro/suplphos (AllocationMod::EvaluateSupplStatus),
+    # known only outside accelerated spinup
+    dep = NML_CASCADES["carbon_only"]
+    assert dep.trigger_names == ("suplnitro", "suplphos", "spinup_state")
+    on = [dep.pair_values(p) for p in dep.pairs if p.cascade_val == ".true."]
+    assert on == [("all", "all", "0")]
+    assert dep.trigger_constraint("True") is None  # no single trigger value follows
+    assert NML_CASCADES["carbonnitrogen_only"].pairs[1] == (("none", "all", "0"), ".true.")
+    found = cascade_trigger_variables(["suplnitro", "spinup_state", "use_crop"])
+    assert {n: v.type for n, v in found.items()} == {"suplnitro": "character", "spinup_state": "integer", "use_crop": "logical"}
+    assert found["suplnitro"].declaration == "allocationmod"
+
+
+def test_multi_trigger_guard_has_no_trigger_expectation():
+    guard = AllOf((Expectation("carbon_only", "True"),))
+    assert simplify(cascade_to_triggers(guard)) == NO_EXPECTATION

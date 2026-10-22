@@ -50,7 +50,8 @@ TABLES: dict[str, list[str]] = {
         "sub_id", "position", "start_ln", "end_ln", "kind", "condition", "condition_text", "nml_gated",
     ],
     "flat_if_vars": ["sub_id", "position", "role", "var_module", "var_name"],
-    "cascades": ["cascade_var", "trigger_module", "trigger_name", "nml_val", "cascade_val"],
+    # one row per (pair, trigger); a pair applies when all rows with its number match
+    "cascades": ["cascade_var", "pair", "trigger_module", "trigger_name", "nml_val", "cascade_val"],
     "registrations": [
         "sub_id", "ln", "kind", "base", "field", "user_type", "inst_module", "instance", "member",
         "var_module", "var_name", "name", "long_name", "units", "guards", "inactive",

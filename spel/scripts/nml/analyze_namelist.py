@@ -53,7 +53,7 @@ def find_nml_ifs(sub_dict: dict[str, Subroutine], nml_dict: dict[str, NameList])
                         variables=variables,
                     )
                 )
-                variables |= {NML_CASCADES[v].trigger_name for v in dep_vars}
+                variables |= {t for v in dep_vars for t in NML_CASCADES[v].trigger_names}
                 for v in variables:
                     if_node.expected_namelist_values |= expected_constraints(
                         if_node.condtional_expectation, v

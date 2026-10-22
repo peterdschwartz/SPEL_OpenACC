@@ -64,7 +64,7 @@ Settings are read from `spel/db/.env` (template `.env.example`). Create it fresh
 ```bash
 cd /srv/SPEL/spel/db
 cp .env.example .env
-python3 -c "import secrets; print(secrets.token_urlsafe(50))"   # -> DJANGO_SECRET_KEY
+python4 -c "import secrets; print(secrets.token_urlsafe(50))"   # -> DJANGO_SECRET_KEY
 chmod 600 .env
 ```
 

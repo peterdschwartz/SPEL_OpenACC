@@ -45,12 +45,22 @@ def build_env(snapshot: Snapshot, overrides: dict) -> dict[str, str]:
     for name, value in overrides.items():
         env.setdefault(name.lower(), str(value).lower())
     rows = CascadePair.objects.filter(dependence__snapshot=snapshot).values_list(
-        "dependence__cascade_var", "dependence__trigger_var__active_var_id__var_name", "nml_val", "cascade_val"
+        "dependence__cascade_var", "pair_key", "dependence__trigger_var__active_var_id__var_name", "nml_val", "cascade_val"
     )
-    for cascade_var, trigger, nml_val, cascade_val in rows:
-        if env.get(trigger, "") == str(nml_val).lower():
-            env[cascade_var] = str(cascade_val).lower()
+    # a mapping applies when every trigger of it has its value (cascades on several namelist variables)
+    mappings: dict[tuple[str, int], list] = {}
+    for cascade_var, pair_key, trigger, nml_val, cascade_val in rows:
+        mappings.setdefault((cascade_var, pair_key), []).append((trigger, nml_val, cascade_val))
+    for (cascade_var, _), items in sorted(mappings.items()):
+        if all(_unquote(env.get(trigger, "")) == _unquote(str(nml_val).lower()) for trigger, nml_val, _ in items):
+            env[cascade_var] = str(items[0][2]).lower()
     return env
+
+
+def _unquote(text: str) -> str:
+    """'all' and all compare equal: a configuration quotes strings, a source default may not."""
+    text = text.strip()
+    return text[1:-1] if len(text) >= 2 and text[0] == text[-1] and text[0] in "'\"" else text
 
 
 def _literal_value(expr):

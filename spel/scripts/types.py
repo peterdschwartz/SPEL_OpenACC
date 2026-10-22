@@ -972,14 +972,38 @@ class Pairs(NamedTuple):
 
 
 class Dependence:
-    def __init__(self, cascade_var, trigger, val_pairs: list[Pairs]):
+    """
+    A variable whose value follows from namelist variables (`trigger`s).
+
+    With one trigger, each pair maps one trigger value to a cascade value. With
+    several (`trigger` a list of module::name), each pair's `nml_val` is a tuple
+    with one value per trigger, in order, and applies only when all of them
+    match; a combination no pair lists leaves the cascade variable unknown.
+    `trigger_types` gives the Fortran type of each trigger (default logical).
+    """
+
+    def __init__(self, cascade_var, trigger, val_pairs: list[Pairs], trigger_types=None):
         self.var: str = cascade_var
-        self.trigger: str = trigger
+        self.triggers: tuple[str, ...] = (trigger,) if isinstance(trigger, str) else tuple(trigger)
+        self.trigger: str = self.triggers[0]
+        self.trigger_types: tuple[str, ...] = tuple(trigger_types or ("logical",) * len(self.triggers))
         self.pairs = val_pairs
+
+    def all_triggers(self) -> tuple[str, ...]:
+        # analyses pickled before multi-trigger cascades only have `trigger`
+        return getattr(self, "triggers", (self.trigger,))
 
     @property
     def trigger_name(self) -> str:
         return self.trigger.split("::")[-1]
+
+    @property
+    def trigger_names(self) -> tuple[str, ...]:
+        return tuple(t.split("::")[-1] for t in self.all_triggers())
+
+    def pair_values(self, pair: Pairs) -> tuple:
+        """The trigger values of `pair`, one per trigger."""
+        return tuple(pair.nml_val) if len(self.all_triggers()) > 1 else (pair.nml_val,)
 
     def trigger_constraint(self, cascade_constraint: str) -> str | None:
         """
@@ -997,6 +1021,8 @@ class Dependence:
         So "num_pcropp > 0" implies use_crop, but "num_pcropp == 0" implies
         nothing.
         """
+        if len(self.all_triggers()) > 1:
+            return None  # a constraint on several triggers isn't one trigger's value
         values = {"True": ".true.", "False": ".false."}
         wanted = values.get(cascade_constraint)
         if wanted is not None:

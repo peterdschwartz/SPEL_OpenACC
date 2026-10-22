@@ -181,3 +181,23 @@ def test_picker_and_type_members(client, loaded):
     assert r.status_code == 200 and 'id="trace-go"' in r.content.decode()
     html = client.get("/calltree/m::root").content.decode()
     assert "×" not in html  # no repeated callees in the mini step
+
+
+def test_build_env_multi_trigger_cascade(loaded):
+    """A mapping applies only when every trigger matches; quoted and unquoted strings compare equal."""
+    from db.app.models import CascadeDependence, CascadePair, IntrinsicGlobals, Modules, NamelistVariable
+    from db.app.utils.ifs import build_env
+
+    snap = loaded
+    mod = Modules.objects.get(snapshot=snap, module_name=MOD)
+    nml = {}
+    for name, value in (("suplnitro", "none"), ("suplphos", "all"), ("spinup_state", "0")):
+        g = IntrinsicGlobals.objects.create(snapshot=snap, gv_module=mod, var_name=name, var_type="character", dim=0, value=value, namelist_group="elm_inparm")
+        nml[name] = NamelistVariable.objects.create(active_var_id=g)
+    deps = {n: CascadeDependence.objects.create(snapshot=snap, cascade_var="carbon_only", trigger_var=v) for n, v in nml.items()}
+    for key, (nitro, phos, value) in enumerate([("none", "none", ".false."), ("none", "all", ".false."), ("all", "none", ".false."), ("all", "all", ".true.")]):
+        for name, val in (("suplnitro", nitro), ("suplphos", phos), ("spinup_state", "0")):
+            CascadePair.objects.create(dependence=deps[name], pair_key=key, nml_val=val, cascade_val=value)
+    assert build_env(snap, {})["carbon_only"] == ".false."                                   # source defaults: none, all
+    assert build_env(snap, {"suplnitro": "'ALL'", "suplphos": "'ALL'"})["carbon_only"] == ".true."  # a preset quotes them
+    assert "carbon_only" not in build_env(snap, {"suplnitro": "'ALL'", "suplphos": "'ALL'", "spinup_state": "1"})

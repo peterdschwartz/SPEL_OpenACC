@@ -395,17 +395,24 @@ class SnapshotLoader:
         self.bulk(FlatIf, objs, "nml_ifs")
         self.flatif = self._ids(FlatIf.objects.filter(subroutine__snapshot=snap), "subroutine_id", "position")
 
-        cascades: dict[str, int] = {}
+        cascades: dict[str, int] = {}  # cascade var -> its first dependence (if links)
+        dependences: dict[tuple[str, int], int] = {}  # (cascade var, trigger) -> dependence
+        rows = self.rows("cascades")
+        # a pair whose trigger isn't a namelist variable of this snapshot can never match: drop it whole
+        missing = {(r["cascade_var"], r["pair"]) for r in rows
+                   if self._namelist_var((r["trigger_module"], r["trigger_name"])) is None}
         pairs = []
-        for r in self.rows("cascades"):
-            trig = self._namelist_var((r["trigger_module"], r["trigger_name"]))
-            if trig is None:
+        for r in rows:
+            if (r["cascade_var"], r["pair"]) in missing:
                 continue
-            if r["cascade_var"] not in cascades:
-                cascades[r["cascade_var"]] = CascadeDependence.objects.create(
+            trig = self._namelist_var((r["trigger_module"], r["trigger_name"]))
+            key = (r["cascade_var"], trig)
+            if key not in dependences:
+                dependences[key] = CascadeDependence.objects.create(
                     snapshot=snap, cascade_var=r["cascade_var"], trigger_var_id=trig).pk
-            pairs.append(CascadePair(dependence_id=cascades[r["cascade_var"]], nml_val=r["nml_val"],
-                                     cascade_val=r["cascade_val"]))
+                cascades.setdefault(r["cascade_var"], dependences[key])
+            pairs.append(CascadePair(dependence_id=dependences[key], pair_key=_int(r["pair"], 0),
+                                     nml_val=r["nml_val"], cascade_val=r["cascade_val"]))
         self.counts["cascades"] = len(cascades)
         self.bulk(CascadePair, pairs, "cascade_pairs")
 

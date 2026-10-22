@@ -42,17 +42,42 @@ NML_CASCADES = {
             Pairs(nml_val=".false.", cascade_val=".false."),
         ],
     ),
+    # AllocationMod::EvaluateSupplStatus sets these from the nutrient-supplement
+    # namelist variables every step; during accelerated spinup (spinup_state == 1)
+    # carbon_only is also forced on for the first nyears_ad_carbon_only years, so
+    # the mapping is only given for spinup_state == 0 (otherwise unknown)
+    **{
+        name: Dependence(
+            cascade_var=name,
+            trigger=["allocationmod::suplnitro", "allocationmod::suplphos", "elm_varctl::spinup_state"],
+            trigger_types=["character", "character", "integer"],
+            val_pairs=[
+                Pairs(nml_val=(nitro, phos, "0"), cascade_val=".true." if (nitro, phos) == on else ".false.")
+                for nitro in ("none", "all")
+                for phos in ("none", "all")
+            ],
+        )
+        for name, on in (
+            ("carbon_only", ("all", "all")),
+            ("carbonnitrogen_only", ("none", "all")),
+            ("carbonphosphorus_only", ("all", "none")),
+        )
+    },
 }
 
 
 def cascade_trigger_variables(names: Iterable[str]) -> dict[str, Variable]:
     """Variables for the cascade trigger namelist variables among `names`."""
-    triggers = {dep.trigger_name: dep.trigger for dep in NML_CASCADES.values()}
+    triggers: dict[str, tuple[str, str]] = {}
+    for dep in NML_CASCADES.values():
+        for trigger, ftype in zip(dep.all_triggers(), dep.trigger_types):
+            module, _, name = trigger.partition("::")
+            triggers.setdefault(name, (module, ftype))
     result: dict[str, Variable] = {}
     for name in names:
         if name in triggers:
-            module = triggers[name].split("::")[0]
-            result[name] = Variable("logical", name, "?", 0, 0, declaration=module)
+            module, ftype = triggers[name]
+            result[name] = Variable(ftype, name, "?", 0, 0, declaration=module)
     return result
 
 

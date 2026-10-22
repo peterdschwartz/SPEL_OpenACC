@@ -219,11 +219,11 @@ def test_apply_registrations_follows_type_extension():
 
 def test_csv_contract(tmp_path):
     n = write_table(tmp_path, "cascades", [
-        {"cascade_var": "num_pcropp", "trigger_module": "elm_varctl", "trigger_name": "use_crop", "nml_val": ".false.", "cascade_val": 0},
+        {"cascade_var": "num_pcropp", "pair": 0, "trigger_module": "elm_varctl", "trigger_name": "use_crop", "nml_val": ".false.", "cascade_val": 0},
     ])
     assert n == 1
     rows = read_table(tmp_path / "cascades.csv")
-    assert rows == [{"cascade_var": "num_pcropp", "trigger_module": "elm_varctl", "trigger_name": "use_crop", "nml_val": ".false.", "cascade_val": "0"}]
+    assert rows == [{"cascade_var": "num_pcropp", "pair": "0", "trigger_module": "elm_varctl", "trigger_name": "use_crop", "nml_val": ".false.", "cascade_val": "0"}]
     with pytest.raises(KeyError):
         write_table(tmp_path, "cascades", [{"bogus": 1}])
     (tmp_path / "modules.csv").write_text("module,other\n")
@@ -344,3 +344,16 @@ def test_filter_relations_from_sites():
     assert ("soilc", "hydrologyc", "disjoint") not in rel and ("lakec", "lakep", "disjoint") not in rel
     pairs = disjoint_pairs(rrows)
     assert ("snowc", "lakec") in pairs and ("lakec", "snowc") in pairs and ("soilc", "hydrologyc") not in pairs
+
+
+def test_cascade_rows_one_row_per_pair_and_trigger():
+    from spel.scripts.db_export.ifs import cascade_rows
+
+    rows = list(cascade_rows(None))
+    crop = [r for r in rows if r["cascade_var"] == "num_pcropp"]
+    assert [(r["pair"], r["trigger_name"], r["nml_val"]) for r in crop] == [(0, "use_crop", ".false."), (1, "use_crop", ".true.")]
+    carbon = [r for r in rows if r["cascade_var"] == "carbon_only"]
+    assert len(carbon) == 4 * 3  # four mappings, three triggers each
+    on = [r for r in carbon if r["cascade_val"] == ".true."]
+    assert {(r["trigger_name"], r["nml_val"]) for r in on} == {("suplnitro", "all"), ("suplphos", "all"), ("spinup_state", "0")}
+    assert len({r["pair"] for r in on}) == 1

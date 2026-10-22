@@ -57,13 +57,19 @@ def flat_if_rows(ctx: ExportContext):
 
 
 def cascade_rows(ctx: ExportContext):
+    """
+    One row per (pair, trigger): a pair applies when every row with its `pair`
+    number matches, so a cascade on several namelist variables is several rows.
+    """
     for name, dep in NML_CASCADES.items():
-        module, _, trigger = dep.trigger.partition("::")
-        for pair in dep.pairs:
-            yield {
-                "cascade_var": dep.var,
-                "trigger_module": module,
-                "trigger_name": trigger,
-                "nml_val": pair.nml_val,
-                "cascade_val": pair.cascade_val,
-            }
+        for n, pair in enumerate(dep.pairs):
+            for trigger, value in zip(dep.all_triggers(), dep.pair_values(pair)):
+                module, _, trigger_name = trigger.partition("::")
+                yield {
+                    "cascade_var": dep.var,
+                    "pair": n,
+                    "trigger_module": module,
+                    "trigger_name": trigger_name,
+                    "nml_val": value,
+                    "cascade_val": pair.cascade_val,
+                }

@@ -269,6 +269,13 @@ feature that needs to know what a statement *is* or which names it uses must get
 - The "Tree graph" page is a layered box diagram of one routine's callees: rows = data-dependency
   depth, left to right = call order; book-keeping routines (`q.BOOKKEEPING`) hidden by default; rows
   and direct (transitively reduced) edges are recomputed in the browser from the routines shown.
+- Namelist cascades (`spel/scripts/nml/namelist_cascade.py::NML_CASCADES`) give the value of a
+  non-namelist variable that follows from namelist variables, so the ifs testing it are evaluated per
+  configuration. A cascade may have several triggers (`carbon_only` from `suplnitro`, `suplphos`,
+  `spinup_state`): each pair's `nml_val` is then a tuple and applies only when all match, and in the
+  DB the rows of one mapping share `CascadePair.pair_key`. Combinations no pair lists stay unknown
+  (the if stays active). A multi-trigger cascade implies nothing about a single trigger for unit-test
+  guards. Adding one changes which ifs are namelist-gated: re-run `spel analyze` and `spel export`.
 - `hist_addfld*`/`restartvar` calls are recorded by the analysis (`spel/scripts/registrations.py`,
   `Subroutine.registrations`) by parsing the original routine bodies; the edited `src/` copies keep
   them commented out. Analysis attributes the export reads need `spel analyze` again after changes.
