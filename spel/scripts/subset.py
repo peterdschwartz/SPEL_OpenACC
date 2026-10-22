@@ -206,33 +206,49 @@ def wrap_expression(expr: str, width: int = 70) -> str:
 def capture_select_routine(spec: SubsetSpec, tag: str) -> str:
     """
     spel_select_subset(bounds) for SpelCapture_<tag>: sets spel_sub (the
-    subset), spel_bounds_sub (its bounds, from 1) and spel_writer.
+    subset), spel_bounds_sub (its bounds, from 1), spel_clump_begg (the
+    clump it lies in) and spel_writer.
     """
     loops = ""
     for term in spec.terms:
         idx, parent, b = LEVELS[term.level]
         loops += (
-            f"    do {idx} = bounds%beg{b}, bounds%end{b}\n"
+            f"    do {idx} = bp%beg{b}, bp%end{b}\n"
             f"      if ({wrap_expression(term.expr)}) match({parent}) = .true.\n"
             f"    end do\n"
         )
     mask = fortran_string(spec.mask[:500])
     return f"""
   subroutine spel_select_subset(bounds)
-    ! Gridcells of bounds matching the subset mask. The rank with the most
-    ! matches (the lowest such rank) keeps up to spel_subset_max of them,
-    ! evenly spaced, with their topounits, landunits, columns and patches;
-    ! the other ranks write nothing.
+    ! Gridcells of the process matching the subset mask, restricted to the
+    ! process's clump with the most matches: the capture runs around that
+    ! clump's call (when an earlier clump's call returns, later clumps have no
+    ! outputs yet). The rank with the most matches (the lowest such rank) keeps
+    ! up to spel_subset_max of them, evenly spaced, with their topounits,
+    ! landunits, columns and patches; the other ranks write nothing.
     type(bounds_type), intent(in) :: bounds
-    type(bounds_type) :: bp
+    type(bounds_type) :: bp, bc
     logical, allocatable :: match(:), keep(:)
     integer, allocatable :: cand(:)
-    integer :: g, t, l, c, p, k, n, nmatch, nmax, rank, ierr
+    integer :: g, t, l, c, p, k, n, nc, nmatch, nmax, rank, ierr
     call get_proc_bounds(bp)
     allocate (match(bp%begg:bp%endg), keep(bp%begg:bp%endg))
     match = .false.
     keep = .false.
-{loops}    nmatch = count(match)
+{loops}    nmatch = 0
+    spel_clump_begg = bounds%begg
+    do nc = 1, get_proc_clumps()
+      call get_clump_bounds(nc, bc)
+      if (count(match(bc%begg:bc%endg)) > nmatch) then
+        nmatch = count(match(bc%begg:bc%endg))
+        spel_clump_begg = bc%begg
+        k = bc%endg
+      end if
+    end do
+    if (nmatch > 0) then
+      match(bp%begg:spel_clump_begg - 1) = .false.
+      match(k + 1:bp%endg) = .false.
+    end if
     call mpi_allreduce(nmatch, nmax, 1, MPI_INTEGER, MPI_MAX, mpicom, ierr)
     k = npes
     if (nmatch == nmax) k = iam
@@ -263,7 +279,8 @@ def capture_select_routine(spec: SubsetSpec, tag: str) -> str:
     spel_bounds_sub%begl = 1; spel_bounds_sub%endl = nc_subset_count(spel_sub, 3)
     spel_bounds_sub%begc = 1; spel_bounds_sub%endc = nc_subset_count(spel_sub, 4)
     spel_bounds_sub%begp = 1; spel_bounds_sub%endp = nc_subset_count(spel_sub, 5)
-    print *, 'SPEL subset ({tag}): rank', iam, ' writes', n, ' of', nmatch, ' matching gridcells'
+    print *, 'SPEL subset ({tag}): rank', iam, ' writes', n, ' of', nmatch, &
+      ' matching gridcells of its clump starting at gridcell', spel_clump_begg
     print *, 'SPEL subset ({tag}): gindex', spel_sub%gindex
   end subroutine spel_select_subset
 """

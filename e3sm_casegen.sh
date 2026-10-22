@@ -1,7 +1,7 @@
 #!/bin/bash
 # Create (and optionally build/run) an ELM case.
 # Defaults reproduce the original single-site uELM setup; --preset crop-perf
-# gives the Perlmutter crop-model performance setup. See --help.
+# gives the crop-model performance setup on Perlmutter or Chrysalis. See --help.
 set -euo pipefail
 
 parent_dir=${HOME}/climate-projects
@@ -28,6 +28,7 @@ ntasks=""
 nthrds=""
 threaded=0
 max_tasks_per_node=""
+max_mpitasks_per_node=""
 rest_n=""
 rest_option=""
 queue=""
@@ -37,9 +38,13 @@ share=0
 compressed_cft=0
 daily_hist=0
 remove_zero_weight_urban=0
-compressed_cft_dir=${COMPRESSED_CFT_DIR:-/pscratch/sd/g/gbisht/crop_reduced_inputdata}
-compressed_cft_paramfile=$compressed_cft_dir/clm_params_31pfts_c261015.nc
-compressed_cft_fsurdat=$compressed_cft_dir/surfdata_t-oi6to18-lr25_31pfts_simyr1850_c261015.nc
+finidat=""
+name_suffix=""
+case "$(hostname -f)" in
+   chr*) default_cft_dir=/lcrc/group/e3sm/$USER/crop_inputdata/crop_reduced_inputdata ;;
+   *) default_cft_dir=/pscratch/sd/g/gbisht/crop_reduced_inputdata ;;
+esac
+compressed_cft_dir=${COMPRESSED_CFT_DIR:-$default_cft_dir}
 
 usage() {
    cat <<USAGE
@@ -66,6 +71,7 @@ Usage: $(basename "$0") [options]
   --nthrds N           NTHRDS (all components); implies --threaded
   --threaded           FORCE_BUILD_SMP=TRUE (one executable for any NTASKS x NTHRDS)
   --max-tasks-per-node N  MAX_TASKS_PER_NODE (e.g. 128 on pm-cpu: one thread per core)
+  --max-mpitasks-per-node N  MAX_MPITASKS_PER_NODE
   --queue NAME         JOB_QUEUE                 (default: unchanged)
   --wallclock T        JOB_WALLCLOCK_TIME and USER_REQUESTED_WALLTIME
                                                  (default: $wallclock)
@@ -74,19 +80,27 @@ Usage: $(basename "$0") [options]
   --compressed-cft     t-lr25 only: use the paramfile and surface dataset reduced
                        to the 16 CFTs unique in mergetoclmpft (from
                        \$COMPRESSED_CFT_DIR, default $compressed_cft_dir)
-                       and append '.compressed_cft' to an --auto-name case name
+                       and append '.compressed_cft' to an --auto-name case name.
+                       Any t-lr25 case takes the t-lr25 domain file and MOSART
+                       input from that directory when \$DIN_LOC_ROOT lacks them
+  --finidat FILE       finidat in user_nl_elm (e.g. a spun-up restart)
   --remove-zero-weight-urban
                        add 'run_zero_weight_urban = .false.' to user_nl_elm
                        (older E3SM hashes lack this namelist option)
   --auto-name          name the case <date>.<res>.<compset>.<mach>.NTASKS<n>.<git hash>
                        (overrides --case)
+  --name-suffix S      append '.S' to an --auto-name case name
   --share              chmod -R og+rX the case directory when done
-  --preset crop-perf   ELM crop-model performance case on Perlmutter: --mach pm-cpu
-                       --compiler '' --user-mods '' --config none --no-debug
-                       --ntasks 1024 --rest-n 10 --rest-option ndays --stop-n 5
+  --preset crop-perf   ELM crop-model performance case: --user-mods '' --config none
+                       --no-debug --ntasks 1024 --rest-n 10 --rest-option ndays --stop-n 5
                        --stop-option ndays --queue debug --wallclock 00:20:00 --daily-history
-                       --scratch \$SCRATCH --group E3SM_testings --auto-name --share
-                       --build. Options after it override it; combine with
+                       --group E3SM_testings --auto-name --share --build, and per host
+                         Perlmutter: --mach pm-cpu --compiler '' --scratch \$SCRATCH
+                         Chrysalis:  --mach chrysalis --compiler intel
+                                     --scratch /lcrc/group/e3sm/\$USER/scratch/chrys
+                                     NTHRDS=1 --max-mpitasks-per-node 64 (the
+                                     default layout is 32 tasks x 2 threads)
+                       Options after it override it; combine with
                        --res and --with-crops/--no-crops.
   --refcase DIR        hybrid start from a refcase saved by save_refcase.sh
                        (e.g. \$DIN_LOC_ROOT/spel-refcases/<compset>/<case>/<date>)
@@ -110,11 +124,19 @@ while [ $# -gt 0 ]; do
       --preset)
          case "$2" in
             crop-perf)
-               mach=pm-cpu; compiler=""; user_mods=""; config=none; debug=FALSE
+               user_mods=""; config=none; debug=FALSE
                ntasks=1024; rest_n=10; rest_option=ndays; stop_n=5; stop_option=ndays
                queue=debug; wallclock=00:20:00; daily_hist=1
-               scratch=${SCRATCH:?SCRATCH is not set}; case_group=E3SM_testings
-               auto_name=1; share=1; build=1 ;;
+               case_group=E3SM_testings
+               auto_name=1; share=1; build=1
+               case "$(hostname -f)" in
+                  chr*)
+                     mach=chrysalis; compiler=intel; nthrds=1; max_mpitasks_per_node=64
+                     scratch=/lcrc/group/e3sm/$USER/scratch/chrys ;;
+                  *)
+                     mach=pm-cpu; compiler=""
+                     scratch=${SCRATCH:?SCRATCH is not set} ;;
+               esac ;;
             *) echo "Unknown preset: $2" >&2; exit 1 ;;
          esac
          shift ;;
@@ -140,6 +162,7 @@ while [ $# -gt 0 ]; do
       --nthrds) nthrds=$2; threaded=1; shift ;;
       --threaded) threaded=1 ;;
       --max-tasks-per-node) max_tasks_per_node=$2; shift ;;
+      --max-mpitasks-per-node) max_mpitasks_per_node=$2; shift ;;
       --no-build) build=0 ;;
       --queue) queue=$2; shift ;;
       --wallclock) wallclock=$2; shift ;;
@@ -147,6 +170,8 @@ while [ $# -gt 0 ]; do
       --daily-history) daily_hist=1 ;;
       --no-daily-history) daily_hist=0 ;;
       --remove-zero-weight-urban) remove_zero_weight_urban=1 ;;
+      --finidat) finidat=$(realpath "$2"); shift ;;
+      --name-suffix) name_suffix=$2; shift ;;
       --auto-name) auto_name=1 ;;
       --share) share=1 ;;
       --no-debug) debug=FALSE ;;
@@ -163,6 +188,8 @@ while [ $# -gt 0 ]; do
 done
 
 src_path=$(realpath "$E3SM_SRCROOT")
+compressed_cft_paramfile=$compressed_cft_dir/clm_params_31pfts_c261015.nc
+compressed_cft_fsurdat=$compressed_cft_dir/surfdata_t-oi6to18-lr25_31pfts_simyr1850_c261015.nc
 
 case "$config" in
    cn|fates|test|none) ;;
@@ -183,6 +210,9 @@ if [ "$auto_name" -eq 1 ]; then
    casename=$(date +%Y%m%d).$res.$compset.$mach.NTASKS${ntasks:-default}${nthrds:+x$nthrds}.$git_hash
    if [ "$compressed_cft" -eq 1 ]; then
       casename=$casename.compressed_cft
+   fi
+   if [ -n "$name_suffix" ]; then
+      casename=$casename.$name_suffix
    fi
 fi
 
@@ -219,6 +249,9 @@ if [ "$keep" -eq 0 ] || [ ! -d "$casedir" ]; then
    fi
    if [ -n "$max_tasks_per_node" ]; then
       ./xmlchange MAX_TASKS_PER_NODE="$max_tasks_per_node"
+   fi
+   if [ -n "$max_mpitasks_per_node" ]; then
+      ./xmlchange MAX_MPITASKS_PER_NODE="$max_mpitasks_per_node"
    fi
 
    if [ "$config" == "fates" ]; then
@@ -267,6 +300,26 @@ if [ "$keep" -eq 0 ] || [ ! -d "$casedir" ]; then
       paramfile = '$compressed_cft_paramfile'
       fsurdat = '$compressed_cft_fsurdat'
       " >> user_nl_elm
+   fi
+
+   if [ "$res" == t-lr25_t-lr25 ]; then
+      # t-lr25 inputs the machine's inputdata may lack (e.g. on Chrysalis):
+      # taken from $COMPRESSED_CFT_DIR when they are there
+      din=$(./xmlquery --value DIN_LOC_ROOT)
+      domain=domain.lnd.t-oi6to18-lr25.20261012.nc
+      if [ ! -f "$din/share/domains/$domain" ] && [ -f "$compressed_cft_dir/$domain" ]; then
+         ./xmlchange ATM_DOMAIN_PATH="$compressed_cft_dir"
+         ./xmlchange LND_DOMAIN_PATH="$compressed_cft_dir"
+         echo " frivinp_mesh = '$compressed_cft_dir/$domain'" >> user_nl_mosart
+      fi
+      mosart=MOSART_u.oi6to18.lr25.nc
+      if [ ! -f "$din/rof/mosart/$mosart" ] && [ -f "$compressed_cft_dir/$mosart" ]; then
+         echo " frivinp_rtm = '$compressed_cft_dir/$mosart'" >> user_nl_mosart
+      fi
+   fi
+
+   if [ -n "$finidat" ]; then
+      echo " finidat = '$finidat'" >> user_nl_elm
    fi
 fi
 
