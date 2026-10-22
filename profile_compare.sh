@@ -44,7 +44,8 @@ Options:
   --ranges "A B"       routine NVTX ranges to report besides 'compute' (default: those
                        pushed inside 'compute' in main.F90)
   --env FILE           source FILE first (modules, PKG_CONFIG_PATH/LD_LIBRARY_PATH for the
-                       nvfortran-built netcdf-fortran)
+                       nvfortran-built netcdf-fortran); default: the machine file's nvfortran
+                       toolchain (`spel machine env --fc nvfortran`) when there is one
   --link-inputs        if unit-tests/input-data/<case> is missing for the acc/omp case, link
                        the master case's spel-*.nc files into it
   -h, --help
@@ -98,6 +99,16 @@ for s in $SKIP; do
 done
 skipped() { [[ " $SKIP " == *" $1 "* ]]; }
 
+if [[ -z $ENV_FILE ]] && command -v spel >/dev/null; then
+	# the machine file's nvfortran toolchain (`spel machine env --fc nvfortran`), if there is one
+	MACHINE_ENV=$(mktemp -t spel-nvfortran-env.XXXXXX)
+	if spel machine env --fc nvfortran >"$MACHINE_ENV" 2>/dev/null; then
+		ENV_FILE=$MACHINE_ENV
+		echo "toolchain: $(head -1 "$MACHINE_ENV" | sed 's/^# //') (override with --env)"
+	else
+		rm -f "$MACHINE_ENV"
+	fi
+fi
 if [[ -n $ENV_FILE ]]; then
 	# shellcheck disable=SC1090
 	source "$ENV_FILE"

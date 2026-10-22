@@ -1,0 +1,69 @@
+# SPEL machine file. `spel machine init NAME` copies this to ~/.config/spel/machines/NAME.toml
+# ($SPEL_MACHINES_DIR overrides the directory). Edit it, then check it with `spel machine check`.
+# Values may use $VAR / ${VAR} and ~. Every key except `name` is optional.
+
+name = "NAME"
+description = "what this machine is"
+
+# The machine's entry in E3SM's cime_config/machines/config_machines.xml (same E3SM checkout as
+# `spel config`). It provides host detection (NODENAME_REGEX), cprnc, and the modules and
+# environment of each compiler (used by toolchains with `e3sm_compiler`). Leave it out on a
+# machine E3SM does not know (a laptop): then give every toolchain `commands` or `env_file`.
+# e3sm_machine = "pm-cpu"
+# config_machines = "/path/to/config_machines.xml"   # instead of the checkout's
+
+# Where `spel machine setup` puts unit-tests/ and unit-tests/input-data (symlinked from the
+# SPEL tree): $scratch/spel-unit-tests and $scratch/spel-input-data. Leave it out to keep
+# them inside the SPEL checkout.
+# scratch = "$SCRATCH"
+
+# Toolchain used when SPEL_FC is not set (default: the first one below).
+# default_fc = "gfortran"
+
+# Parallel make for check_config.sh (sets MAKEFLAGS=-jN when MAKEFLAGS is unset).
+# make_jobs = 8
+
+# cprnc for comparing history/restart files (default: CCSM_CPRNC of the E3SM machine).
+# cprnc = "/path/to/cprnc"
+
+# How to recognise this machine (first match wins across machine files). Without [detect]
+# the E3SM machine's NODENAME_REGEX is used; without either, select it with SPEL_MACHINE=NAME.
+[detect]
+# hostname = "mylaptop.*"           # regex on the fqdn or short hostname
+# env = { NERSC_HOST = "perlmutter" }   # environment variables that must match (regex)
+
+# Defaults for `e3sm_casegen.sh --preset ...` on this machine.
+[casegen]
+# compiler = ""                     # CIME compiler ('' = the machine default)
+# nthrds = 1
+# max_mpitasks_per_node = 64
+
+# One table per Fortran compiler (the table name is the executable, = SPEL_FC). Each sets up
+# a shell in which `<fc>`, `cmake` and `pkg-config netcdf-fortran` work, in this order:
+#   1. e3sm_compiler: modules + env of that compiler from config_machines.xml
+#   2. env_file:      a file to source (e.g. a CIME case's .env_mach_specific.sh)
+#   3. commands:      shell lines run as given (module load ..., export ...)
+#   4. pkg_config_path / ld_library_path: prepended; env: exported
+# `spel machine env --fc <fc>` prints the resulting script.
+[toolchains.gfortran]
+description = "gfortran with a gfortran-built netcdf-fortran"
+# e3sm_compiler = "gnu"
+# mpilib = "mpich"                  # default: the E3SM machine's first MPILIB for the compiler
+# env_file = "~/spel-gnu-env.sh"
+commands = [
+  # "module load gcc netcdf-fortran cmake",
+]
+pkg_config_path = ["$HOME/.local/gcc/netcdf-fortran/lib/pkgconfig"]
+ld_library_path = []
+[toolchains.gfortran.env]
+# OMP_NUM_THREADS = "8"
+
+[toolchains.nvfortran]
+description = "NVHPC nvfortran with its own netcdf-fortran build (.mod files are compiler specific)"
+commands = [
+  # "export PATH=/opt/nvidia/hpc_sdk/Linux_x86_64/25.9/compilers/bin:$PATH",
+]
+pkg_config_path = ["$HOME/.local/nvhpc-libs/netcdf-fortran/lib/pkgconfig"]
+ld_library_path = ["$HOME/.local/nvhpc-libs/netcdf-fortran/lib"]
+[toolchains.nvfortran.env]
+ACC_DEVICE_TYPE = "multicore"      # keep OpenACC off the GPU unless running ACC=GPU

@@ -94,7 +94,8 @@ Usage: $(basename "$0") [options]
   --preset crop-perf   ELM crop-model performance case: --user-mods '' --config none
                        --no-debug --ntasks 1024 --rest-n 10 --rest-option ndays --stop-n 5
                        --stop-option ndays --queue debug --wallclock 00:20:00 --daily-history
-                       --group E3SM_testings --auto-name --share --build, and per host
+                       --group E3SM_testings --auto-name --share --build, and per machine
+                       (from the SPEL machine file, `spel machine vars`; else by hostname)
                          Perlmutter: --mach pm-cpu --compiler '' --scratch \$SCRATCH
                          Chrysalis:  --mach chrysalis --compiler intel
                                      --scratch /lcrc/globalscratch/\$USER
@@ -129,14 +130,27 @@ while [ $# -gt 0 ]; do
                queue=debug; wallclock=00:20:00; daily_hist=1
                case_group=E3SM_testings
                auto_name=1; share=1; build=1
-               case "$(hostname -f)" in
-                  chr*)
-                     mach=chrysalis; compiler=intel; nthrds=1; max_mpitasks_per_node=64
-                     scratch=/lcrc/globalscratch/$USER ;;
-                  *)
-                     mach=pm-cpu; compiler=""
-                     scratch=${SCRATCH:?SCRATCH is not set} ;;
-               esac ;;
+               # machine defaults from the SPEL machine file (`spel machine vars`:
+               # e3sm_machine, scratch, [casegen] compiler/nthrds/max_mpitasks_per_node),
+               # else by hostname
+               machine_vars=$(command -v spel >/dev/null && spel machine vars 2>/dev/null || true)
+               if [ -n "$machine_vars" ]; then
+                  eval "$machine_vars"
+                  mach=${SPEL_E3SM_MACHINE:?machine file sets no e3sm_machine}
+                  scratch=${SPEL_SCRATCH:?machine file sets no scratch}
+                  compiler=${SPEL_CASEGEN_COMPILER-$compiler}
+                  nthrds=${SPEL_CASEGEN_NTHRDS-$nthrds}
+                  max_mpitasks_per_node=${SPEL_CASEGEN_MAX_MPITASKS_PER_NODE-$max_mpitasks_per_node}
+               else
+                  case "$(hostname -f)" in
+                     chr*)
+                        mach=chrysalis; compiler=intel; nthrds=1; max_mpitasks_per_node=64
+                        scratch=/lcrc/globalscratch/$USER ;;
+                     *)
+                        mach=pm-cpu; compiler=""
+                        scratch=${SCRATCH:?SCRATCH is not set} ;;
+                  esac
+               fi ;;
             *) echo "Unknown preset: $2" >&2; exit 1 ;;
          esac
          shift ;;

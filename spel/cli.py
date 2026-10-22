@@ -665,11 +665,24 @@ def config(args):
 
     migrate_legacy_cache()
 
+    from spel.machines import ENV_VAR as MACHINE_VAR, MachineError, detect_machine
+
+    try:
+        machine = detect_machine()
+        machine_line = (
+            f"{machine.name} (toolchains: {', '.join(machine.toolchains)}; default {machine.default_fc})"
+            if machine
+            else f"none (current shell environment; {MACHINE_VAR}=<name> or `spel machine init`)"
+        )
+    except MachineError as err:
+        machine_line = f"ERROR {err}"
     print(textwrap.dedent(f"""
     E3SM SRCROOT: {cfg.E3SM_SRCROOT}
     ELM SRC     : {cfg.ELM_SRC}
     SHR SRC     : {cfg.SHR_SRC}
     Cache       : {cache_dir()}
+    Machine     : {machine_line}
+                  (see `spel machine`)
 
     Local override file: {cfg.LOCAL_ENV_FILE}
     (change with: spel config --set-srcroot <path>, or per command with --srcroot <path>)
@@ -1193,6 +1206,11 @@ def main():
         "(.spel.env) instead of editing config.py",
     )
     cfg_parser.set_defaults(func=config)
+
+    # Parser for 'spel machine'
+    from spel.machines.cli import add_parser as add_machine_parser
+
+    add_machine_parser(subparsers)
 
     # Parser for 'spel restore'
     restore_parser = subparsers.add_parser(

@@ -61,12 +61,90 @@ analysis cache) is derived from it. Verify with:
 spel config
 ```
 
+### Machine configuration
+
+Building a unit test needs a Fortran compiler, `cmake` and a matching `netcdf-fortran` (found with
+`pkg-config`). On a machine SPEL knows, `spel run`, `spel profile` and `spel validate` set that up
+themselves, and `e3sm_casegen.sh --preset ...` and `profile_compare.sh` take their machine
+defaults from the same place:
+
+```bash
+spel machine            # what applies here: E3SM machine, scratch, cprnc, toolchains
+spel machine check      # set up every toolchain and verify compiler, cmake, netcdf-fortran
+spel machine setup      # put unit-tests/ and unit-tests/input-data on scratch (symlinks)
+spel run canflux        # builds with the machine's default toolchain (SPEL_FC=nvfortran for another)
+```
+
+Perlmutter (`gfortran`, `nvfortran`, `ifx`) and Chrysalis (`ifx`, `gfortran`) are bundled
+(`spel/machines/*.toml`) and detected automatically. Their toolchains take the modules and
+environment of the corresponding compiler from the E3SM checkout's
+`cime_config/machines/config_machines.xml`, so they follow E3SM's own module versions; the
+machine file only adds glue (where unit tests go, `pkg-config` paths, `ACC_DEVICE_TYPE`).
+
+For another machine:
+
+```bash
+spel machine init mybox           # ~/.config/spel/machines/mybox.toml from the documented template
+$EDITOR ~/.config/spel/machines/mybox.toml
+SPEL_MACHINE=mybox spel machine check
+```
+
+A toolchain is a table `[toolchains.<fc>]` (`<fc>` = the compiler executable, what `SPEL_FC`
+selects) with either `e3sm_compiler = "gnu"` (modules from E3SM's machine entry, which needs
+`e3sm_machine`), `env_file = "~/env.sh"` (a file to source, e.g. a CIME case's
+`.env_mach_specific.sh`) or `commands = ["module load ...", ...]`, plus `pkg_config_path`,
+`ld_library_path` and `env`. `[detect]` (`hostname` regex or `env` variables) selects the file
+automatically; without it, E3SM's `NODENAME_REGEX` is used, or `SPEL_MACHINE=<name>` (environment
+or `.spel.env`) picks it. `SPEL_MACHINE=none` turns the machine layer off and SPEL uses the
+current shell environment, as before. `spel machine env --fc nvfortran` prints the shell script a
+toolchain produces (`source <(spel machine env --fc nvfortran)` gives you the same environment
+interactively). User files override bundled ones of the same name, so a copy of
+`perlmutter.toml` in `~/.config/spel/machines/` is the way to change it.
+
 ## Workflows
 
 SPEL shortens the loop of changing ELM and checking the result. Instead of rebuilding E3SM and
 running a CIME case for every edit, you pull the routines you are working on out into a standalone
 test that builds in seconds, feed it data captured from a real ELM run, and check every change
 against that data bit for bit. When the change is right, SPEL copies it back into ELM.
+
+### 0. Set up SPEL on a machine
+
+Once per machine and checkout. On Perlmutter or Chrysalis everything comes from the bundled
+machine file; elsewhere you write one first.
+
+```bash
+pip install -e .                                  # in a Python >= 3.11 environment
+spel config --set-srcroot ~/E3SM                  # the E3SM checkout to analyze and instrument
+spel machine                                      # which machine file applies, its toolchains, scratch, cprnc
+spel machine check                                # each toolchain: compiler, cmake, pkg-config netcdf-fortran
+spel machine setup                                # unit-tests/ and input-data on scratch (symlinks; --move keeps existing cases)
+spel analyze                                      # the elm_drv analysis cache for this checkout (minutes)
+```
+
+`spel machine` names the machine it detected (Perlmutter by `$NERSC_HOST`, Chrysalis by hostname).
+If it says `none`, the machine is not known yet:
+
+```bash
+spel machine init mybox                           # ~/.config/spel/machines/mybox.toml from the template
+$EDITOR ~/.config/spel/machines/mybox.toml        # toolchains, [detect], scratch; every key is documented
+SPEL_MACHINE=mybox spel machine check             # until it passes; then put SPEL_MACHINE=mybox in .spel.env
+```
+
+For each compiler you build with, give the file one `[toolchains.<fc>]` table that makes `<fc>`,
+`cmake` and `pkg-config netcdf-fortran` work: on a machine E3SM supports, `e3sm_compiler = "gnu"`
+takes the modules from E3SM's `config_machines.xml`; on a laptop, `commands` (module loads, PATH)
+or `env_file` plus `pkg_config_path` to the netcdf-fortran built with that compiler (nvfortran needs
+its own build: `.mod` files are compiler specific). Fill `[detect]` so the file is picked
+automatically, or keep selecting it with `SPEL_MACHINE`. Capturing reference data (`--run-case`,
+`spel validate`) also needs the E3SM checkout to build on this machine, i.e. a CIME machine entry
+for it; `e3sm_casegen.sh` takes its machine and scratch from the machine file.
+
+After that, the toolchain is applied by every build: `spel run canflux` uses the machine's default
+compiler, `SPEL_FC=nvfortran spel run canflux` another one, and
+`source <(spel machine env --fc nvfortran)` gives the same environment to an interactive shell.
+Details of the file format are under [Machine configuration](#machine-configuration);
+`SPEL_MACHINE=none` makes SPEL use the current shell environment, as before machine files existed.
 
 ### 1. Extract a routine into a standalone test
 
@@ -362,7 +440,9 @@ spel validate --list cases.txt --case-args "--stop-n 2 --stop-option ndays"
    errors from the build log. Then it copies each case's `<tag>.spel-*.nc`, plus the run's
    `lnd_in`, to `unit-tests/input-data/<case>`.
 5. Removes the instrumentation (unless `--keep-instrumentation`).
-6. Runs `spel run <case>` for every case in parallel (logs in `unit-tests/<case>/validate.log`).
+6. Runs `spel run <case>` for every case in parallel (logs in `unit-tests/<case>/validate.log`),
+   each in the machine's toolchain (`--test-env FILE` sources a file of your own instead; the ELM
+   build keeps the clean environment either way).
 7. Prints a summary and writes `unit-tests/validate-report.json`. The exit code is 1 unless every
    case passes.
 
@@ -482,6 +562,10 @@ cd unit-tests/canflux && spel run
 Compiler, debug, and OpenACC settings live in the case's `check_config.sh` (`compiler`, `debug`,
 `acc`); it detects a mismatch with the existing `CMakeCache.txt` and offers to reconfigure. The
 environment variables `SPEL_FC`, `SPEL_DBG` and `SPEL_ACC` override them without editing the script.
+On a known machine (see [Machine configuration](#machine-configuration)) `spel run` builds and runs
+inside the toolchain of `SPEL_FC` (default: the machine's `default_fc`): modules, `PKG_CONFIG_PATH`
+and the like come from the machine file, and `make` gets `-j<make_jobs>`. Running
+`./check_config.sh` by hand needs the same environment: `source <(spel machine env --fc nvfortran)`.
 
 `acc` sets the generated CMake's `ACC` cache option:
 
@@ -494,7 +578,8 @@ environment variables `SPEL_FC`, `SPEL_DBG` and `SPEL_ACC` override them without
 
 ```bash
 # nvfortran needs its own netcdf-fortran build (.mod files are compiler specific) on
-# PKG_CONFIG_PATH and ahead of any gfortran build on LD_LIBRARY_PATH
+# PKG_CONFIG_PATH and ahead of any gfortran build on LD_LIBRARY_PATH: the machine file's
+# nvfortran toolchain provides that on a known machine
 SPEL_FC=nvfortran SPEL_ACC=MULTICORE SPEL_DBG=OFF spel run canflux
 ACC_NUM_CORES=4 ./build/elmtest   # rerun with 4 threads
 ```
@@ -687,6 +772,23 @@ spel config                      # or: spel config --srcroot /other/E3SM
 # elm_drv analysis caches:
 #   /path/to/E3SM  master@34d78535b7  built 2026-10-10T17:40:12  -> E3SM-2e665a5f
 spel config --set-srcroot /path/to/E3SM   # persist the default in .spel.env
+```
+
+### `spel machine`
+
+The machine configuration (see [Machine configuration](#machine-configuration)): machine files
+`spel/machines/*.toml` (bundled: `perlmutter`, `chrysalis`; `template.toml` documents every key)
+and `~/.config/spel/machines/*.toml` (`$SPEL_MACHINES_DIR`), the current one from `$SPEL_MACHINE`
+or host detection.
+
+```bash
+spel machine [show]                 # machine, E3SM machine, scratch, cprnc, toolchains, casegen defaults
+spel machine list                   # every machine file (* = this machine)
+spel machine check [--fc FC]        # set up the toolchain(s), verify compiler, cmake, pkg-config netcdf-fortran
+spel machine env [--fc FC]          # the toolchain's shell script: source <(spel machine env --fc nvfortran)
+spel machine vars                   # SPEL_E3SM_MACHINE=..., SPEL_SCRATCH=..., SPEL_CPRNC=... for shell scripts
+spel machine init NAME [--from M]   # new user machine file from the template (or a copy of machine M)
+spel machine setup [--move]         # symlink unit-tests/ and unit-tests/input-data to $scratch/spel-*
 ```
 
 ### `spel upload`

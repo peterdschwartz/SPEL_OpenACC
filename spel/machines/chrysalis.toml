@@ -1,0 +1,33 @@
+# ANL LCRC Chrysalis (AMD EPYC, 64 cores/node). Builds run on the login node; batch jobs
+# need the user's OK. There is no gfortran netcdf build here; Intel is the default.
+name = "chrysalis"
+description = "LCRC Chrysalis: E3SM machine chrysalis; ifx (intel) and gfortran (gnu) from the spack modules"
+e3sm_machine = "chrysalis"
+scratch = "/lcrc/globalscratch/$USER"
+default_fc = "ifx"
+make_jobs = 16
+
+[detect]
+hostname = "chr.*"
+
+[casegen]
+# `e3sm_casegen.sh --preset crop-perf`: Intel, 64 MPI tasks x 1 thread per node
+# (the compset default is 32 x 2), cases under /lcrc/globalscratch/$USER
+compiler = "intel"
+nthrds = 1
+max_mpitasks_per_node = 64
+
+# Modules from E3SM's config_machines.xml (chrysalis, compiler intel/gnu, mpilib openmpi).
+# The spack netcdf-fortran module puts its .pc on PKG_CONFIG_PATH; the paths below are a
+# fallback through the NETCDF_*_PATH variables E3SM sets.
+[toolchains.ifx]
+e3sm_compiler = "intel"
+mpilib = "openmpi"
+description = "intel-oneapi-compilers (ifx) + openmpi + netcdf-fortran, as E3SM's chrysalis_intel"
+pkg_config_path = ["$NETCDF_FORTRAN_PATH/lib/pkgconfig", "$NETCDF_C_PATH/lib/pkgconfig", "$HDF5_ROOT/lib/pkgconfig"]
+
+[toolchains.gfortran]
+e3sm_compiler = "gnu"
+mpilib = "openmpi"
+description = "gcc + openmpi + netcdf-fortran, as E3SM's chrysalis_gnu"
+pkg_config_path = ["$NETCDF_FORTRAN_PATH/lib/pkgconfig", "$NETCDF_C_PATH/lib/pkgconfig", "$HDF5_ROOT/lib/pkgconfig"]

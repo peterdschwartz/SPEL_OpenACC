@@ -5,6 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "spel"
 version = "0.5"
+requires-python = ">=3.11"
 dependencies = [
 	"pandas>=2.2.2",
 	"pytest>=8.3.4",
@@ -35,6 +36,7 @@ include = ["spel*"]
 
 [tool.setuptools.package-data]
 "spel.transforms.compact" = ["templates/*.F90", "*.md"]
+"spel.machines" = ["*.toml"]
 
 [project.scripts]
 spel = "spel.cli:main"

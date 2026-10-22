@@ -1,0 +1,35 @@
+# NERSC Perlmutter (login nodes build and run unit tests; CPU jobs need the user's OK).
+name = "perlmutter"
+description = "NERSC Perlmutter: E3SM machine pm-cpu; gfortran/nvfortran/ifx from the Cray PE modules"
+e3sm_machine = "pm-cpu"
+scratch = "$SCRATCH"
+default_fc = "gfortran"
+make_jobs = 16
+
+[detect]
+env = { NERSC_HOST = "perlmutter" }
+
+[casegen]
+# `e3sm_casegen.sh --preset crop-perf`: machine default compiler (Intel), $SCRATCH cases
+compiler = ""
+
+# Each toolchain takes its modules from E3SM's config_machines.xml (pm-cpu, the named
+# compiler, mpilib mpich), so they follow the E3SM checkout. The Cray netcdf-fortran .pc
+# needs the mpich .pc, which the modules don't put on PKG_CONFIG_PATH.
+[toolchains.gfortran]
+e3sm_compiler = "gnu"
+description = "PrgEnv-gnu; the same gfortran E3SM's pm-cpu_gnu uses (without ftn's -march)"
+pkg_config_path = ["$CRAY_MPICH_DIR/lib/pkgconfig"]
+
+[toolchains.nvfortran]
+e3sm_compiler = "nvidia"
+description = "PrgEnv-nvidia; OpenACC multicore and GPU (GPU runs need a GPU node)"
+pkg_config_path = ["$CRAY_MPICH_DIR/lib/pkgconfig"]
+# without ACC_DEVICE_TYPE the OpenACC runtime may pick the login node's GPU and loop
+# forever printing "Failing in Thread:1"
+env = { ACC_DEVICE_TYPE = "multicore", MPICH_GPU_SUPPORT_ENABLED = "0" }
+
+[toolchains.ifx]
+e3sm_compiler = "intel"
+description = "PrgEnv-intel; the production (pm-cpu default) compiler"
+pkg_config_path = ["$CRAY_MPICH_DIR/lib/pkgconfig"]

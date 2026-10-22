@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
-from typing import Sequence
+from typing import Optional, Sequence
 
 
 def run_unit_test(case_dir: Path, exe_args: Sequence[str] = (), validate: bool = True) -> int:
@@ -18,11 +19,34 @@ def run_unit_test(case_dir: Path, exe_args: Sequence[str] = (), validate: bool =
     from spel.scripts.validate_access import validate_case
 
     case_dir = Path(case_dir).resolve()
-    subprocess.run(["./check_config.sh"], check=True, cwd=case_dir)
-    subprocess.run(["./build/elmtest", *exe_args], check=True, cwd=case_dir)
+    env = toolchain_environment()
+    subprocess.run(["./check_config.sh"], check=True, cwd=case_dir, env=env)
+    subprocess.run(["./build/elmtest", *exe_args], check=True, cwd=case_dir, env=env)
     if not validate:
         return 0
     return validate_case(case_dir, Path(input_data_dir) / case_dir.name)
+
+
+def toolchain_environment() -> Optional[dict[str, str]]:
+    """The environment for check_config.sh and elmtest: the machine's toolchain for
+    `$SPEL_FC` (or its default compiler) when a machine file applies (`spel machine`),
+    else None (= the current environment). `SPEL_MACHINE=none` turns this off."""
+    from spel.machines import MachineError, current_toolchain_environ
+
+    try:
+        machine, fc, env = current_toolchain_environ()
+    except MachineError as err:
+        raise SystemExit(f"spel: {err}") from err
+    if machine is None:
+        return None
+    if env is None:
+        print(
+            f"machine {machine.name}: no toolchain '{fc}', building in the current environment "
+            f"(toolchains: {', '.join(machine.toolchains) or 'none'})"
+        )
+        return None
+    print(f"machine {machine.name}: toolchain {fc} (SPEL_FC overrides; `spel machine env --fc {fc}` shows it)")
+    return env
 
 
 PROFILE_TOOLS = ("nsys", "ncu", "none")
@@ -98,8 +122,9 @@ def profile_unit_test(
     output = Path(output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    subprocess.run(["./check_config.sh"], check=True, cwd=case_dir)
-    env = dict(os.environ, SPEL_PROFILE="1")
+    env = toolchain_environment() or dict(os.environ)
+    subprocess.run(["./check_config.sh"], check=True, cwd=case_dir, env=env)
+    env = dict(env, SPEL_PROFILE="1")
     if steps is not None:
         env["SPEL_MAX_STEPS"] = str(steps)
     cmd = profile_command(tool, exe_args, output, stats=stats, tool_args=tool_args)

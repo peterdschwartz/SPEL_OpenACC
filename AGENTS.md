@@ -14,6 +14,16 @@ Common to all: the gfortran netcdf/mpich builds live in `~/.local/gcc/` (the def
 `PKG_CONFIG_PATH`). Production profiling runs on Perlmutter; only test locally unless the user
 asks otherwise.
 
+Machine specifics (toolchains = modules/`PKG_CONFIG_PATH` per compiler, scratch, cprnc, casegen
+defaults) are in machine files: `spel/machines/{perlmutter,chrysalis}.toml` (bundled, detected
+automatically; toolchains take their modules from the E3SM checkout's `config_machines.xml`) or
+`~/.config/spel/machines/<name>.toml` (`spel machine init`; the laptop and workstation need one,
+written from the notes below). `spel machine` shows what applies, `spel machine check` verifies
+the toolchains, `spel run`/`spel profile`/`spel validate` build inside the toolchain of `SPEL_FC`,
+`profile_compare.sh` and `e3sm_casegen.sh --preset` read the same file. `SPEL_MACHINE=none`
+falls back to the current shell environment. When a machine's setup changes, change its machine
+file, not these notes alone.
+
 ### Laptop (Ryzen AI 5 340, 6 cores / 12 threads, no NVIDIA GPU)
 
 - `spel` comes from `~/climate-projects/py12env`.
@@ -59,10 +69,13 @@ Production profiling and large (e.g. crop, `--preset crop-perf`) reference runs.
   to `$SCRATCH`.
 - Crop performance runs: `./e3sm_casegen.sh --preset crop-perf --res t-lr25 --with-crops
   --compressed-cft` (pm-cpu default compiler = Intel, 1024 tasks, 5 days, debug queue).
-- nvfortran 25.9 is `/opt/nvidia/hpc_sdk/Linux_x86_64/25.9`; for unit tests use a pm-cpu nvidia
-  case's `.env_mach_specific.sh` plus `SPEL_FC=nvfortran SPEL_DBG=OFF` and the cray netcdf
-  `PKG_CONFIG_PATH`. OpenACC multicore runs need `ACC_DEVICE_TYPE=multicore`: otherwise the
-  runtime may try the login node's GPU and loop forever printing `Failing in Thread:1`.
+- Unit-test toolchains (`spel/machines/perlmutter.toml`, all verified 2026-10-22 with
+  `spel machine check`): `gfortran` (PrgEnv-gnu, gcc-native 14, the default), `nvfortran`
+  (PrgEnv-nvidia, nvidia/25.9 = `/opt/nvidia/hpc_sdk/Linux_x86_64/25.9`) and `ifx`; modules from
+  E3SM's pm-cpu entry plus `$CRAY_MPICH_DIR/lib/pkgconfig` (the Cray netcdf-fortran `.pc` needs
+  the mpich one). The nvfortran toolchain sets `ACC_DEVICE_TYPE=multicore`: otherwise the
+  OpenACC runtime may try the login node's GPU and loop forever printing `Failing in Thread:1`.
+  `SPEL_DBG` defaults to ON (`-O0` + coverage); use `SPEL_DBG=OFF` for timing.
 - `cprnc` is `/global/cfs/cdirs/e3sm/tools/cprnc/cprnc`; restart files need `-m`.
 
 ### Chrysalis (LCRC, AMD EPYC, 64 cores/node)
@@ -70,8 +83,11 @@ Production profiling and large (e.g. crop, `--preset crop-perf`) reference runs.
 CPU crop-performance runs, which moved here from Perlmutter. Recorded on 2026-10-21.
 
 - `spel` comes from `~/spel-py314` (spack Python 3.14; `~/myenv` is 3.11, too old). Unit tests build with
-  Intel: `source ~/spel-intel-env.sh` (the ELM case's `.env_mach_specific.sh`, `SPEL_FC=ifx`), also for
-  `spel validate --test-env`. There is no gfortran netcdf build here.
+  Intel: the `ifx` toolchain of `spel/machines/chrysalis.toml` (modules from E3SM's chrysalis intel/openmpi
+  entry; written from `config_machines.xml`, not yet run there: check with `spel machine check` and fix the
+  machine file if `pkg-config netcdf-fortran` is not found). The older manual route is
+  `source ~/spel-intel-env.sh` (the ELM case's `.env_mach_specific.sh`, `SPEL_FC=ifx`), also usable as
+  `spel validate --test-env` or as the toolchain's `env_file`. There is no gfortran netcdf build here.
 - E3SM checkouts: `~/integration/E3SM` (upstream bishtgautam/lnd/add-t-meshes-v3 @ e5aa4e3094,
   the baseline) and its worktree `~/E3SM-gpu-refactor` (peterdschwartz/lnd/gpu-refactor-nutrient-types,
   which contains the crop-perf branch). Only these two are compared.
@@ -141,6 +157,9 @@ Do this in a scratch directory so `.mod`/`.o` files don't land in the repo.
 
 - Select the toolchain with env vars, which override `check_config.sh`:
   `SPEL_FC=nvfortran|gfortran SPEL_ACC=OFF|MULTICORE|GPU|OPENMP SPEL_DBG=ON|OFF spel run <case> [nsets]`.
+  On a machine with a machine file, `spel run` sets up `SPEL_FC`'s toolchain (modules, pkg-config)
+  itself (`spel/scripts/run_fut.py::toolchain_environment`); `spel machine env --fc X` prints it for
+  running `./check_config.sh` by hand.
 - `spel run` prompts for confirmation; use `yes | spel run ...` when running non-interactively.
   In scripts with `set -o pipefail`, `yes` exits with SIGPIPE: check the status of the command
   it feeds, not the pipeline's.
