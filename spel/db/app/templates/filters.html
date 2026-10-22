@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Filters · ELM Explorer{% endblock %}
+{% block body %}
+<div class="page-head"><h2>Filters</h2></div>
+<div class="page-intro">
+  <p>The members of the <code>clumpfilter</code> type the time step fills, where they are built and under which conditions, and what follows for pairs of them.</p>
+  <ul>
+    <li><b>disjoint</b> (⊥): no element in common, from the two branches of one <code>if</code> or a curated fact about landunit types.</li>
+    <li><b>subset</b> (⊂): built inside a loop over the other, or under its conditions and more.</li>
+    <li>Pairs with no derived relation are assumed to overlap. The tree graph drops a variable from a dependency only when every write and every read of it run under filters known to be disjoint.</li>
+    <li>{{ n_filtered }} of {{ n_total }} accesses in the trace are attributed to a filter.</li>
+  </ul>
+</div>
+{% for m in matrices %}
+<h3>Level {{ m.level }}</h3>
+<div class="table-scroll">
+<table class="catalog filter-matrix">
+  <thead><tr><th></th>{% for n in m.names %}<th><span class="vert">{{ n }}</span></th>{% endfor %}</tr></thead>
+  <tbody>{% for a, cells in m.rows %}<tr><th>{{ a }}</th>{% for kind, src in cells %}<td class="fm-{{ kind }}" title="{{ kind }}{% if src %} ({{ src }}){% endif %}">{% if kind == "disjoint" %}&#8869;{% elif kind == "subset" %}&sub;{% elif kind == "superset" %}&sup;{% elif kind == "overlap" %}&middot;{% endif %}</td>{% endfor %}</tr>{% endfor %}</tbody>
+</table>
+</div>
+{% endfor %}
+
+<h3>Where each filter is built</h3>
+<table class="catalog">
+  <thead><tr><th>Filter</th><th>Level</th><th>Built in</th><th>Loop over</th><th>Conditions</th></tr></thead>
+  <tbody>{% for f in filters %}<tr><td><b>{{ f.name }}</b></td><td>{{ f.level }}</td>
+    <td>{% if f.subroutine %}<a href="{% url 'sub_view' f.subroutine.sub_id %}">{{ f.subroutine.subroutine_name }}</a> <span class="muted">line {{ f.ln|add:1 }}</span>{% endif %}</td>
+    <td>{% if f.parent %}{{ f.parent }}{% else %}<span class="muted">bounds</span>{% endif %}</td>
+    <td class="mono small">{{ f.guards }}</td></tr>{% endfor %}</tbody>
+</table>
+
+<h3>Relations</h3>
+<table class="catalog">
+  <thead><tr><th>A</th><th>Relation</th><th>B</th><th>Source</th><th>Because</th></tr></thead>
+  <tbody>{% for r in relations %}<tr><td>{{ r.filter_a }}</td><td>{{ r.relation }}</td><td>{{ r.filter_b }}</td>
+    <td>{{ r.source }}{% if r.subroutine %} <span class="muted">({{ r.subroutine.subroutine_name }})</span>{% endif %}</td>
+    <td class="mono small">{{ r.condition }}</td></tr>{% endfor %}</tbody>
+</table>
+{% endblock %}

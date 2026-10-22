@@ -632,6 +632,8 @@ class TraceAccess(models.Model):
     order = models.IntegerField()  # sequence across the whole trace
     resolved_from = models.CharField(max_length=8, default="global")  # global | dummy | pointer
     conditional = models.BooleanField(default=False)  # inside a plain if block, or called from one
+    index_kind = models.CharField(max_length=8, default="")  # form of the subgrid subscript: filter | whole | range | map | ...
+    filter = models.CharField(max_length=128, default="")  # filter%lakec when indexed by an element of a resolved filter, else ""
 
     class Meta:
         db_table = "trace_access"
@@ -641,6 +643,40 @@ class TraceAccess(models.Model):
             models.Index(fields=["global_var", "order"]),
             models.Index(fields=["trace_node"]),
         ]
+
+
+class FilterSet(models.Model):
+    """A member of a `clumpfilter` instance the step fills: where, over what, and under which conditions."""
+
+    objects = models.Manager()
+    snapshot = models.ForeignKey(Snapshot, on_delete=models.CASCADE, related_name="filters")
+    name = models.CharField(max_length=64)
+    subroutine = models.ForeignKey(Subroutines, on_delete=models.CASCADE, related_name="built_filters", null=True, blank=True)
+    ln = models.IntegerField(default=0)
+    level = models.CharField(max_length=8, default="")  # index variable assigned: c, p, l, ...
+    parent = models.CharField(max_length=64, default="")  # filter the building loop runs over
+    guards = models.TextField(default="")
+
+    class Meta:
+        db_table = "filters"
+        constraints = [UniqueConstraint(fields=("snapshot", "name"), name="unique_filter_name")]
+
+
+class FilterRelation(models.Model):
+    """`filter_a` disjoint from / subset of `filter_b`, derived from the building sites (or curated)."""
+
+    objects = models.Manager()
+    snapshot = models.ForeignKey(Snapshot, on_delete=models.CASCADE, related_name="filter_relations")
+    filter_a = models.CharField(max_length=64)
+    filter_b = models.CharField(max_length=64)
+    relation = models.CharField(max_length=8)  # disjoint | subset
+    source = models.CharField(max_length=8)  # if/else | nested | parent | closure | curated
+    subroutine = models.ForeignKey(Subroutines, on_delete=models.CASCADE, related_name="filter_relations", null=True, blank=True)
+    condition = models.TextField(default="")
+
+    class Meta:
+        db_table = "filter_relations"
+        indexes = [models.Index(fields=["snapshot", "relation"])]
 
 
 class FieldState(models.Model):

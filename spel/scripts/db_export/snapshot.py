@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from spel.scripts.db_export import fieldstate, ifs, modules, routines
+from spel.scripts.db_export import fieldstate, filters, ifs, modules, routines
 from spel.scripts.db_export.context import ExportContext
 from spel.scripts.db_export.csv_io import write_table
 from spel.scripts.db_export.schema import SNAPSHOT_JSON, TABLES
@@ -80,6 +80,9 @@ def export_snapshot(
     trace = StaticTrace(ctx, roots).run()
     write("trace_nodes", [{k: v for k, v in n.items() if k != "guarded"} for n in trace.nodes])
     write("trace_access", trace.accesses)
+    filter_rows, relation_rows = filters.derive(trace.filter_sites)
+    write("filters", filter_rows)
+    write("filter_relations", relation_rows)
 
     type_parents = {t.type_name: (getattr(t, "parent", None) or "") for t in ctx.type_dict.values()}
     reg_objs = {(s.id, r.ln, r.kind, r.path): r for s in ctx.subs for r in getattr(s, "registrations", []) or []}

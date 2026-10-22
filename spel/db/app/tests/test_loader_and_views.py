@@ -99,7 +99,7 @@ def test_pages_and_json(client, loaded):
     snap = loaded
     for url in ["/", f"/sub_view/{MOD}::root", f"/calltree/{MOD}::root", f"/subroutine-details/{MOD}::child/", "/types/",
                 "/types/water_state/", "/modules/", f"/modules/{MOD}/", "/variables/", "/trace_view/?v=col_ws%25h2osno&v=m::nstep",
-                "/trace/?v=col_ws%25h2osno", "/calltree_view/", "/modules/graph/", "/diff/", "/diff/routines/?a_cfg=base&b_cfg=base"]:
+                "/trace/?v=col_ws%25h2osno", "/calltree_view/", "/filters/", "/modules/graph/", "/diff/", "/diff/routines/?a_cfg=base&b_cfg=base"]:
         r = client.get(url)
         assert r.status_code == 200, (url, r.status_code)
     j = client.get("/api/timeline/?v=col_ws%25h2osno&v=m::nstep&v=col_ws%25qflx").json()
@@ -111,13 +111,31 @@ def test_pages_and_json(client, loaded):
     qflx = next(r for r in j["rows"] if r["key"] == "col_ws%qflx")
     assert qflx["marks"][0]["s"] == "w" and qflx["marks"][0]["from"] == "dummy"
     assert [c["short"] for c in j["columns"]][0] == "root"
-    tree = client.get("/api/calltree/?depth=1").json()
-    assert tree["roots"][0]["name"] == "root" and tree["roots"][0]["children"][0]["name"] == "child"
-    assert tree["roots"][0]["children"][0]["collapsed"] == 1
+    g = client.get("/api/calltree/").json()
+    assert g["root"]["name"] == "root" and [n["name"] for n in g["nodes"]] == ["child", "leaf"]
+    child, leaf = g["nodes"]
+    assert child["n_children"] == 1 and leaf["n_children"] == 0 and child["n_out"] >= 1 and leaf["n_out"] == 1
+    assert [n["level"] for n in g["nodes"]] == [0, 0] and g["edges"] == []  # leaf reads nothing child wrote
+    assert not child["bookkeeping"] and not leaf["bookkeeping"]
+    sub = client.get(f"/api/calltree/?root={MOD}::child").json()
+    assert sub["root"]["name"] == "child" and [n["name"] for n in sub["nodes"]] == ["gchild"]
+    assert client.get("/api/calltree/?root=nosuch").status_code == 404
+    from db.app.models import TraceAccess  # no filters in the fixture: every access is unfiltered
+    assert set(TraceAccess.objects.filter(snapshot=snap).values_list("filter", flat=True)) == {""}
     mg = client.get("/api/modgraph/").json()
-    assert {n["id"] for n in mg["nodes"]} == {MOD}
+    assert mg["root"]["id"] == MOD and mg["nodes"] == [] and mg["edges"] == []  # the fixture's one module uses nothing
+    assert client.get("/api/modgraph/?root=nosuch").status_code == 404
+    r = client.get("/types/water_state/", HTTP_HX_REQUEST="true")
+    assert r.status_code == 200 and b"<html" not in r.content and b"type water_state" in r.content
+    assert b"type-panel" in client.get("/types/?type=water_state").content
     html = client.get("/var_search/", {"search": "h2os"}).content.decode()
     assert "col_ws%h2osno" in html
+    html = client.get("/sub_search/", {"search": "chld"}).content.decode()  # fuzzy: subsequence
+    assert "child" in html and "data-pick-sub" not in html
+    assert f'data-pick-sub="{MOD}::child"' in client.get("/sub_search/", {"search": "chi", "mode": "pick"}).content.decode()
+    assert f'data-pick-mod="{MOD}"' in client.get("/mod_search/", {"search": MOD[0]}).content.decode()
+    assert client.get("/api/calltree/?root=chld").json()["root"]["name"] == "child"  # fuzzy fallback for the root
+    assert "h2osno" in client.get("/variables/", {"q": "h2sno"}).content.decode()
     r = client.post("/configs/select/", {"config": "base"})
     assert r.status_code == 200 and "configChanged" in r["HX-Trigger"]
 

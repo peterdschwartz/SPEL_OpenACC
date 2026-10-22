@@ -193,6 +193,19 @@ Do this in a scratch directory so `.mod`/`.o` files don't land in the repo.
   from every `=>` in the module by `allocations.scan_module`), transitively, in the exporter
   (`GlobalResolver.expand`); `TraceAccess.resolved_from == "pointer"` marks such rows. Pointers
   assigned at run time to something the module scan never sees stay unexpanded (conservative).
+- Filters: every trace access carries `index_kind` (the form of its subgrid subscript, from
+  `spel/transforms/compact/index_forms.py`: `IndexContext`, shared with the compact tracer through
+  `callee_context`) and `filter` (`filter%lakec` when the index is an element of a resolved filter, or
+  a range/mapping drawn from one; empty = may touch any element). Assignments into a `clumpfilter`
+  member (`StaticTrace.filter_site`) are the filter-building sites; `spel/scripts/db_export/filters.py`
+  derives the `filters` and `filter_relations` tables from them (disjoint from if/else branches, also
+  across levels when the condition is on a coarser level; subset from nested conditions or a loop over
+  another filter; closure; plus the curated landunit-family facts in `FAMILIES`/`CURATED_DISJOINT`).
+  Unknown pairs overlap. The tree graph (`q.dependency_graph`) drops a shared variable only when every
+  write and read run under known disjoint filters; `/filters/` shows the matrices and the sources.
+- The "Tree graph" page is a layered box diagram of one routine's callees: rows = data-dependency
+  depth, left to right = call order; book-keeping routines (`q.BOOKKEEPING`) hidden by default; rows
+  and direct (transitively reduced) edges are recomputed in the browser from the routines shown.
 - `hist_addfld*`/`restartvar` calls are recorded by the analysis (`spel/scripts/registrations.py`,
   `Subroutine.registrations`) by parsing the original routine bodies; the edited `src/` copies keep
   them commented out. Analysis attributes the export reads need `spel analyze` again after changes.

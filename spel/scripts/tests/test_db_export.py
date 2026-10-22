@@ -303,3 +303,44 @@ def test_whole_elm_export(elm_drv_analysis, tmp_path):
     assert all(int(r["end_ln"]) >= int(r["start_ln"]) for r in read_table(tmp_path / "nml_ifs.csv"))
     stats = snap["stats"]
     assert sum(stats["unresolved_globals"].values()) < 100
+
+
+def test_filter_relations_from_sites():
+    from spel.scripts.db_export.filters import derive, disjoint_pairs
+
+    active = ("top_pp%active(t)", "(col_pp%active(c).or.include_inactive)")
+    pactive = ("top_pp%active(t)", "(veg_pp%active(p).or.include_inactive)")
+
+    def site(name, ln, level, guards, parent="", sub="filtermod::setfiltersonegroup"):
+        domain = f"filter:{parent}" if parent else f"range:bounds%beg{level}:bounds%end{level}"
+        return {"name": name, "instance": "filtermod::filter", "subroutine": sub, "ln": ln, "level": level,
+                "parent": parent, "domain": domain, "guards": guards}
+
+    sites = [
+        site("lakec", 10, "c", active + ("lun_pp%lakpoi(l)",)),
+        site("nolakec", 12, "c", active + ("not(lun_pp%lakpoi(l))",)),
+        site("lakep", 20, "p", pactive + ("lun_pp%lakpoi(l)",)),
+        site("nolakep", 22, "p", pactive + ("not(lun_pp%lakpoi(l))",)),
+        site("nolakeurbanp", 24, "p", pactive + ("not(lun_pp%lakpoi(l))", "(.not.lun_pp%urbpoi(l))")),
+        site("soilc", 30, "c", active + ("(col_pp%is_soil(c).or.col_pp%is_crop(c))",)),
+        site("hydrologyc", 40, "c", active + ("(col_pp%is_soil(c).or.road(c))",)),
+        site("hydrononsoic", 42, "c", active + ("(col_pp%is_soil(c).or.road(c))", "(col_pp%itype(c)==icol_road_perv)")),
+        site("snowc", 5, "c", ("(col_pp%snl(c)<0)",), parent="nolakec", sub="snowhydrologymod::buildsnowfilter"),
+        site("nosnowc", 7, "c", ("not((col_pp%snl(c)<0))",), parent="nolakec", sub="snowhydrologymod::buildsnowfilter"),
+    ]
+    sites.append(dict(sites[0], instance="filtermod::filter_inactive_and_active"))  # the second setFilters call: same site
+    frows, rrows = derive(sites)
+    assert [f["name"] for f in frows] == sorted({s["name"] for s in sites})
+    rel = {(r["filter_a"], r["filter_b"], r["relation"]): r for r in rrows}
+    assert rel[("lakec", "nolakec", "disjoint")]["source"] == "if/else"
+    assert rel[("lakec", "nolakep", "disjoint")]["condition"].endswith("(across levels)")
+    assert rel[("nolakeurbanp", "nolakep", "subset")]["source"] == "nested"
+    assert rel[("hydrononsoic", "hydrologyc", "subset")]["source"] == "nested"
+    assert rel[("snowc", "nolakec", "subset")]["source"] == "parent"
+    assert rel[("nosnowc", "snowc", "disjoint")]["source"] == "if/else"
+    assert rel[("lakec", "snowc", "disjoint")]["source"] == "closure"
+    assert rel[("lakec", "soilc", "disjoint")]["source"] == "curated"
+    assert rel[("hydrononsoic", "lakec", "disjoint")]["source"] in ("curated", "closure")
+    assert ("soilc", "hydrologyc", "disjoint") not in rel and ("lakec", "lakep", "disjoint") not in rel
+    pairs = disjoint_pairs(rrows)
+    assert ("snowc", "lakec") in pairs and ("lakec", "snowc") in pairs and ("soilc", "hydrologyc") not in pairs

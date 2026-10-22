@@ -1,19 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ type.user_type_name }} · ELM Explorer{% endblock %}
 {% block body %}
-<div class="page-head"><h2>type {{ type.user_type_name }}</h2>
-  <div class="page-actions"><span class="muted">{{ type.module.module_name }}{% if type.parent %} · extends <a href="{% url 'type_detail' type.parent.user_type_name %}">{{ type.parent.user_type_name }}</a>{% endif %}</span></div></div>
-{% if extensions %}<p>Extended by: {% for e in extensions %}<a href="{% url 'type_detail' e.user_type_name %}">{{ e.user_type_name }}</a> {% endfor %}</p>{% endif %}
-<p>Instances: {% for i in instances %}<a href="?instance={{ i.instance_name }}" class="{% if focus and i.pk == focus.pk %}current{% endif %}">{{ i.instance_name }}</a>{% if not i.public %}<span class="muted">(private)</span>{% endif %} {% empty %}<span class="muted">none in the analyzed modules</span>{% endfor %}</p>
-{% if focus %}<p class="cat-bar">Categories of <strong>{{ focus.instance_name }}</strong>: {% for cat, n in categories %}<a class="badge badge-cat-{{ cat }}" href="{% url 'variables' %}?instance={{ focus.instance_name }}&category={{ cat }}">{{ cat }} {{ n }}</a>{% endfor %}</p>{% endif %}
-{% if procs %}<p class="muted">Type-bound: {% for p in procs %}{{ p.binding }}{% if p.subroutine %} → <a href="{% url 'sub_view' p.subroutine.sub_id %}">{{ p.subroutine.subroutine_name }}</a>{% endif %}{% if not forloop.last %}, {% endif %}{% endfor %}</p>{% endif %}
-<form class="member-filter inline-form" onsubmit="return false;">
-  <input type="search" name="q" value="{{ needle }}" placeholder="filter members (fuzzy)" autocomplete="off"
-         hx-get="{% url 'type_members' type.user_type_name %}?instance={% if focus %}{{ focus.instance_name }}{% endif %}" hx-trigger="input changed delay:150ms" hx-target="#member-rows" hx-swap="innerHTML">
-  <span class="muted">add members to the trace list with the add buttons</span>
-</form>
-<table class="catalog">
-  <thead><tr><th>Member</th><th>Type</th><th>Level</th><th>Category</th><th>Reads/writes</th><th>Registrations</th><th></th></tr></thead>
-  <tbody id="member-rows">{% include "partials/member_rows.html" with rows=members %}</tbody>
-</table>
+<p><a href="{% url 'types' %}?type={{ type.user_type_name }}">All types</a></p>
+<div id="type-panel">{% include "partials/type_detail.html" %}</div>
 {% endblock %}

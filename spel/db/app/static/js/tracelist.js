@@ -30,7 +30,7 @@
       chip.appendChild(rm);
       el.appendChild(chip);
     });
-    if (!pending.length) { const e = document.createElement("span"); e.className = "muted"; e.textContent = "No variables yet: pick some on the left."; el.appendChild(e); }
+    if (!pending.length) { const e = document.createElement("span"); e.className = "muted"; e.textContent = "No variables yet: pick some below."; el.appendChild(e); }
     const go = document.getElementById("trace-go");
     if (go) go.disabled = sameList(pending.map(p => p.key), t);
     const clear = document.getElementById("trace-clear");

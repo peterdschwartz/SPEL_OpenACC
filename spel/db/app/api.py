@@ -72,40 +72,86 @@ def _node_json(n: q.Node, depth_limit, marks=None, base_depth=0):
 
 
 def calltree(request):
-    """The step tree (or the subtree rooted at `root`) for the d3 node-link view; `inactive=1` keeps pruned routines."""
+    """
+    The direct callees of `root` (default: the step's root) as a dependency
+    graph for the box diagram: nodes in call order, an edge from an earlier
+    callee to a later one when something the first writes (anywhere in its
+    subtree) is read by the second before the second writes it. Pruned calls
+    and accesses are left out under the configuration (`inactive=1` keeps the
+    pruned calls as grey boxes, still without edges).
+    """
     snap, cfg = ctx_for(request)
     if snap is None:
         raise Http404("no snapshot")
     reach = reachable(snap.pk, cfg["hash"])
+    ranges = inactive_ranges(snap.pk, cfg["hash"])
     root = request.GET.get("root", "")
     root_sub = q.find_subroutine(snap, root) if root else None
-    depth = request.GET.get("depth")
-    depth_limit = int(depth) if depth and depth.isdigit() else None
+    if root and root_sub is None:  # not an exact name: the best fuzzy match, analyzed routines first
+        qs = Subroutines.objects.filter(snapshot=snap).order_by("-analyzed", "subroutine_name")
+        hits = q.fuzzy_filter(root, qs, lambda r: r.sub_id if "::" in root else r.subroutine_name, limit=1)
+        if not hits:
+            raise Http404(root)
+        root_sub = hits[0]
     keep = request.GET.get("inactive") == "1"
-    tree = q.build_tree(snap.pk, reach, root_sub_pk=root_sub.pk if root_sub else None, keep_inactive=keep)
-    marks = None
-    refs = q.parse_vars(snap, request.GET.getlist("v"))
-    if refs:
-        ranges = inactive_ranges(snap.pk, cfg["hash"])
-        marks = {}
-        for ref in refs:
-            for row in q.trace_rows(snap, ref, reach, ranges):
-                marks.setdefault(row["c"], {}).setdefault(ref.key, "")
-                marks[row["c"]][ref.key] = q.merge_status([marks[row["c"]][ref.key], row["s"]]) if marks[row["c"]][ref.key] else row["s"]
-    return JsonResponse({"snapshot": snap.label, "config": cfg["label"], "roots": [_node_json(n, depth_limit, marks, n.depth) for n in tree], "vars": [r.key for r in refs]})
+    g = q.dependency_graph(snap.pk, reach, ranges, root_sub.pk if root_sub else None, keep_inactive=keep)
+    if g is None:
+        raise Http404(root or "root")
+    return JsonResponse({"snapshot": snap.label, "config": cfg["label"], **g})
 
 
 def modgraph(request):
-    """Module `use` graph: nodes = modules, links = head uses (weight = only-items, 1 for a whole use)."""
+    """
+    The modules `root` uses at module scope (`dir=usedby`: the modules that use
+    it) as a layered diagram: edges among them are their own head `use`s, from
+    the user to the used module (`n` names imported, `whole` for a plain use).
+    """
     snap, cfg = ctx_for(request)
     if snap is None:
         raise Http404("no snapshot")
+    direction = "usedby" if request.GET.get("dir") == "usedby" else "uses"
     mods = {m.pk: m for m in Modules.objects.filter(snapshot=snap).annotate(n_subs=Count("subroutine_module", distinct=True), n_globals=Count("global_var", distinct=True))}
-    links = Counter()
-    for mod, dep in ModuleDependency.objects.filter(module__snapshot=snap, in_head=True, dep_module__isnull=False).values_list("module_id", "dep_module_id"):
-        links[(mod, dep)] += 1
-    nodes = [{"id": m.module_name, "subs": m.n_subs, "globals": m.n_globals, "file": m.filepath.split("/")[-2] if "/" in m.filepath else ""} for m in mods.values()]
-    return JsonResponse({"nodes": nodes, "links": [{"source": mods[a].module_name, "target": mods[b].module_name, "weight": w} for (a, b), w in links.items() if a in mods and b in mods]})
+    heads = list(ModuleDependency.objects.filter(module__snapshot=snap, in_head=True, dep_module__isnull=False)
+                 .values_list("module_id", "dep_module_id", "ln", "whole", "object_used"))
+    uses: dict[int, set] = defaultdict(set)
+    used_by: dict[int, set] = defaultdict(set)
+    first_ln: dict[tuple, int] = {}
+    for a, b, ln, whole, name in heads:
+        uses[a].add(b)
+        used_by[b].add(a)
+        first_ln[(a, b)] = min(first_ln.get((a, b), ln), ln)
+    root_name = (request.GET.get("root") or "").strip().lower()
+    by_name = {m.module_name: m for m in mods.values()}
+    if not root_name:
+        root_name = "elm_driver" if "elm_driver" in by_name else max(by_name, key=lambda n: len(uses[by_name[n].pk]), default="")
+    root = by_name.get(root_name)
+    if root is None:  # not an exact name: the best fuzzy match
+        hits = q.fuzzy_filter(root_name, sorted(by_name), lambda n: n, limit=1)
+        if not hits:
+            raise Http404(root_name)
+        root = by_name[hits[0]]
+    members = uses[root.pk] if direction == "uses" else used_by[root.pk]
+    order = {m: (first_ln.get((root.pk, m), 0) if direction == "uses" else first_ln.get((m, root.pk), 0)) for m in members}
+
+    def node(pk):
+        m = mods[pk]
+        return {"id": m.module_name, "order": order.get(pk, 0), "subs": m.n_subs, "globals": m.n_globals,
+                "file": m.filepath.split("/")[-2] if "/" in m.filepath else "", "n_uses": len(uses[pk]), "n_used_by": len(used_by[pk])}
+
+    nodes = sorted((node(pk) for pk in members), key=lambda n: (n["order"], n["id"]))
+    names: dict[tuple, list] = defaultdict(list)
+    whole_use: set[tuple] = set()
+    for a, b, ln, whole, name in heads:
+        if a in members and b in members:
+            if whole:
+                whole_use.add((a, b))
+            elif name:
+                names[(a, b)].append(name)
+    edges = []
+    for (a, b) in sorted(set(names) | whole_use, key=lambda ab: (order.get(ab[0], 0), order.get(ab[1], 0))):
+        items = sorted(set(names.get((a, b), [])))
+        edges.append({"s": mods[a].module_name, "t": mods[b].module_name, "n": max(1, len(items)), "whole": (a, b) in whole_use, "vars": items[:q.MAX_EDGE_VARS]})
+    return JsonResponse({"snapshot": snap.label, "dir": direction, "root": node(root.pk), "nodes": nodes, "edges": edges})
 
 
 def flag_impact(request, var_name):

@@ -11,6 +11,7 @@
       <a href="{% url 'variables' %}">Variables</a>
       <a href="{% url 'types' %}">Types</a>
       <a href="{% url 'modules' %}">Modules</a>
+      <a href="{% url 'filters' %}">Filters</a>
       <a href="{% url 'diff' %}">Diff</a>
       {% endif %}
     </nav>
@@ -36,13 +37,5 @@
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><line x1="16.65" y1="16.65" x2="21" y2="21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     <span class="sr-only">View namelist values</span>
   </button>
-  <div class="toolbar-item search-item">
-    <label for="sub-search-input" class="search-label">Routine</label>
-    {% include 'partials/search/sub_search_form.html' %}
-  </div>
-  <div class="toolbar-item search-item">
-    <label for="var-search-input" class="search-label">Variable</label>
-    {% include 'partials/search/var_search_form.html' with mode="go" %}
-  </div>
 </div>
 {% endif %}

@@ -1,7 +1,8 @@
 {% extends "base.html" %}
 {% block title %}{{ mod.module_name }} · ELM Explorer{% endblock %}
 {% block body %}
-<h2>module {{ mod.module_name }} <small class="muted">{{ mod.filepath }}</small></h2>
+<div class="page-head"><h2>module {{ mod.module_name }} <small class="muted">{{ mod.filepath }}</small></h2>
+  <div class="page-actions"><a class="styled-button" href="{% url 'modgraph' %}?root={{ mod.module_name }}">Use graph</a></div></div>
 <div class="columns">
   <section><h3>Routines ({{ subs|length }})</h3><ul class="plain">{% for s in subs %}<li><a href="{% url 'sub_view' s.sub_id %}">{{ s.subroutine_name }}</a>{% if not s.analyzed %} <span class="muted">(outside the step)</span>{% endif %}{% if s.is_internal %} <span class="muted">internal</span>{% endif %}</li>{% endfor %}</ul></section>
   <section><h3>Types ({{ types|length }}) and instances ({{ instances|length }})</h3>

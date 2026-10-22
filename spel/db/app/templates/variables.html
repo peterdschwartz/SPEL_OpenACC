@@ -8,7 +8,7 @@
   output; <strong>input</strong>: only read; <strong>unused</strong>: never touched in the step.</p>
 <form id="var-filters" class="filters" hx-get="{% url 'variables' %}" hx-target="#variables-table" hx-swap="innerHTML" hx-trigger="change, submit, input changed delay:300ms from:#q" hx-push-url="true">
   <input type="hidden" name="snap" value="{{ snapshot.label }}"><input type="hidden" name="cfg" value="{{ cfg.key }}">
-  <input id="q" type="search" name="q" placeholder="name contains…" value="{{ filters.q }}">
+  <input id="q" type="search" name="q" placeholder="name (fuzzy)" value="{{ filters.q }}">
   <select name="category"><option value="">any category</option>{% for c in categories %}<option value="{{ c }}" {% if filters.category == c %}selected{% endif %}>{{ c }}</option>{% endfor %}</select>
   <select name="kind"><option value="">fields and globals</option><option value="inst" {% if filters.kind == "inst" %}selected{% endif %}>instance fields</option><option value="global" {% if filters.kind == "global" %}selected{% endif %}>module variables</option></select>
   <select name="instance"><option value="">any instance</option>{% for i in instances %}<option value="{{ i }}" {% if filters.instance == i %}selected{% endif %}>{{ i }}</option>{% endfor %}</select>

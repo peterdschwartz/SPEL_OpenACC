@@ -1,7 +1,11 @@
 {% if results %}
 <div class="dropdown" role="listbox" aria-label="Routine matches">
   {% for r in results %}
+  {% if mode == "pick" %}
+  <a href="#" role="option" data-pick-sub="{{ r.sub_id }}" class="{% if not r.analyzed %}muted{% endif %}">
+  {% else %}
   <a href="{% url 'sub_view' r.sub_id %}" role="option" class="{% if not r.analyzed %}muted{% endif %}">
+  {% endif %}
     <span class="muted">{{ r.module.module_name|default:'lib' }}::</span>{{ r.subroutine_name }}{% if not r.analyzed %} <small>(not in the step)</small>{% endif %}
   </a>
   {% endfor %}

@@ -6,6 +6,7 @@ walks the whole trace is cached per (snapshot, configuration hash).
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Iterable, Optional
@@ -23,6 +24,7 @@ from ..models import (
     SubroutineIntrinsicGlobals,
     Subroutines,
     TraceAccess,
+    FilterRelation,
     TraceNode,
     TypeDefinitions,
     UserTypeInstances,
@@ -167,6 +169,169 @@ def occurrence_index(snapshot_id: int) -> dict[int, tuple[int, int]]:
     return out
 
 
+MAX_EDGE_VARS = 40
+# Routines the box diagram hides by default: book-keeping that clutters the data flow.
+BOOKKEEPING = ("summary", "zerodwt", "balance", "get_clump_bounds", "get_proc_bounds", "get_proc_clumps", "interp", "budget", "acc_vars", "accvars")
+
+
+def dependency_graph(
+    snapshot_id: int,
+    reach: Optional[Reach],
+    ranges: dict,
+    root_sub_pk: Optional[int] = None,
+    keep_inactive: bool = False,
+) -> Optional[dict]:
+    """
+    The direct callees of a routine (its first occurrence; the step's root by
+    default) with the data dependencies between them.
+
+    A callee's *outputs* are the paths written anywhere in its subtree, its
+    *inputs* the paths it reads before its subtree writes them. An edge runs from
+    an earlier callee to a later one whose inputs meet the earlier's outputs;
+    `direct` marks the edges left after transitive reduction (the rest are
+    implied by chains of direct ones). `level` is the longest dependency chain
+    above a node, the row of the diagram. Calls and accesses the configuration
+    prunes are left out; with `keep_inactive` the pruned calls stay as nodes
+    (`active=False`) without accesses. `bookkeeping` flags routines matching
+    BOOKKEEPING, which the diagram hides by default (it recomputes levels and
+    direct edges on the nodes it shows).
+    """
+    rows = load_nodes(snapshot_id)
+    if not rows:
+        return None
+    start = rows[0] if root_sub_pk is None else next((r for r in rows if r[3] == root_sub_pk), None)
+    if start is None:
+        return None
+    lo, hi = start[1], start[1] + start[8]
+    kids = []
+    for row in rows:
+        pk, order, parent_order, sub_pk, name, module, sub_id, depth, size, cut, analyzed, call_ln = row
+        if order <= lo or order >= hi or parent_order != lo:
+            continue
+        active = reach is None or order in reach.orders
+        if not active and not keep_inactive:
+            continue
+        kids.append({"id": order, "order": order, "end": order + size, "sub": sub_id, "name": name,
+                     "label": f"{module or 'lib'}::{name}", "size": size, "cut": cut, "analyzed": analyzed,
+                     "active": active, "call_ln": call_ln, "n_children": 0, "sub_pk": sub_pk,
+                     "bookkeeping": any(pat in name for pat in BOOKKEEPING)})
+    child_orders = {k["order"] for k in kids}
+    for row in rows:
+        if row[2] in child_orders:
+            next(k for k in kids if k["order"] == row[2])["n_children"] += 1
+    # k-th of n calls of the same routine among the displayed callees
+    per_sub: dict[int, list] = defaultdict(list)
+    for k in kids:
+        per_sub[k["sub_pk"]].append(k)
+    for group in per_sub.values():
+        for i, k in enumerate(group, 1):
+            k["k"], k["n"] = i, len(group)
+    subs = node_subs(snapshot_id)
+    starts = [k["order"] for k in kids]
+    n = len(kids)
+    # path -> the filters ("*" = any element) its reads / writes run under
+    writes: list[dict[str, set]] = [defaultdict(set) for _ in kids]
+    inputs: list[dict[str, set]] = [defaultdict(set) for _ in kids]
+    if kids:
+        qs = (
+            TraceAccess.objects.filter(snapshot_id=snapshot_id, trace_node__order__gte=starts[0], trace_node__order__lt=hi)
+            .order_by("order")
+            .values_list("trace_node__order", "path", "status", "ln", "filter")
+        )
+        for order, path, status, ln, filt in qs:
+            i = bisect_right(starts, order) - 1
+            k = kids[i]
+            if order >= k["end"] or not k["active"]:
+                continue
+            if reach is not None and order not in reach.orders:
+                continue
+            if is_inactive(ranges, subs.get(order), ln):
+                continue
+            key = filter_members(filt)
+            if "r" in status and not (path in writes[i] and "*" in writes[i][path]):
+                inputs[i][path].add(key)
+            if "w" in status:
+                writes[i][path].add(key)
+    disjoint = disjoint_filters(snapshot_id)
+    edges: dict[tuple[int, int], set] = {}
+    excluded: dict[tuple[int, int], set] = {}
+    succ: dict[int, set] = defaultdict(set)
+    for j in range(n):
+        for i in range(j):
+            shared, dropped = set(), set()
+            for path in writes[i].keys() & inputs[j].keys():
+                if filters_overlap(writes[i][path], inputs[j][path], disjoint):
+                    shared.add(path)
+                else:
+                    dropped.add(path)
+            if shared:
+                edges[(i, j)] = shared
+                succ[i].add(j)
+            if dropped:
+                excluded[(i, j)] = dropped
+    # transitive reduction: an edge i->j is implied if j is reachable from another successor of i
+    downstream: dict[int, set] = {}
+    for i in reversed(range(n)):
+        acc: set = set()
+        for j in succ[i]:
+            acc |= {j} | downstream[j]
+        downstream[i] = acc
+    level = [0] * n
+    for j in range(n):
+        preds = [i for i in range(j) if (i, j) in edges]
+        level[j] = 1 + max((level[i] for i in preds), default=-1)
+    for i, k in enumerate(kids):
+        k["level"] = level[i]
+        k["n_in"], k["n_out"] = len(inputs[i]), len(writes[i])
+        del k["end"], k["sub_pk"]
+    out_edges = []
+    for (i, j), shared in sorted(edges.items()):
+        direct = not any(j in downstream[m] for m in succ[i] if m != j)
+        names = sorted(shared)
+        out_edges.append({"s": kids[i]["id"], "t": kids[j]["id"], "n": len(names), "vars": names[:MAX_EDGE_VARS], "direct": direct,
+                          "n_excluded": len(excluded.get((i, j), ()))})
+    only_excluded = [{"s": kids[i]["id"], "t": kids[j]["id"], "n": len(v), "vars": sorted(v)[:MAX_EDGE_VARS]}
+                     for (i, j), v in sorted(excluded.items()) if (i, j) not in edges]
+    root_node = {"order": start[1], "sub": start[6], "name": start[4], "label": f"{start[5] or 'lib'}::{start[4]}", "size": start[8]}
+    return {"root": root_node, "nodes": kids, "edges": out_edges, "excluded": only_excluded}
+
+
+def filter_members(filt: str) -> str:
+    """`filter%lakec|filter_inactive_and_active%lakec` -> 'lakec'; '' (any element) -> '*'; several -> joined."""
+    if not filt:
+        return "*"
+    members = sorted({f.rsplit("%", 1)[-1] for f in filt.split("|")})
+    return "|".join(members)
+
+
+def disjoint_filters(snapshot_id: int) -> set[tuple[str, str]]:
+    """Unordered pairs of filter members that cannot share an element (FilterRelation, both orders)."""
+    key = f"disjoint:{snapshot_id}"
+    out = cache.get(key)
+    if out is None:
+        out = set()
+        for a, b in FilterRelation.objects.filter(snapshot_id=snapshot_id, relation="disjoint").values_list("filter_a", "filter_b"):
+            out.add((a, b))
+            out.add((b, a))
+        cache.set(key, out, CACHE_SECONDS)
+    return out
+
+
+def filters_overlap(wkeys: set[str], rkeys: set[str], disjoint: set[tuple[str, str]]) -> bool:
+    """
+    Whether some write and some read may touch the same element: only known
+    filters that are all pairwise disjoint rule it out ('*' = any element, and a
+    multi-filter key counts as overlapping unless each of its members is disjoint).
+    """
+    for w in wkeys:
+        for r in rkeys:
+            if w == "*" or r == "*":
+                return True
+            if any((a, b) not in disjoint for a in w.split("|") for b in r.split("|")):
+                return True
+    return False
+
+
 def fuzzy_score(needle: str, text: str) -> Optional[int]:
     """
     Higher is better; None if `needle` is not a subsequence of `text`. Substring
@@ -204,6 +369,29 @@ def fuzzy_filter(needle: str, items: Iterable, key, limit: Optional[int] = None)
     return out[:limit] if limit else out
 
 
+def reg_tags(regs: list) -> list[dict]:
+    """
+    One badge per registration kind (`hist`, `restart`, ...) for a member that
+    may be registered several times (per instance, under different guards):
+    the count, whether every one is inactive, and a title listing them.
+    """
+    by_kind: dict[str, list] = {}
+    for r in regs:
+        by_kind.setdefault(r.kind, []).append(r)
+    out = []
+    for kind, items in by_kind.items():
+        lines = []
+        for r in items:
+            line = f"{r.name} {r.long_name}".strip() + (f" [{r.units}]" if r.units else "")
+            if r.guards:
+                line += " if " + " and ".join(r.guards)
+            if r.inactive:
+                line += " (inactive)"
+            lines.append(line)
+        out.append({"kind": kind, "n": len(items), "inactive": all(r.inactive for r in items), "title": "\n".join(lines)})
+    return out
+
+
 def member_rows(snapshot: Snapshot, instance: Optional[UserTypeInstances], user_type: UserTypes, needle: str = "") -> list[dict]:
     """
     Rows of a type's members for the picker / type page: component, field state
@@ -226,7 +414,7 @@ def member_rows(snapshot: Snapshot, instance: Optional[UserTypeInstances], user_
     for m in members:
         fs = states.get(m.pk)
         rows.append({
-            "m": m, "state": fs, "regs": regs.get(m.pk, []),
+            "m": m, "state": fs, "regs": regs.get(m.pk, []), "tags": reg_tags(regs.get(m.pk, [])),
             "key": f"{instance.instance_name}%{m.member_name}" if instance else "",
             "category": fs.effective_category if fs else "",
         })

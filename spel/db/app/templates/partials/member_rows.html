@@ -5,7 +5,7 @@
   <td>{{ row.m.subgrid }}</td>
   <td>{% if row.state %}<span class="badge badge-cat-{{ row.category }}">{{ row.category }}</span>{% endif %}</td>
   <td class="muted">{{ row.state.n_reads|default:"" }}{% if row.state %}/{{ row.state.n_writes }}{% endif %}</td>
-  <td>{% for r in row.regs %}<span class="badge badge-{{ r.kind }}" title="{{ r.name }} {{ r.long_name }}{% if r.units %} [{{ r.units }}]{% endif %}{% if r.guards %} if {{ r.guards|join:' and ' }}{% endif %}">{{ r.kind }}{% if r.inactive %} (inactive){% endif %}</span> {% endfor %}
+  <td>{% for t in row.tags %}<span class="badge badge-{{ t.kind }}" title="{{ t.title }}">{{ t.kind }}{% if t.n > 1 %} ×{{ t.n }}{% endif %}{% if t.inactive %} (inactive){% endif %}</span> {% endfor %}
     {% if row.state.restart_unneeded %}<span class="badge badge-off" title="restart-registered but recomputed each step">restart?</span>{% endif %}{% if row.state.restart_missing %}<span class="badge badge-w" title="carried across steps but not in the restart file">no restart?</span>{% endif %}</td>
   <td>{% if row.key %}<button type="button" class="add-btn" data-add-var="{{ row.key }}" data-label="{{ row.key }}" data-category="{{ row.category }}">add</button>{% endif %}</td>
 </tr>

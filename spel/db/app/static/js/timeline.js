@@ -16,13 +16,41 @@
     return svg.dataset.src + "?" + p.toString();
   }
 
-  function markShape(sel, s, size) {
-    const r = size || 7;
-    sel.each(function (d) {
-      const g = d3.select(this);
-      if (s === "r") g.append("circle").attr("r", r).attr("class", "mark mark-r");
-      else if (s === "w") g.append("rect").attr("x", -r).attr("y", -r).attr("width", 2 * r).attr("height", 2 * r).attr("class", "mark mark-w");
-      else g.append("path").attr("d", `M0,${-r - 1} L${r + 1},0 L0,${r + 1} L${-r - 1},0 Z`).attr("class", "mark mark-rw");
+  // read: hollow circle; write: solid square; read+write: solid diamond with a hollow core
+  function markShape(g, s, r) {
+    if (s === "r") g.append("circle").attr("r", r).attr("class", "mark mark-r");
+    else if (s === "w") g.append("rect").attr("x", -r).attr("y", -r).attr("width", 2 * r).attr("height", 2 * r).attr("class", "mark mark-w");
+    else {
+      g.append("path").attr("d", `M0,${-r - 2} L${r + 2},0 L0,${r + 2} L${-r - 2},0 Z`).attr("class", "mark mark-rw");
+      g.append("circle").attr("r", Math.max(2, r * 0.35)).attr("class", "mark-core");
+    }
+  }
+
+  // Marks of one row that fall in the same column: spread across the column in
+  // access order when they fit, else one merged glyph with a count.
+  function placeMarks(marks, COL, msize) {
+    const groups = new Map();
+    marks.forEach((m, i) => { if (!groups.has(m.c)) groups.set(m.c, []); groups.get(m.c).push(i); });
+    const placed = [];
+    groups.forEach(idx => {
+      const fit = Math.max(1, Math.floor((COL - 4) / (2 * msize + 2)));
+      if (idx.length <= fit) {
+        const step = idx.length > 1 ? Math.min(2 * msize + 2, (COL - 4) / idx.length) : 0;
+        idx.forEach((i, k) => placed.push({ idx: [i], m: marks[i], dx: (k - (idx.length - 1) / 2) * step, s: marks[i].s, n: 1 }));
+      } else {
+        const ss = new Set(idx.map(i => marks[i].s));
+        const s = ss.size === 1 ? [...ss][0] : "rw";
+        placed.push({ idx, m: marks[idx[0]], dx: 0, s, n: idx.length, cond: idx.every(i => marks[i].cond) });
+      }
+    });
+    return placed;
+  }
+
+  // shorten a label to fit `max` px (the full text stays in the title)
+  function fitText(sel, max) {
+    sel.each(function () {
+      const t = d3.select(this); let text = t.text();
+      while (text.length > 4 && this.getComputedTextLength() > max) { text = text.slice(0, -2) + "…"; t.text(text); }
     });
   }
 
@@ -86,27 +114,37 @@
       rowG.append("rect").attr("x", 0).attr("y", TOP + ri * ROW).attr("width", width).attr("height", ROW).attr("class", "row-bg" + (ri % 2 ? " alt" : ""))
         .attr("fill", color).attr("fill-opacity", ri % 2 ? 0.06 : 0.03);
       rowG.append("line").attr("x1", LEFT).attr("x2", LEFT + cols.length * COL).attr("y1", y(ri)).attr("y2", y(ri)).attr("class", "row-line").attr("stroke", color).attr("stroke-opacity", 0.35);
-      const lab = rowG.append("text").attr("x", 8).attr("y", y(ri) + 4).attr("class", "row-label").attr("fill", color).text(r.label);
+      const lab = rowG.append("text").attr("x", 8).attr("y", y(ri) - 3).attr("class", "row-label").attr("fill", color).text(r.label);
+      fitText(lab, LEFT - 20);
       lab.append("title").text(`${r.key}: ${r.config_category} under this config (${r.category} overall)`);
-      rowG.append("text").attr("x", LEFT - 6).attr("y", y(ri) + 4).attr("text-anchor", "end").attr("class", "row-cat").text(r.config_category);
+      rowG.append("text").attr("x", 8).attr("y", y(ri) + 12).attr("class", "row-cat").text(r.config_category + (r.config_category !== r.category ? ` (${r.category} overall)` : ""));
+      const msize = Math.max(5, Math.min(9, COL / 4));
+      const placed = placeMarks(r.marks, COL, msize);
+      const xOf = {}; placed.forEach(p => p.idx.forEach(i => { xOf[i] = x(p.m.c) + p.dx; }));
       if (arcsBox.checked) {
         r.arcs.forEach(a => {
-          const m1 = r.marks[a.from], m2 = r.marks[a.to];
-          rowG.append("path").attr("d", arcPath(x(m1.c), x(m2.c), y(ri), a.kind, ROW))
+          if (Math.abs(xOf[a.from] - xOf[a.to]) < 1) return; // within one merged glyph
+          rowG.append("path").attr("d", arcPath(xOf[a.from], xOf[a.to], y(ri), a.kind, ROW))
             .attr("class", "arc arc-" + a.kind).attr("stroke", color);
         });
       }
-      const marks = rowG.selectAll("g.m").data(r.marks).enter().append("g").attr("class", "m")
-        .attr("transform", d => `translate(${x(d.c)},${y(ri)})`).attr("fill", color).attr("stroke", color);
-      const msize = Math.max(6, Math.min(10, COL / 3));
-      marks.each(function (d) { markShape(d3.select(this), d.s, msize); }).classed("cond", d => d.cond);
+      const marks = rowG.selectAll("g.m").data(placed).enter().append("g").attr("class", "m")
+        .attr("transform", d => `translate(${x(d.m.c) + d.dx},${y(ri)})`).attr("fill", color).attr("stroke", color);
+      marks.each(function (d) { markShape(d3.select(this), d.s, msize); }).classed("cond", d => d.n === 1 ? d.m.cond : d.cond);
+      marks.filter(d => d.n > 1).append("text").attr("class", "mark-count").attr("x", msize + 3).attr("y", -msize + 2).text(d => `×${d.n}`);
+      const what = s => s === "r" ? "read" : s === "w" ? "written" : "read+written";
       marks.on("mouseenter", (ev, d) => {
-        const c = cols[d.c];
-        tip.innerHTML = `<b>${r.label}</b> ${d.s === "r" ? "read" : d.s === "w" ? "written" : "read+written"}<br>${c.sub} line ${d.ln + 1}<br><span class="muted">${c.top} · step position ${d.order}${d.from === "dummy" ? " · via argument" : ""}${d.cond ? " · inside an if block" : ""}</span>`;
+        const c = cols[d.m.c];
+        if (d.n === 1) {
+          tip.innerHTML = `<b>${r.label}</b> ${what(d.s)}<br>${c.sub} line ${d.m.ln + 1}<br><span class="muted">${c.top} · step position ${d.m.order}${d.m.from === "dummy" ? " · via argument" : ""}${d.m.cond ? " · inside an if block" : ""}</span>`;
+        } else {
+          const seq = d.idx.map(i => r.marks[i]).map(m => `${what(m.s)} at line ${m.ln + 1}${m.cond ? " (if)" : ""}`).join("<br>");
+          tip.innerHTML = `<b>${r.label}</b> ${d.n} accesses in ${c.sub}<br><span class="muted">${c.top}</span><div class="dg-vars">${seq}</div>`;
+        }
         tip.hidden = false;
         tip.style.left = (ev.pageX + 12) + "px"; tip.style.top = (ev.pageY - 10) + "px";
       }).on("mouseleave", () => { tip.hidden = true; })
-        .on("click", (ev, d) => openDetails(cols[d.c].sub, d.ln));
+        .on("click", (ev, d) => openDetails(cols[d.m.c].sub, d.m.ln));
     });
   }
 

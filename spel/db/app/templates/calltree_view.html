@@ -1,22 +1,36 @@
 {% extends "base.html" %}
+{% load staticv %}
 {% load static %}
 {% block title %}Tree graph · ELM Explorer{% endblock %}
 {% block extrahead %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js" integrity="sha512-vc58qvvBdrDR4etbxMdlTt4GBQk1qjvyORR2nrsPsFPyrs+/u5c3+1Ct6upOgdZoIl7eq6k3a1UPDSNAQi/32A==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="{% static 'js/calltree.js' %}" defer></script>
+<script src="{% static_v 'js/layered.js' %}" defer></script>
+<script src="{% static_v 'js/calltree.js' %}" defer></script>
 {% endblock %}
 {% block body %}
 <div class="page-head"><h2>The time step as a tree</h2>
   <div class="page-actions">
     <form id="ct-form" class="inline-form" onsubmit="return false;">
-      <input type="text" id="ct-root" name="root" value="{{ root }}" placeholder="root routine (default elm_drv)">
+      <span class="search-form"><input type="search" id="ct-root" name="root" value="{{ root }}" placeholder="root routine (default elm_drv)" autocomplete="off"
+            hx-post="{% url 'sub_active_search' %}" hx-vals='{"mode": "pick"}' hx-trigger="input changed delay:200ms" hx-target="next .search-results"><span class="search-results"></span></span>
       <label class="check"><input type="checkbox" id="ct-inactive"> show pruned</label>
-      <label>depth <input type="number" id="ct-depth" min="1" max="12" value="3" style="width:4em"></label>
+      <label>per row <input type="number" id="ct-per-row" min="1" max="12" value="5" style="width:4em"></label>
+      <label class="check"><input type="checkbox" id="ct-bookkeeping"> show book-keeping</label>
+      <label class="check"><input type="checkbox" id="ct-all-edges"> all edges</label>
+      <label class="check"><input type="checkbox" id="ct-hide-isolated"> hide unconnected</label>
       <button class="styled-button" id="ct-reload">Draw</button>
     </form>
   </div></div>
-<p class="muted">Click a node to expand or collapse it, double-click to open the routine. Node size follows the subtree size;
-  grey nodes are pruned by the active configuration, dashed ones are routines SPEL did not analyze, ↺ marks a recursive call.</p>
+<div class="page-intro">
+  <p>Each box is one call made by the root routine under the active configuration. A line runs from a routine to a later one that reads what it wrote.</p>
+  <ul>
+    <li>A routine sits one row below the last routine it depends on; routines with no line between them are independent. Within a row, left to right is call order.</li>
+    <li>A blue outline and › mark a routine with callees of its own: click it to open them. Grey-outlined boxes are leaves. Double-click any box for the routine page, hover a line for the shared variables.</li>
+    <li>Book-keeping routines (summaries, zeroing, balance checks, budgets, accumulated variables, bounds, stream interpolation) are hidden unless asked for; rows and lines are recomputed from the routines shown.</li>
+    <li>With "show pruned", routines the configuration never reaches appear grey-filled and labelled pruned; dashed boxes were not analyzed, ↺ marks a recursive call. Scroll to move, drag or ctrl+wheel to zoom.</li>
+  </ul>
+</div>
+<div class="dg-bar"><span id="ct-crumbs" class="dg-crumbs"></span><span id="ct-summary" class="muted"></span></div>
 <div id="calltree-wrap" class="graph-wrap"><svg id="calltree" data-src="{% url 'api_calltree' %}" data-sub-url="{% url 'sub_view' 'X' %}"></svg></div>
 <div id="ct-tooltip" class="tooltip" hidden></div>
 {% endblock %}

@@ -20,6 +20,22 @@
   document.body.addEventListener("configChanged", onContextChanged);
   document.body.addEventListener("snapshotChanged", onContextChanged);
 
+  // Suggestion dropdowns that fill an input (graph roots): set the value, close the list, tell the page.
+  document.addEventListener("click", e => {
+    const pick = e.target.closest("[data-pick-sub], [data-pick-mod]");
+    if (!pick) return;
+    e.preventDefault();
+    const form = pick.closest(".search-form");
+    const input = form && form.querySelector("input");
+    if (!input) return;
+    input.value = pick.dataset.pickSub || pick.dataset.pickMod;
+    const res = form.querySelector(".search-results"); if (res) res.innerHTML = "";
+    input.dispatchEvent(new CustomEvent("pick", { bubbles: true }));
+  });
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape") document.querySelectorAll(".search-form .search-results").forEach(r => { r.innerHTML = ""; });
+  });
+
   // Checkboxes that add a query parameter to a partial's request (e.g. show pruned routines).
   document.addEventListener("change", e => {
     const box = e.target.closest("input[data-param][data-target]");

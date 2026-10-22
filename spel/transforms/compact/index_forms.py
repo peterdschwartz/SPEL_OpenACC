@@ -250,6 +250,44 @@ class IndexContext:
         return len(self.rec.events)
 
 
+def callee_context(ctx: IndexContext, bindings: list, event, callee, pos: int) -> tuple[IndexContext, dict[str, frozenset]]:
+    """
+    The callee's IndexContext for the call `event` at event position `pos` of
+    `ctx`'s routine: its dummies bound to this call's actuals (`bindings`, the
+    ArgBindings of the call), scalar integer index dummies given the form of
+    their actual, and dummies bound to an element or a section with a fixed
+    subgrid index inheriting that index's form. Also returns the dummy -> paths env.
+    """
+    env: dict[str, set] = {}
+    idx_env: dict[str, IndexForm] = {}
+    inherit: dict[str, IndexForm] = {}
+    rec = ctx.rec
+    # the access of each designator actual, by path (subscripts kept)
+    actual_access: dict[str, tuple[int, Access]] = {}
+    for p in range(pos - 1, -1, -1):
+        e = rec.events[p]
+        if isinstance(e, Access) and e.ln == event.ln:
+            if e.status == "arg":
+                actual_access.setdefault(e.path, (p, e))
+        elif getattr(e, "ln", event.ln) != event.ln:
+            break
+    for b in bindings:
+        env.setdefault(b.dummy, set()).update(ctx.resolve(b.actual, b.origin))
+        if (hit := actual_access.get(b.actual)) is not None and ctx.fixes_subgrid(hit[1]):
+            inherit[b.dummy] = ctx.access_form(hit[1], hit[0])
+        if "%" not in b.actual and b.origin in (Origin.LOCAL, Origin.DUMMY):
+            d = rec.declaration(b.actual)
+            if d is not None and d.dim == 0 and d.type.lower().startswith("integer"):
+                form = ctx.var_form(b.actual, pos, event.ln, 0)
+                if form.kind != "unknown":
+                    idx_env[b.dummy] = form
+    host = None
+    if callee.is_internal:
+        host = ctx if callee.host_id == ctx.sub_id else ctx.host
+    fenv = {k: frozenset(v) for k, v in env.items()}
+    return IndexContext(callee.id, callee.record, fenv, idx_env, inherit, host), fenv
+
+
 def _is_mapping(path: str) -> bool:
     return path.split("%")[0] in SUBGRID_INSTANCES
 

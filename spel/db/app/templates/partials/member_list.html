@@ -1,0 +1,11 @@
+{% for row in rows %}
+<li id="m-{{ row.m.member_name|slugify }}">
+  {% if row.state %}<span class="cat-dot badge-cat-{{ row.category }}" title="{{ row.category }}"></span>{% else %}<span class="cat-dot"></span>{% endif %}
+  <code>{{ row.m.member_name }}</code>{% if row.m.pointer %}<span class="muted">*</span>{% endif %}
+  <span class="ml-meta muted">{% if row.m.component_type %}<a href="{% url 'type_detail' row.m.component_type.user_type_name %}" hx-get="{% url 'type_detail' row.m.component_type.user_type_name %}" hx-target="#type-panel">{{ row.m.member_type }}</a>{% else %}{{ row.m.member_type }}{% endif %}{% if row.m.dim %}({{ row.m.dim }}d){% endif %}{% if row.m.subgrid %}·{{ row.m.subgrid }}{% endif %}{% if row.state %} {{ row.state.n_reads }}r/{{ row.state.n_writes }}w{% endif %}</span>
+  <span class="ml-tags">{% for t in row.tags %}<span class="badge tag badge-{{ t.kind }}{% if t.inactive %} inactive{% endif %}" title="{{ t.kind }}: {{ t.title }}">{{ t.kind|first|upper }}{% if t.n > 1 %}{{ t.n }}{% endif %}</span>{% endfor %}{% if row.state.restart_unneeded %}<span class="badge tag badge-off" title="restart-registered but recomputed each step">R?</span>{% endif %}{% if row.state.restart_missing %}<span class="badge tag badge-w" title="carried across steps but not in the restart file">!R</span>{% endif %}</span>
+  {% if row.key %}<button type="button" class="add-btn" data-add-var="{{ row.key }}" data-label="{{ row.key }}" data-category="{{ row.category }}">add</button>{% endif %}
+</li>
+{% empty %}
+<li class="muted">No members match.</li>
+{% endfor %}

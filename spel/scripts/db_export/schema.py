@@ -61,8 +61,12 @@ TABLES: dict[str, list[str]] = {
     ],
     "trace_access": [
         "node_order", "path", "inst_module", "instance", "member", "var_module", "var_name",
-        "status", "ln", "order", "resolved_from", "conditional",
+        "status", "ln", "order", "resolved_from", "conditional", "index_kind", "filter",
     ],
+    # filters: every member of a clumpfilter instance the step fills, where and under what
+    # conditions; filter_relations: the disjoint/subset pairs derived from them (filters.py)
+    "filters": ["name", "subroutine", "ln", "level", "parent", "guards"],
+    "filter_relations": ["filter_a", "filter_b", "relation", "source", "subroutine", "condition"],
     "field_state": [
         "inst_module", "instance", "member", "var_module", "var_name", "restart", "history",
         "history_active", "first_status", "first_node_order", "first_ln", "read_in_step",

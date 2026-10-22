@@ -8,18 +8,40 @@ spel export
 python spel/db/manage.py update_all_data script-output/db-export/&lt;label&gt;
 python spel/db/manage.py import_presets</code></pre>
 {% else %}
+<div class="home-page">
 <h1>E3SM Land Model — code explorer</h1>
-<p class="lead">Static analysis of one ELM time step (<code>elm_drv</code>): which routines run, which fields they read and
-  write, and how that changes with the namelist. Pick a snapshot (an analyzed E3SM checkout) and a configuration in the
-  toolbar; every page follows them.</p>
-<div class="cards">
-  <a class="card" href="{% url 'sub_view' 'elm_driver::elm_drv' %}"><h3>Call tree</h3><p>The time step as a tree of calls, pruned by the active namelist configuration, with each routine's arguments, accesses, gates and source.</p></a>
-  <a class="card" href="{% url 'trace_view' %}"><h3>Variable trace</h3><p>Follow several variables through the step: which routines touch them, in what order, and when a value written is next needed.</p></a>
-  <a class="card" href="{% url 'variables' %}"><h3>Variable catalog</h3><p>Every instance field and module variable classified as prognostic, diagnostic, intermediate, input or unused; restart/history registrations and their mismatches.</p></a>
-  <a class="card" href="{% url 'diff' %}"><h3>Diff mode</h3><p>Compare two namelist configurations, or two snapshots: reachable routines, flipped if blocks, access sets and categories.</p></a>
-  <a class="card" href="{% url 'types' %}"><h3>Types</h3><p>Derived types, their members by subgrid level, instances and registrations.</p></a>
-  <a class="card" href="{% url 'modgraph' %}"><h3>Modules</h3><p>Module <code>use</code> graph and per-module contents.</p></a>
+<section class="about">
+  <p>The analysis comes from <a href="https://github.com/peterdschwartz/SPEL">SPEL</a>, a Fortran parser and
+    refactoring toolkit built for ELM. SPEL reads the model sources, walks the call tree of <code>elm_drv</code>
+    with dummy arguments resolved to the fields actually passed at each call, and records every access,
+    loop, filter and namelist gate along the way. This site is a browsable export of that analysis: nothing
+    here was run, everything was read.</p>
+  <p>The goal is to make a large, heavily configured model legible: to answer "what does this routine depend on",
+    "who computes this field and who needs it", "what changes when I flip this flag", or "which state has to be in the
+    restart file" without reading a hundred files. It is meant for scientists adding or changing a process, for
+    people porting or optimizing the code, and for anyone new to ELM who wants to see how the pieces fit.</p>
+  <p>ELM is large and has many configurations, and a static analysis has to make conservative choices (an unknown
+    is treated as "may happen"). So please explore and report: a routine that looks wrongly pruned, a dependency
+    that cannot be real, a category that disagrees with what the model does, or a view that would help. Open an
+    issue or feature request on the <a href="https://github.com/peterdschwartz/SPEL/issues">SPEL issue tracker</a>.</p>
+  <p class="muted">Pick a snapshot (an analyzed E3SM checkout) and a configuration in the toolbar; every page follows them.</p>
+</section>
+
+
+<div class="cards primary">
+  <a class="card" href="{% url 'calltree_view' %}"><h3>Tree graph</h3><p>The time step as a layered diagram: one box per routine, lines from a routine to the later ones that read what it wrote, rows by dependency. Click into any routine; filters that cannot overlap (lake vs. non-lake columns) are taken into account.</p></a>
+  <a class="card" href="{% url 'trace_view' %}"><h3>Variable trace</h3><p>Follow a handful of variables through the step on one timeline: where each is read and written, when a computed value is next needed, and what is carried into the next step.</p></a>
 </div>
+<div class="cards">
+  <a class="card" href="{% url 'diff' %}"><h3>Diff mode <span class="badge badge-exp">experimental</span></h3><p>Compare two configurations or two snapshots: reachable routines, flipped if blocks, access sets and categories.</p></a>
+  <a class="card" href="{% url 'sub_view' 'elm_driver::elm_drv' %}"><h3>Call tree</h3><p>The same step as an expandable tree, pruned by the configuration, with each routine's arguments, accesses, namelist gates and source.</p></a>
+  <a class="card" href="{% url 'variables' %}"><h3>Variables</h3><p>Every instance field and module variable classified as prognostic, diagnostic, intermediate, input or unused, with restart and history registrations and their mismatches.</p></a>
+  <a class="card" href="{% url 'types' %}"><h3>Types</h3><p>Derived types and their members by subgrid level, instances, type-bound procedures; add members to the trace from here.</p></a>
+  <a class="card" href="{% url 'modgraph' %}"><h3>Modules</h3><p>What each module <code>use</code>s and what uses it, as a layered graph, plus per-module contents.</p></a>
+  <a class="card" href="{% url 'filters' %}"><h3>Filters</h3><p>The subgrid filters the step builds, where, under which conditions, and which pairs are disjoint or nested.</p></a>
+</div>
+
+
 <h2>Snapshots</h2>
 <div class="snapshot-cards">
   {% for c in cards %}
@@ -35,6 +57,7 @@ python spel/db/manage.py import_presets</code></pre>
     </dl>
   </div>
   {% endfor %}
+</div>
 </div>
 {% endif %}
 {% endblock %}

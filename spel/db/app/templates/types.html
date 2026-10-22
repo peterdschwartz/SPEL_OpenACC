@@ -1,15 +1,18 @@
 {% extends "base.html" %}
 {% block title %}Types · ELM Explorer{% endblock %}
 {% block body %}
-<h2>Derived types</h2>
-<table class="catalog">
-  <thead><tr><th>Type</th><th>Module</th><th>Extends</th><th>Members</th><th>Instances</th><th>Field categories (all instances)</th></tr></thead>
-  <tbody>{% for t in types %}
-    <tr><td><a href="{% url 'type_detail' t.type.user_type_name %}">{{ t.type.user_type_name }}</a></td>
-      <td><a href="{% url 'module_detail' t.type.module.module_name %}">{{ t.type.module.module_name }}</a></td>
-      <td>{% if t.type.parent %}<a href="{% url 'type_detail' t.type.parent.user_type_name %}">{{ t.type.parent.user_type_name }}</a>{% endif %}</td>
-      <td>{{ t.type.n_members }}</td><td>{{ t.type.n_instances }}</td>
-      <td class="cat-bar">{% for cat, n in t.categories %}{% if n %}<span class="badge badge-cat-{{ cat }}" title="{{ cat }}">{{ n }}</span>{% endif %}{% endfor %}</td></tr>
-  {% endfor %}</tbody>
-</table>
+<div class="page-head"><h2>Derived types</h2><span class="muted">Click a type for its members; the badges count its instances' fields per category.</span></div>
+<div class="split-container types-split">
+  <div class="left-panel types-left">
+    <ul class="type-list">{% for t in types %}
+      <li class="{% if t.type.user_type_name == open %}current{% endif %}" hx-get="{% url 'type_detail' t.type.user_type_name %}" hx-target="#type-panel" hx-trigger="click{% if t.type.user_type_name == open %}, load{% endif %}"
+          onclick="this.parentNode.querySelectorAll('li.current').forEach(r => r.classList.remove('current')); this.classList.add('current');"
+          title="{{ t.type.user_type_name }} · {{ t.type.module.module_name }}{% if t.type.parent %} · extends {{ t.type.parent.user_type_name }}{% endif %} · {{ t.type.n_members }} members · {{ t.type.n_instances }} instances">
+        <span class="tl-name">{{ t.type.user_type_name }}</span><span class="tl-mod muted">{{ t.type.module.module_name }}</span>
+        <span class="tl-badges">{% for cat, n in t.categories %}{% if n %}<span class="badge badge-cat-{{ cat }}" title="{{ cat }}">{{ n }}</span>{% endif %}{% endfor %}</span>
+      </li>{% endfor %}
+    </ul>
+  </div>
+  <div class="right-panel" id="type-panel"><p class="muted">Select a type on the left.</p></div>
+</div>
 {% endblock %}

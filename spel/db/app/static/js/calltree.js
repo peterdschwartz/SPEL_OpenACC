@@ -1,88 +1,54 @@
-// Collapsible node-link view of the step tree (d3.tree, horizontal).
+// Box diagram of one routine's callees (layered.js): rows = dependency depth, left->right = call order.
 (function () {
   const svg = document.getElementById("calltree");
   if (!svg) return;
-  const tip = document.getElementById("ct-tooltip");
-  const wrap = document.getElementById("calltree-wrap");
+  const tip = document.getElementById("ct-tooltip"), wrap = document.getElementById("calltree-wrap"), crumbs = document.getElementById("ct-crumbs");
   const subUrl = svg.dataset.subUrl;
-  const ROWH = 22, COLW = 220;
-  let root, gLinks, gNodes, zoomG;
+  const $ = id => document.getElementById(id);
+  let trail = [], data = null;
 
-  function url() {
+  function url(root) {
     const p = new URLSearchParams(location.search);
-    const r = document.getElementById("ct-root").value.trim(); if (r) p.set("root", r); else p.delete("root");
-    p.set("depth", document.getElementById("ct-depth").value || 3);
-    if (document.getElementById("ct-inactive").checked) p.set("inactive", "1");
+    if (root) p.set("root", root); else p.delete("root");
+    if ($("ct-inactive").checked) p.set("inactive", "1"); else p.delete("inactive");
     return svg.dataset.src + "?" + p.toString();
   }
 
-  function toggle(d) {
-    if (d.children) { d._children = d.children; d.children = null; }
-    else if (d._children) { d.children = d._children; d._children = null; }
-    else if (d.data.collapsed) { // children not loaded: fetch the subtree
-      const p = new URLSearchParams(location.search); p.set("root", d.data.sub); p.set("depth", 2);
-      if (document.getElementById("ct-inactive").checked) p.set("inactive", "1");
-      fetch(svg.dataset.src + "?" + p.toString()).then(r => r.json()).then(j => {
-        const sub = j.roots[0];
-        d.data.children = sub.children || []; d.data.collapsed = 0;
-        const h = d3.hierarchy(d.data);
-        d.children = h.children; d.children && d.children.forEach(c => { c.parent = d; c.depth = d.depth + 1; });
-        update();
-      });
-      return;
-    }
-    update();
-  }
-
-  function update() {
-    const nodes = root.descendants(), links = root.links();
-    const tree = d3.tree().nodeSize([ROWH, COLW]);
-    tree(root);
-    let y0 = Infinity, y1 = -Infinity;
-    nodes.forEach(d => { if (d.x < y0) y0 = d.x; if (d.x > y1) y1 = d.x; });
-    const height = Math.max(wrap.clientHeight, y1 - y0 + 60);
-    d3.select(svg).attr("height", height);
-    zoomG.attr("transform", `translate(40,${-y0 + 30})`);
-
-    const link = gLinks.selectAll("path").data(links, d => d.target.data.id);
-    link.exit().remove();
-    link.enter().append("path").attr("class", "ct-link").merge(link)
-      .attr("d", d3.linkHorizontal().x(d => d.y).y(d => d.x))
-      .classed("inactive", d => !d.target.data.active);
-
-    const node = gNodes.selectAll("g.ct-node").data(nodes, d => d.data.id);
-    node.exit().remove();
-    const enter = node.enter().append("g").attr("class", "ct-node");
-    enter.append("circle");
-    enter.append("text").attr("dy", 4);
-    enter.on("click", (ev, d) => toggle(d))
-      .on("dblclick", (ev, d) => { ev.stopPropagation(); location.assign(subUrl.replace("X", encodeURIComponent(d.data.sub)) + location.search); })
-      .on("mouseenter", (ev, d) => {
-        tip.innerHTML = `<b>${d.data.label}</b>${d.data.count > 1 ? ` · called ${d.data.count} times here` : ""}<br>${d.data.size - 1} routines below · depth ${d.data.depth}${d.data.cut ? " · recursive call" : ""}${!d.data.analyzed ? " · not analyzed" : ""}${!d.data.active ? " · pruned by the config" : ""}` + (d.data.marks ? "<br>" + Object.entries(d.data.marks).map(([k, v]) => `${k}: ${v}`).join(", ") : "");
-        tip.hidden = false; tip.style.left = (ev.pageX + 12) + "px"; tip.style.top = (ev.pageY - 10) + "px";
-      }).on("mouseleave", () => { tip.hidden = true; });
-    const all = enter.merge(node).attr("transform", d => `translate(${d.y},${d.x})`)
-      .classed("inactive", d => !d.data.active).classed("unanalyzed", d => !d.data.analyzed).classed("cut", d => d.data.cut)
-      .classed("collapsed", d => !!(d._children || d.data.collapsed));
-    all.select("circle").attr("r", d => Math.min(12, 3 + Math.sqrt(d.data.size)));
-    all.select("text").attr("x", d => (d.children ? -1 : 1) * (Math.min(12, 3 + Math.sqrt(d.data.size)) + 4)).attr("text-anchor", d => d.children ? "end" : "start")
-      .text(d => d.data.name + (d.data.count > 1 ? ` ×${d.data.count}` : "") + (d.data.cut ? " ↺" : "") + ((d._children || d.data.collapsed) ? ` (+${d.data.collapsed || d.data.size - 1})` : ""));
-  }
-
-  function load() {
-    fetch(url()).then(r => r.json()).then(j => {
-      const sel = d3.select(svg).attr("width", Math.max(wrap.clientWidth, 1200));
-      sel.selectAll("*").remove();
-      zoomG = sel.append("g");
-      gLinks = zoomG.append("g"); gNodes = zoomG.append("g");
-      const data = j.roots.length === 1 ? j.roots[0] : { id: -1, name: "roots", label: "roots", size: 1, active: true, analyzed: true, children: j.roots };
-      root = d3.hierarchy(data);
-      sel.call(d3.zoom().scaleExtent([0.3, 3]).on("zoom", ev => { zoomG.attr("transform", ev.transform); }));
-      update();
+  function draw() {
+    if (!data) return;
+    const showBook = $("ct-bookkeeping").checked;
+    const shown = window.layeredGraph({
+      svg, wrap, tip,
+      nodes: data.nodes.filter(n => showBook || !n.bookkeeping), edges: data.edges,
+      perRow: +$("ct-per-row").value || 5, allEdges: $("ct-all-edges").checked, hideIsolated: $("ct-hide-isolated").checked,
+      name: d => d.name + (d.n > 1 ? ` (${d.k}/${d.n})` : ""),
+      sub: d => (d.active ? "" : "pruned · ") + `${d.n_in} in · ${d.n_out} out` + (d.n_children ? ` · ${d.size - 1} below` : "") + (d.cut ? " ↺" : ""),
+      nodeClass: d => (d.bookkeeping ? "book " : "") + (d.active ? "" : "inactive ") + (d.analyzed ? "" : "unanalyzed ") + (d.cut ? "cut " : "") + (d.n_children ? "expandable" : ""),
+      nodeTip: d => `<b>${d.label}</b>${d.n > 1 ? `<br>call ${d.k} of ${d.n} under ${data.root.name}` : ""}<br>${d.n_in} inputs · ${d.n_out} outputs · ${d.size - 1} routines below` +
+        (d.cut ? "<br>recursive call" : "") + (d.analyzed ? "" : "<br>not analyzed") + (d.active ? "" : "<br>pruned by the configuration") +
+        (d.n_children ? "<br><i>click to open its callees, double-click for the routine page</i>" : "<br><i>double-click for the routine page</i>"),
+      edgeTip: d => `<b>${d.s.name} → ${d.t.name}</b><br>${d.n} variable${d.n > 1 ? "s" : ""} written by the first and read by the second` +
+        (d.n_excluded ? `<br>${d.n_excluded} more excluded: written and read under disjoint filters` : "") + (d.direct ? "" : "<br><i>implied by a chain of direct edges</i>") +
+        `<div class="dg-vars">${d.vars.map(v => v.replace(/^.*::/, "")).join("<br>")}${d.n > d.vars.length ? "<br>…" : ""}</div>`,
+      onClick: d => { if (d.n_children) load(d.sub, true); },
+      onDblClick: d => location.assign(subUrl.replace("X", encodeURIComponent(d.sub)) + location.search),
     });
+    $("ct-summary").textContent = `${shown.nodes.length} of ${data.nodes.length} callees of ${data.root.label}, ${shown.edges.length} edges, ${shown.rows} rows`;
   }
-  document.getElementById("ct-reload").addEventListener("click", load);
-  document.getElementById("ct-root").addEventListener("keydown", e => { if (e.key === "Enter") load(); });
-  svg.addEventListener("redraw", load);
-  load();
+
+  function load(root, push) {
+    fetch(url(root)).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); }).then(j => {
+      if (push && data) trail.push({ sub: data.root.sub, name: data.root.name });
+      data = j; $("ct-root").value = j.root.sub;
+      window.crumbTrail(crumbs, trail, data.root.name, (c, i) => { trail = trail.slice(0, i); load(c.sub, false); });
+      draw();
+    }).catch(() => { $("ct-summary").textContent = `no routine named ${root}`; });
+  }
+  $("ct-reload").addEventListener("click", () => { trail = []; load($("ct-root").value.trim(), false); });
+  $("ct-root").addEventListener("keydown", e => { if (e.key === "Enter") { trail = []; load(e.target.value.trim(), false); } });
+  $("ct-root").addEventListener("pick", e => { trail = []; load(e.target.value.trim(), false); });
+  $("ct-inactive").addEventListener("change", () => load($("ct-root").value.trim(), false));
+  ["ct-per-row", "ct-all-edges", "ct-hide-isolated", "ct-bookkeeping"].forEach(id => $(id).addEventListener("change", draw));
+  svg.addEventListener("redraw", () => load($("ct-root").value.trim(), false));
+  load($("ct-root").value.trim(), false);
 })();

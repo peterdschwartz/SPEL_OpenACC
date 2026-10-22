@@ -26,6 +26,8 @@ from django.views.decorators.http import require_POST
 from .models import (
     ConfigProfile,
     FieldState,
+    FilterRelation,
+    FilterSet,
     FlatIf,
     IntrinsicGlobals,
     ModuleDependency,
@@ -35,6 +37,7 @@ from .models import (
     Snapshot,
     SubroutineArgs,
     SubroutineCalltree,
+    TraceAccess,
     SubroutineActiveGlobalVars,
     SubroutineCode,
     SubroutineIntrinsicGlobals,
@@ -160,14 +163,32 @@ def _startswith(qs, field_name, needle):
     return qs.annotate(startswith=Case(When(**{f"{field_name}__istartswith": needle}, then=Value(0)), default=Value(1), output_field=IntegerField()))
 
 
+def _needle(request) -> str:
+    src = request.POST if request.method == "POST" else request.GET
+    return (src.get("search") or src.get("root") or src.get("q") or "").strip()
+
+
 def sub_active_search(request):
+    """Routines fuzzily matching the query (`module::name` or part of either), analyzed ones first; `mode=pick` renders pick items."""
     snap, cfg = ctx_for(request)
-    needle = (request.POST.get("search") or request.GET.get("search") or "").strip()
+    needle = _needle(request)
+    mode = (request.POST.get("mode") or request.GET.get("mode") or "go")
     results = []
     if snap is not None and needle:
-        qs = Subroutines.objects.filter(snapshot=snap, subroutine_name__icontains=needle).select_related("module")
-        results = _startswith(qs, "subroutine_name", needle).order_by("startswith", "-analyzed", "subroutine_name")[:12]
-    return render(request, "partials/search/sub_active_search.html", {"results": results, "query": needle, "snapshot": snap, "cfg": cfg})
+        qs = Subroutines.objects.filter(snapshot=snap).select_related("module").order_by("-analyzed", "subroutine_name")
+        results = q.fuzzy_filter(needle, qs, lambda r: r.sub_id if "::" in needle else r.subroutine_name, limit=12)
+    return render(request, "partials/search/sub_active_search.html", {"results": results, "query": needle, "mode": mode, "snapshot": snap, "cfg": cfg})
+
+
+def mod_active_search(request):
+    """Modules fuzzily matching the query, as pick items for the module graph."""
+    snap, cfg = ctx_for(request)
+    needle = _needle(request)
+    results = []
+    if snap is not None and needle:
+        qs = Modules.objects.filter(snapshot=snap).order_by("module_name")
+        results = q.fuzzy_filter(needle, qs, lambda m: m.module_name, limit=12)
+    return render(request, "partials/search/mod_active_search.html", {"results": results, "query": needle, "snapshot": snap, "cfg": cfg})
 
 
 def var_active_search(request):
@@ -273,7 +294,7 @@ def types_view(request):
     for t in UserTypes.objects.filter(snapshot=snap).select_related("module", "parent").annotate(n_members=Count("user_type_def", distinct=True), n_instances=Count("instance_type", distinct=True)).order_by("user_type_name"):
         counts = cat_counts.get(t.pk, Counter())
         types.append({"type": t, "categories": [(c, counts.get(c, 0)) for c in CATEGORY_ORDER], "total": sum(counts.values())})
-    return render(request, "types.html", base_context(request, snap, cfg) | {"types": types})
+    return render(request, "types.html", base_context(request, snap, cfg) | {"types": types, "open": request.GET.get("type", "")})
 
 
 def type_detail(request, type_name):
@@ -293,7 +314,46 @@ def type_detail(request, type_name):
         "categories": [(c, cat_counts.get(c, 0)) for c in CATEGORY_ORDER],
         "extensions": UserTypes.objects.filter(parent=t).order_by("user_type_name"),
     }
-    return render(request, "type_detail.html", context)
+    return render(request, "partials/type_detail.html" if is_htmx(request) else "type_detail.html", context)
+
+
+def filters_view(request):
+    """The filters the step builds and the disjoint/subset relations derived from them."""
+    snap, cfg = ctx_for(request)
+    if snap is None:
+        return no_snapshot(request)
+    filters = list(FilterSet.objects.filter(snapshot=snap).select_related("subroutine").order_by("level", "name"))
+    relations = list(FilterRelation.objects.filter(snapshot=snap).select_related("subroutine").order_by("relation", "filter_a", "filter_b"))
+    names = [f.name for f in filters]
+    rel = {(r.filter_a, r.filter_b): r for r in relations if r.relation == "disjoint"}
+    rel |= {(r.filter_b, r.filter_a): r for r in relations if r.relation == "disjoint"}
+    sub = {(r.filter_a, r.filter_b): r for r in relations if r.relation == "subset"}
+    by_level = {}
+    for f in filters:
+        by_level.setdefault(f.level or "?", []).append(f.name)
+    matrices = []
+    for level, group in by_level.items():
+        rows = []
+        for a in group:
+            cells = []
+            for b in group:
+                if a == b:
+                    cells.append(("self", ""))
+                elif (a, b) in rel:
+                    cells.append(("disjoint", rel[(a, b)].source))
+                elif (a, b) in sub:
+                    cells.append(("subset", sub[(a, b)].source))
+                elif (b, a) in sub:
+                    cells.append(("superset", sub[(b, a)].source))
+                else:
+                    cells.append(("overlap", ""))
+            rows.append((a, cells))
+        matrices.append({"level": level, "names": group, "rows": rows})
+    n_filtered = TraceAccess.objects.filter(snapshot=snap).exclude(filter="").count()
+    n_total = TraceAccess.objects.filter(snapshot=snap).count()
+    return render(request, "filters.html", base_context(request, snap, cfg) | {
+        "filters": filters, "relations": relations, "matrices": matrices, "names": names,
+        "n_filtered": n_filtered, "n_total": n_total})
 
 
 def modules_view(request):
@@ -329,9 +389,7 @@ def variables_view(request):
         return no_snapshot(request)
     g = request.GET
     qs = FieldState.objects.filter(snapshot=snap).select_related("instance", "instance__instance_type", "member", "global_var", "global_var__gv_module", "first_trace_node__subroutine")
-    if g.get("q"):
-        needle = g["q"].lower()
-        qs = qs.filter(Q(member__member_name__icontains=needle) | Q(global_var__var_name__icontains=needle) | Q(instance__instance_name__icontains=needle))
+    needle = (g.get("q") or "").strip().lower()
     per_config = g.get("per_config") == "1"
     cats = config_categories(snap, cfg["hash"]) if per_config else None
     if g.get("category") and not per_config:
@@ -356,17 +414,25 @@ def variables_view(request):
     order = g.get("order") or "name"
     order_map = {"name": ("instance__instance_name", "member__member_name", "global_var__var_name"), "routines": ("-n_routines",), "writes": ("-n_writes",), "reads": ("-n_reads",), "first": ("first_trace_node__order",)}
     qs = qs.order_by(*order_map.get(order, order_map["name"]))
+    source = qs
+    if needle:
+        # fuzzy on the display name, best matches first (overrides the sort order)
+        def name_of(fs):
+            if fs.instance_id:
+                return f"{fs.instance.instance_name}%{fs.member.member_name if fs.member_id else ''}"
+            return f"{fs.global_var.gv_module.module_name}::{fs.global_var.var_name}" if fs.global_var_id else ""
+        source = q.fuzzy_filter(needle, qs, name_of)
     rows = []
     if per_config:
         wanted = g.get("category")
-        for fs in qs:
+        for fs in source:
             cat = cats.get(q.state_key(fs), "unused")
             if wanted and cat != wanted:
                 continue
             rows.append((fs, cat))
         paginator = Paginator(rows, 100)
     else:
-        paginator = Paginator(qs, 100)
+        paginator = Paginator(source, 100)
     page = paginator.get_page(g.get("page"))
     items = [(r[0], r[1]) if per_config else (r, r.effective_category) for r in page.object_list]
     instances = UserTypeInstances.objects.filter(inst_module__snapshot=snap).order_by("instance_name").values_list("instance_name", flat=True)
@@ -458,7 +524,8 @@ def type_members(request, type_name):
     if inst is None:
         inst = UserTypeInstances.objects.filter(instance_type=t).order_by("instance_name").first()
     rows = q.member_rows(snap, inst, t, (request.GET.get("q") or "").strip())
-    return render(request, "partials/member_rows.html", {"rows": rows, "snapshot": snap, "cfg": cfg})
+    template = "partials/member_list.html" if request.GET.get("view") == "list" else "partials/member_rows.html"
+    return render(request, template, {"rows": rows, "snapshot": snap, "cfg": cfg})
 
 
 def trace_vars(request):
@@ -504,7 +571,7 @@ def modgraph_view(request):
     snap, cfg = ctx_for(request)
     if snap is None:
         return no_snapshot(request)
-    return render(request, "modgraph.html", base_context(request, snap, cfg))
+    return render(request, "modgraph.html", base_context(request, snap, cfg) | {"root": request.GET.get("root", "")})
 
 
 # -------------------------------------------------------------------- diff

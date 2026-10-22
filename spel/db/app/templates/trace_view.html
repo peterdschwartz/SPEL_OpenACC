@@ -1,9 +1,10 @@
 {% extends "base.html" %}
+{% load staticv %}
 {% load static %}
 {% block title %}Trace · ELM Explorer{% endblock %}
 {% block extrahead %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js" integrity="sha512-vc58qvvBdrDR4etbxMdlTt4GBQk1qjvyORR2nrsPsFPyrs+/u5c3+1Ct6upOgdZoIl7eq6k3a1UPDSNAQi/32A==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="{% static 'js/timeline.js' %}" defer></script>
+<script src="{% static_v 'js/timeline.js' %}" defer></script>
 {% endblock %}
 {% block body %}
 <div class="tracebar">
@@ -17,7 +18,7 @@
   {% for k in unknown %}<span class="chip chip-unknown" title="not found in this snapshot">{{ k }}</span>{% endfor %}
 </div>
 <details id="picker" class="picker" {% if not refs %}open{% endif %}>
-  <summary>Pick variables <span class="muted">— choose an instance to list its components, or type part of any variable name</span></summary>
+  <summary>Pick variables <span class="muted">— search here (fuzzy: choose an instance to list its components, or type part of any variable name), or use the add buttons on the <a href="{% url 'types' %}">Types</a> page</span></summary>
   <form class="picker-fields" onsubmit="return false;" id="picker-form">
     <select id="picker-instance" name="instance" hx-get="{% url 'picker' %}" hx-include="#picker-form" hx-target="#picker-results" hx-trigger="change">
       <option value="">— any variable (module variables, instances, members) —</option>
@@ -28,16 +29,21 @@
   </form>
   <div id="picker-results" class="picker-results" hx-get="{% url 'picker' %}" hx-include="#picker-form" hx-trigger="load" hx-swap="innerHTML"></div>
 </details>
-<p id="trace-intro" class="lead" {% if refs %}hidden{% endif %}>The timeline shows where in the time step each traced variable is read (○) and written (■), the arcs from a write to the
-  <em>next</em> read show when a computed value is needed, and a dashed arc from the last write back to the first read marks
-  state carried into the next step (prognostic). Faded marks sit inside an <code>if</code> block (or a routine called from
-  one): a conditional write does not reset the variable for every element.</p>
+<div id="trace-intro" class="page-intro" {% if refs %}hidden{% endif %}>
+  <p>The timeline shows where in the time step each traced variable is read and written.</p>
+  <ul>
+    <li>○ read, ■ written, ◈ read and written; ×n merges several accesses in one routine (hover for the sequence).</li>
+    <li>An arc from a write to the <em>next</em> read shows when a computed value is needed; a dashed arc from the last write back to the first read marks state carried into the next step (prognostic).</li>
+    <li>Faded marks sit inside an <code>if</code> block, or in a routine called from one: a conditional write does not reset the variable for every element.</li>
+    <li>Two ways to add variables: the search above (click matches to add them), or the add buttons next to a type's members on the <a href="{% url 'types' %}">Types</a> page. Then press Trace.</li>
+  </ul>
+</div>
 <div id="trace-views" {% if not refs %}hidden{% endif %}>
 <section class="timeline-section">
   <div class="timeline-controls">
     <label class="check"><input type="checkbox" id="tl-all"> all routines as columns</label>
     <label class="check"><input type="checkbox" id="tl-arcs" checked> arcs</label>
-    <span class="legend"><span class="mark-r">○</span> read <span class="mark-w">■</span> write <span class="mark-rw">◆</span> read+write
+    <span class="legend"><span class="mark-r">○</span> read <span class="mark-w">■</span> write <span class="mark-rw">◈</span> read+write <span class="muted">· ×n = several accesses in one routine (hover for the sequence)</span>
       <span class="arc-next">—</span> next read <span class="arc-carried">- -</span> carried to next step</span>
     <span id="tl-status" class="muted"></span>
   </div>

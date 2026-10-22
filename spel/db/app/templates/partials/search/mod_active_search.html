@@ -1,0 +1,7 @@
+{% if results %}
+<div class="dropdown" role="listbox" aria-label="Module matches">
+  {% for m in results %}<a href="#" role="option" data-pick-mod="{{ m.module_name }}">{{ m.module_name }}</a>{% endfor %}
+</div>
+{% elif query %}
+<div class="dropdown" role="listbox"><div class="empty">No matches for “{{ query }}”.</div></div>
+{% endif %}

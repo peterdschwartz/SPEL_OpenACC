@@ -1,3 +1,4 @@
+{% load staticv %}
 {% load static %}
 <!DOCTYPE html>
 <html lang="en">
@@ -10,10 +11,10 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/fortran.min.js"></script>
-  <link rel="stylesheet" href="{% static 'css/styles.css' %}">
-  <script src="{% static 'js/toggle.js' %}" defer></script>
-  <script src="{% static 'js/explorer.js' %}" defer></script>
-  <script src="{% static 'js/tracelist.js' %}" defer></script>
+  <link rel="stylesheet" href="{% static_v 'css/styles.css' %}">
+  <script src="{% static_v 'js/toggle.js' %}" defer></script>
+  <script src="{% static_v 'js/explorer.js' %}" defer></script>
+  <script src="{% static_v 'js/tracelist.js' %}" defer></script>
   {% block extrahead %}{% endblock %}
 </head>
 <body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}' data-snap="{{ snapshot.label }}" data-cfg="{{ cfg.key }}">

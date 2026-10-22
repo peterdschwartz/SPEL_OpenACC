@@ -1,19 +1,35 @@
 {% extends "base.html" %}
+{% load staticv %}
 {% load static %}
 {% block title %}Module graph · ELM Explorer{% endblock %}
 {% block extrahead %}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js" integrity="sha512-vc58qvvBdrDR4etbxMdlTt4GBQk1qjvyORR2nrsPsFPyrs+/u5c3+1Ct6upOgdZoIl7eq6k3a1UPDSNAQi/32A==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-<script src="{% static 'js/modgraph.js' %}" defer></script>
+<script src="{% static_v 'js/layered.js' %}" defer></script>
+<script src="{% static_v 'js/modgraph.js' %}" defer></script>
 {% endblock %}
 {% block body %}
 <div class="page-head"><h2>Module <code>use</code> graph</h2>
-  <div class="page-actions inline-form">
-    <input type="search" id="mg-search" placeholder="highlight module…">
-    <label>min imports <input type="range" id="mg-min" min="1" max="30" value="3"> <span id="mg-min-val">3</span></label>
-    <label class="check"><input type="checkbox" id="mg-labels" checked> labels</label>
+  <div class="page-actions">
+    <form class="inline-form" onsubmit="return false;">
+      <span class="search-form"><input type="search" id="mg-root" name="root" value="{{ root }}" placeholder="module (default elm_driver)" autocomplete="off"
+            hx-post="{% url 'mod_active_search' %}" hx-trigger="input changed delay:200ms" hx-target="next .search-results"><span class="search-results"></span></span>
+      <select id="mg-dir"><option value="uses">modules it uses</option><option value="usedby">modules using it</option></select>
+      <label>per row <input type="number" id="mg-per-row" min="1" max="12" value="6" style="width:4em"></label>
+      <label>min names <input type="number" id="mg-min" min="1" max="50" value="1" style="width:4em"> <span id="mg-min-val" hidden></span></label>
+      <label class="check"><input type="checkbox" id="mg-all-edges"> all edges</label>
+      <label class="check"><input type="checkbox" id="mg-hide-isolated"> hide unconnected</label>
+      <button class="styled-button" id="mg-reload">Draw</button>
+    </form>
   </div></div>
-<p class="muted">An arrow from A to B means A <code>use</code>s B at module scope; its width is the number of imported names. Node
-  size follows the number of routines. Drag to rearrange, scroll to zoom, click a module to open it.</p>
+<div class="page-intro">
+  <p>Each box is a module the root module <code>use</code>s at module scope, or, switched around, a module that uses it.</p>
+  <ul>
+    <li>A line runs from a module down to one it uses, so a module sits below everything that uses it; modules on one row with no line between them are independent. Left to right is the order of the root's <code>use</code> statements.</li>
+    <li>Line width follows the number of names imported; hover for the names, "min names" hides thinner lines.</li>
+    <li>A blue outline and › mark a module with dependencies of its own in this direction: click it to open them. Double-click any box for the module page.</li>
+  </ul>
+</div>
+<div class="dg-bar"><span id="mg-crumbs" class="dg-crumbs"></span><span id="mg-summary" class="muted"></span></div>
 <div id="modgraph-wrap" class="graph-wrap"><svg id="modgraph" data-src="{% url 'api_modgraph' %}" data-mod-url="{% url 'module_detail' 'X' %}"></svg></div>
 <div id="mg-tooltip" class="tooltip" hidden></div>
 {% endblock %}

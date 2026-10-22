@@ -45,6 +45,8 @@ from ..models import (
     SubroutineLocalArrays,
     Subroutines,
     TraceAccess,
+    FilterSet,
+    FilterRelation,
     TraceNode,
     TypeDefinitions,
     TypeProcedure,
@@ -126,6 +128,7 @@ class SnapshotLoader:
             snap = self._snapshot()
             self._structure(snap)
             self._routines(snap)
+            self._module_deps(snap)
             self._accesses(snap)
             self._ifs(snap)
             self._registrations(snap)
@@ -320,6 +323,19 @@ class SnapshotLoader:
         member = self.member.get((self.inst_type[inst], r.get("member", ""))) if r.get("member") else None
         return inst, member
 
+    def _module_deps(self, snap: Snapshot) -> None:
+        objs = []
+        for r in self.rows("module_deps"):
+            mod = self.mod.get(r["module"])
+            if mod is None:
+                continue
+            objs.append(ModuleDependency(
+                module_id=mod, dep_module_id=self.mod.get(r["dep_module"]), dep_module_name=r["dep_module"],
+                object_used=r["object_used"], local_name=r["local_name"], ln=_int(r["ln"], -1), whole=_bool(r["whole"]),
+                in_head=_bool(r["in_head"]), subroutine_id=self.sub.get(r["subroutine"]) if r["subroutine"] else None,
+            ))
+        self.bulk(ModuleDependency, objs, "module_deps")
+
     def _accesses(self, snap: Snapshot) -> None:
         objs = []
         for r in self.rows("active_dtype_vars"):
@@ -460,8 +476,17 @@ class SnapshotLoader:
             objs.append(TraceAccess(snapshot=snap, trace_node_id=node, instance_id=inst, member_id=member,
                                     global_var_id=self.gvar.get((r["var_module"], r["var_name"])), path=r["path"],
                                     status=r["status"], ln=_int(r["ln"]), order=_int(r["order"]),
-                                    resolved_from=r["resolved_from"], conditional=_bool(r["conditional"])))
+                                    resolved_from=r["resolved_from"], conditional=_bool(r["conditional"]),
+                                    index_kind=r.get("index_kind", ""), filter=r.get("filter", "")))
         self.bulk(TraceAccess, objs, "trace_access")
+
+        objs = [FilterSet(snapshot=snap, name=r["name"], subroutine_id=self.sub.get(r["subroutine"]), ln=_int(r["ln"], 0),
+                          level=r["level"], parent=r["parent"], guards=r["guards"]) for r in self.rows("filters")]
+        self.bulk(FilterSet, objs, "filters")
+        objs = [FilterRelation(snapshot=snap, filter_a=r["filter_a"], filter_b=r["filter_b"], relation=r["relation"],
+                               source=r["source"], subroutine_id=self.sub.get(r["subroutine"]) if r["subroutine"] else None,
+                               condition=r["condition"]) for r in self.rows("filter_relations")]
+        self.bulk(FilterRelation, objs, "filter_relations")
 
         objs = []
         for r in self.rows("field_state"):

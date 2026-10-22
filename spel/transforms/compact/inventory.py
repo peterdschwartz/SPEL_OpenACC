@@ -40,6 +40,7 @@ from spel.scripts.fortran_parser.scope_walk import (
 from spel.scripts.fortran_parser.symbols import Origin
 from spel.scripts.record_access import AccessMapper
 from spel.transforms.compact.index_forms import (
+    callee_context,
     IndexContext,
     IndexForm,
     compaction_class,
@@ -240,43 +241,9 @@ class Tracer:
 
     def callee_context(self, ctx: IndexContext, sub, event, callee, pos: int) -> IndexContext:
         """The callee's dummies bound to this call's actuals."""
-        env: dict[str, set] = {}
-        idx_env: dict[str, IndexForm] = {}
-        inherit: dict[str, IndexForm] = {}
-        rec = ctx.rec
-        # the access of each designator actual, by path (subscripts kept)
-        actual_access: dict[str, tuple[int, Access]] = {}
-        for p in range(pos - 1, -1, -1):
-            e = rec.events[p]
-            if isinstance(e, Access) and e.ln == event.ln:
-                if e.status == "arg":
-                    actual_access.setdefault(e.path, (p, e))
-            elif getattr(e, "ln", event.ln) != event.ln:
-                break
-        for b in self.bindings(sub).get((event.ln, callee.id), []):
-            env.setdefault(b.dummy, set()).update(ctx.resolve(b.actual, b.origin))
-            if (hit := actual_access.get(b.actual)) is not None and ctx.fixes_subgrid(hit[1]):
-                inherit[b.dummy] = ctx.access_form(hit[1], hit[0])
-            if "%" not in b.actual and b.origin in (Origin.LOCAL, Origin.DUMMY):
-                d = rec.declaration(b.actual)
-                if d is not None and d.dim == 0 and d.type.lower().startswith("integer"):
-                    form = ctx.var_form(b.actual, pos, event.ln, 0)
-                    if form.kind != "unknown":
-                        idx_env[b.dummy] = form
-        self.calls.setdefault(callee.id, []).append(
-            (sub.id, event.ln, {k: frozenset(v) for k, v in env.items()})
-        )
-        host = None
-        if callee.is_internal:
-            host = ctx if callee.host_id == sub.id else ctx.host
-        return IndexContext(
-            callee.id,
-            callee.record,
-            {k: frozenset(v) for k, v in env.items()},
-            idx_env,
-            inherit,
-            host,
-        )
+        cctx, env = callee_context(ctx, self.bindings(sub).get((event.ln, callee.id), []), event, callee, pos)
+        self.calls.setdefault(callee.id, []).append((sub.id, event.ln, env))
+        return cctx
 
     def emit(self, ctx, pos, access, t, status, guards, top, top_ln, zeroing) -> None:
         subgrid = self.component(t)[0]

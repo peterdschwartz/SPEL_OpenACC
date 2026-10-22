@@ -5,7 +5,7 @@
   <h2>{{ sub.module.module_name|default:'lib' }}::{{ sub.subroutine_name }}</h2>
   <div class="page-actions">
     <button data-toggle-all data-target="#left-panel" aria-pressed="false" class="styled-button">Expand all</button>
-    <label class="check"><input type="checkbox" id="show-inactive" data-param="inactive" data-target="#left-panel"> show routines pruned by the config</label>
+    <label class="check"><input type="checkbox" id="show-inactive" name="inactive" value="1" data-param="inactive" data-target="#left-panel"> show routines pruned by the config</label>
     <a class="styled-button" href="{% url 'calltree_view' %}?root={{ sub.sub_id }}">Tree graph</a>
   </div>
 </div>
