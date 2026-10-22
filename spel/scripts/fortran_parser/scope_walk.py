@@ -35,6 +35,7 @@ from spel.scripts.fortran_parser.spel_ast import (
     ContinueStatement,
     CycleStatement,
     DataImpliedDo,
+    IOImpliedDo,
     DataStatement,
     DoLoop,
     DoWhile,
@@ -578,7 +579,7 @@ class _Walker:
                 for c in stmt.controls:
                     self.walk_io_control(c, ln, is_read=True)
                 for item in stmt.items:
-                    self.walk_designator(item, "w", ln, context="read")
+                    self.walk_io_item(item, "w", ln)
             case MacroCallStatement():
                 for a in stmt.args:
                     self.walk_expr(a, ln)
@@ -591,11 +592,13 @@ class _Walker:
                         self.walk_io_control(e, ln, is_read=False)
                 for e in stmt.exprs:
                     if e is not None:
-                        self.walk_expr(e, ln)
+                        self.walk_io_item(e, "r", ln)
             case PrintStatement():
-                for e in (stmt.fmt, *stmt.exprs):
+                if stmt.fmt is not None:
+                    self.walk_expr(stmt.fmt, ln)
+                for e in stmt.exprs:
                     if e is not None:
-                        self.walk_expr(e, ln)
+                        self.walk_io_item(e, "r", ln)
             case MacroIf():
                 # the configuration is unknown: every branch is walked
                 self.walk_block(stmt.body)
@@ -721,6 +724,25 @@ class _Walker:
             self.walk_block(stmt.body)
         finally:
             self.scope = outer
+
+    def walk_io_item(self, item: Expression, status: str, ln: int) -> None:
+        """
+        A read ("w": the items are assigned) or write/print ("r") item. An
+        io-implied-do reads its bounds, assigns its index (a variable of the
+        routine, unlike a data-implied-do's) and then handles its items.
+        """
+        if isinstance(item, IOImpliedDo):
+            loop = item.loop
+            for e in (loop.start_expr, loop.end_expr, loop.step_expr):
+                if e is not None:
+                    self.walk_expr(e, ln)
+            self.walk_designator(Identifier(loop.index, loop.index.literal), "w", ln, context="io-do")
+            for o in item.items:
+                self.walk_io_item(o, status, ln)
+        elif status == "w":
+            self.walk_designator(item, "w", ln, context="read")
+        else:
+            self.walk_expr(item, ln)
 
     def walk_data_object(self, obj: Expression, ln: int) -> None:
         if not isinstance(obj, DataImpliedDo):

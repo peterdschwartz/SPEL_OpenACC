@@ -426,3 +426,28 @@ end type t"""
         ("write_formatted", "t_write"),
         ("write(formatted)", "write_formatted"),
     ]
+
+
+def test_io_implied_do():
+    from spel.scripts.fortran_parser.spel_ast import IOImpliedDo, PrintStatement, ReadStatement, WriteStatement
+
+    prog = parse_statements(
+        """write(iulog,'(72a1)') ("*",i=1,60)
+write(iulog,*) 'x', (a(i), b(i), i = 1, n, 2), ((c(i,j), i=1,n), j=1,m)
+write(iulog,*) (x + y) * 2, (z)
+print *, (a(i), i=1,n)
+read(unit,*) (a(i), i=1,n)"""
+    )
+    w1, w2, w3, p, r = prog.statements
+    assert isinstance(w1, WriteStatement) and isinstance(w1.exprs[0], IOImpliedDo)
+    ido = w1.exprs[0]
+    assert ido.loop.index.literal == "i" and str(ido.loop.end_expr) == "60"
+    assert [type(e).__name__ for e in w2.exprs] == ["StringLiteral", "IOImpliedDo", "IOImpliedDo"]
+    assert [str(o) for o in w2.exprs[1].items] == ["a(i)", "b(i)"] and str(w2.exprs[1].loop.step_expr) == "2"
+    outer = w2.exprs[2]
+    assert outer.loop.index.literal == "j" and isinstance(outer.items[0], IOImpliedDo)
+    assert outer.items[0].loop.index.literal == "i"
+    # a parenthesized single item is a grouped expression, not a loop
+    assert [type(e).__name__ for e in w3.exprs] == ["InfixExpression", "Identifier"]
+    assert isinstance(p, PrintStatement) and isinstance(p.exprs[0], IOImpliedDo)
+    assert isinstance(r, ReadStatement) and isinstance(r.items[0], IOImpliedDo)

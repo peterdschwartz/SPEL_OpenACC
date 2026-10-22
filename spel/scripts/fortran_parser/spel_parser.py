@@ -16,6 +16,7 @@ from spel.scripts.fortran_parser.spel_ast import (
     ContinueStatement,
     CycleStatement,
     DataImpliedDo,
+    IOImpliedDo,
     DataSet,
     DataStatement,
     DataValue,
@@ -855,11 +856,7 @@ class Parser:
         items: list[Expression] = []
         if not self.peek_ends_statement():
             self.next_token()
-            items.append(self.parse_expression(Precedence.LOWEST))
-            while self.peekTokenIs(Tok.COMMA):
-                self.next_token()
-                self.next_token()
-                items.append(self.parse_expression(Precedence.LOWEST))
+            items.extend(self.parse_io_items())
         return ReadStatement(tok, controls, items)
 
     def is_macro_call(self) -> bool:
@@ -1897,7 +1894,10 @@ class Parser:
             err = f"Unexpected Token {cur_type} at {self.lineno} {self.lexer.input}"
             self.fatal(err)
         left_expr: Expression = prefix()
+        return self.parse_infix_chain(left_expr, prec)
 
+    def parse_infix_chain(self, left_expr: Expression, prec: Precedence) -> Expression:
+        """Continue an expression whose left operand is already parsed (cur_token is its last token)."""
         while (
             not self.peekTokenIs(Tok.NEWLINE)
             and prec.value < self.peek_precedence().value
@@ -1909,6 +1909,44 @@ class Parser:
             self.next_token()
             left_expr = infix(left_expr)
         return left_expr
+
+    @Trace.trace_decorator("parse_io_item")
+    def parse_io_item(self) -> Expression:
+        """
+        One item of a read/write/print list: an expression or an io-implied-do,
+        `(item, ..., i = start, end[, step])`, whose items may nest. A
+        parenthesized single item is a grouped expression and may continue,
+        e.g. `(a + b) * c`. Exit: cur_token is the item's last token.
+        """
+        if not self.curTokenIs(Tok.LPAREN):
+            return self.parse_expression(Precedence.LOWEST)
+        tok = self.cur_token
+        items: list[Expression] = []
+        while True:
+            self.next_token()
+            if self.curTokenIs(Tok.IDENT) and self.peekTokenIs(Tok.ASSIGN):
+                loop = self.parse_implied_do()
+                if not self.expect_peek_and_advance(Tok.RPAREN):
+                    self.fatal(f"Expected ')' closing an implied-do @{self.lineno}: {self.lexer.input}")
+                return IOImpliedDo(tok, items, loop)
+            items.append(self.parse_io_item())
+            if self.peekTokenIs(Tok.COMMA):
+                self.next_token()
+                continue
+            if not self.expect_peek_and_advance(Tok.RPAREN):
+                self.fatal(f"Expected ')' in an I/O item @{self.lineno}: {self.lexer.input}")
+            if len(items) == 1:
+                return self.parse_infix_chain(items[0], Precedence.LOWEST)
+            self.fatal(f"Parenthesized list without implied-do control @{self.lineno}: {self.lexer.input}")
+
+    def parse_io_items(self) -> list[Expression]:
+        """A read/write/print item list. Entry: cur_token is the first token. Exit: the last."""
+        items = [self.parse_io_item()]
+        while self.peekTokenIs(Tok.COMMA):
+            self.next_token()
+            self.next_token()
+            items.append(self.parse_io_item())
+        return items
 
     def parse_grouped_expr(self) -> Expression:
         self.next_token()
@@ -2048,11 +2086,7 @@ class Parser:
             stmt.controls = controls
             return stmt
         self.next_token()
-        exprs.append(self.parse_expression(Precedence.LOWEST))
-        while self.peekTokenIs(Tok.COMMA):
-            self.next_token()
-            self.next_token()
-            exprs.append(self.parse_expression(Precedence.LOWEST))
+        exprs.extend(self.parse_io_items())
 
         stmt = WriteStatement(tok, unit, fmt, exprs)
         stmt.controls = controls
@@ -2066,12 +2100,7 @@ class Parser:
         self.expect_peek_and_advance(Tok.COMMA)
         self.next_token()
 
-        exprs: list[Expression] = []
-        exprs.append(self.parse_expression(Precedence.LOWEST))
-        while self.peekTokenIs(Tok.COMMA):
-            self.next_token()
-            self.next_token()
-            exprs.append(self.parse_expression(Precedence.LOWEST))
+        exprs: list[Expression] = self.parse_io_items()
         return PrintStatement(token=tok, fmt=fmt, exprs=exprs)
 
     @Trace.trace_decorator("parse_array_init")

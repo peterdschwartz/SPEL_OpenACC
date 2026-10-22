@@ -1341,6 +1341,37 @@ class DataImpliedDo(Expression):
         }
 
 
+class IOImpliedDo(Expression):
+    """
+    io-implied-do in a read/write/print item list: (item-list, i = start, end[, step]).
+    Items may be expressions or nested io-implied-dos. Unlike a data or
+    array-constructor implied-do, the index is a variable of the routine, which
+    the loop assigns.
+    """
+
+    def __init__(self, tok: Token, items: list[Expression], loop: "ImpliedDo"):
+        self.token = tok
+        self.items: list[Expression] = items
+        self.loop: ImpliedDo = loop
+
+    def expression_node(self) -> None:
+        pass
+
+    def token_literal(self) -> str:
+        return self.token.literal
+
+    def __str__(self) -> str:
+        items = ", ".join(str(o) for o in self.items)
+        return f"({items}, {self.loop})"
+
+    def to_dict(self):
+        return {
+            "Node": "IOImpliedDo",
+            "items": [o.to_dict() for o in self.items],
+            "loop": self.loop.to_dict(),
+        }
+
+
 class DataValue:
     """[repeat*]constant"""
 

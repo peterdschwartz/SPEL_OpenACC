@@ -715,3 +715,24 @@ end subroutine s
     )
     assert ("w", "ios", 7) in acc(rec, 7) and ("w", "msg", 7) in acc(rec, 7)
     assert ("r", "text", 7) in acc(rec, 7)
+
+
+def test_io_implied_do_accesses():
+    rec = walk(
+        """
+subroutine s(unit, a, b, n)
+  implicit none
+  integer, intent(in) :: unit, n
+  real, intent(in) :: a(n)
+  real, intent(out) :: b(n)
+  integer :: i, j
+  write(unit,'(72a1)') ("*", i=1,60)
+  write(unit,*) ((a(i), i=1,n), j=1,2)
+  read(unit,*) (b(i), i=1,n)
+end subroutine s
+"""
+    )
+    assert ("w", "i", 7) in acc(rec, 7)  # the io-implied-do index is a routine variable
+    assert {("r", "a", 8), ("r", "n", 8), ("w", "i", 8), ("w", "j", 8)} <= set(acc(rec, 8))
+    assert ("w", "b", 9) in acc(rec, 9) and ("r", "b", 9) not in acc(rec, 9)
+    assert ("w", "i", 9) in acc(rec, 9) and ("r", "n", 9) in acc(rec, 9)
