@@ -17,8 +17,10 @@ What SPEL does:
   configuration or ELM COMPSET**. Variables and code paths that are only reachable under, e.g.,
   `use_crop = .true.` are identified as such rather than being reported unconditionally.
 - **Source-to-source modification** — script-driven edits such as OpenACC pragma insertion.
-- **Database export** — the whole-driver analysis is exported as CSVs for a Django/HTMX web
-  app: call tree, variable tracing timeline, prognostic/diagnostic catalog, namelist diff mode.
+- **Code explorer** — the whole-driver analysis is exported as CSVs for a Django/HTMX web app:
+  the time step as a data-dependency graph, a multi-variable trace timeline, a
+  prognostic/diagnostic catalog, derived types, module `use` graph, subgrid filter relations, and a
+  diff mode between namelist configurations or E3SM branches.
 
 > ELM is the only project supported today.
 
@@ -59,28 +61,130 @@ analysis cache) is derived from it. Verify with:
 spel config
 ```
 
-### Comparing a development branch against a reference branch
+## Workflows
 
-Each E3SM checkout gets its own `elm_drv` analysis cache, so two checkouts can be used side by
-side without `--reanalyze`. Use the same case name (`-c`) for both:
+SPEL shortens the loop of changing ELM and checking the result. Instead of rebuilding E3SM and
+running a CIME case for every edit, you pull the routines you are working on out into a standalone
+test that builds in seconds, feed it data captured from a real ELM run, and check every change
+against that data bit for bit. When the change is right, SPEL copies it back into ELM.
+
+### 1. Extract a routine into a standalone test
 
 ```bash
-# 1. reference data from the reference checkout (instruments it, runs ELM, then runs/validates the test)
-spel create -s canopyfluxes -c canflux --run-case --srcroot ~/E3SM
-# 2. the same unit test generated from the development checkout
-spel create -s canopyfluxes -c canflux --srcroot ~/dev_E3SM
-# 3. build/run it on the reference data and diff against the reference outputs
-spel run canflux
+spel create -s canopyfluxes -c canflux
 ```
 
-Step 2 regenerates `unit-tests/canflux/` but leaves `unit-tests/input-data/canflux/` (the
-reference data) alone. `spel run` prints which checkout generated the unit test and which one
-produced the data (recorded in `input-data/<case>/spel_reference.json`), and notes when they
-differ. Then the diffs are the answer differences between the branches. The access check uses the
-development branch's analysis. The development unit test can only read the reference data if both
-branches use the same variables (derived-type components) as inputs.
+SPEL resolves everything the routines need (modules, derived types, globals, the call tree below
+them), comments out what they don't, and writes a CMake case in `unit-tests/canflux/`. The case
+builds with gfortran or nvfortran and runs only those routines. See [`spel create`](#spel-create).
 
-### Directory layout
+### 2. Capture reference data from a real ELM run
+
+```bash
+spel create -s canopyfluxes -c canflux --run-case        # instrument, build and run ELM, collect the data
+spel validate -s canopyfluxes soillittverttransp -j 4    # many cases from one ELM run
+```
+
+[Instrumentation](#spel-instrument) inserts capture calls around the routine's call site in ELM,
+on the shortest call chain from `elm_drv`. It writes every input the routine reads and every output
+it writes, every `--freq` steps, to netCDF. The inserted lines are tagged, so re-running replaces
+them and `--undo` removes them, and several cases can be captured in one build.
+[`spel validate`](#spel-validate) does all of it for a list of routines: create the cases,
+instrument ELM once, run one CIME case, remove the instrumentation, run and check every test, and
+write a report.
+
+### 3. Focus on the gridcells that matter
+
+```bash
+spel create -s urbanfluxes -c urb_sub --run-case --subset urban
+spel validate --list cases.txt --subset 'landunit: lun_pp%itype(l) == istcrop'
+spel subset urb_full urb_three --gridcells 3,5,7          # cut existing data offline
+```
+
+A large simulation can be captured for just the gridcells you care about: urban, lake, crop,
+glacier or wetland presets, or any Fortran expression over ELM fields. The selection runs inside
+ELM at the first capture, and the files look like the capture of a smaller domain (whole gridcells,
+renumbered from 1), so the unit test needs no special handling. A test of the urban code can run on
+three urban gridcells of a global run instead of the whole domain. See
+[Gridcell subsets](#gridcell-subsets).
+
+### 4. Change the code and verify it
+
+```bash
+spel run canflux            # build, run on the captured inputs, diff against ELM's outputs
+spel run canflux 8          # the same data replicated 8 times: must stay bit-identical
+```
+
+Edit the routines inside `unit-tests/canflux/` and re-run. [`spel run`](#spel-run) diffs every
+output against what ELM produced and checks that the routine reads and writes what the analysis
+says it does. With a gfortran build the target is bit-for-bit. `nsets` copies of the data catch
+indexing and race bugs that a single copy hides. [`spel diff`](#spel-diff) compares any two netCDF
+files.
+
+### 5. Port to GPUs or multicore
+
+```bash
+spel accplan --routine soiltemperature        # proposed OpenACC loop structure per loop
+SPEL_ACC=MULTICORE spel run soiltemp_acc      # OpenACC build, compare with ACC=OFF
+spel acc2omp --case soiltemp_acc --dry-run    # race check: scalars the analysis would privatize
+spel profile soiltemp_acc 4 --steps 10        # Nsight Systems timing of just the routine
+```
+
+The analysis knows each loop's extent, its index and what every scalar in it reads and writes, so
+SPEL can propose OpenACC loop structures ([`spel accplan`](#spel-accplan)), translate OpenACC to
+OpenMP to run multithreaded with gfortran ([`spel acc2omp`](#spel-acc2omp)), and point out scalars
+missing from `private` clauses. [`spel profile`](#spel-profile) times the routine alone under
+Nsight.
+
+### 6. Merge the change back into ELM
+
+```bash
+spel restore -c canflux --dry-run     # list the files that would be copied back
+spel restore -c canflux               # copy them into E3SM_SRCROOT
+```
+
+[`spel restore`](#spel-restore) finds the source files you changed in the case since
+`spel create`. It undoes SPEL's edits (dependencies commented out with a `!#py ` token are
+uncommented) and copies them back to their place in the E3SM checkout. Files that SPEL wrote for
+the test harness itself (`SourceFiles/`) are never copied. The ELM sources then contain exactly
+your change, ready for a full E3SM build and a pull request.
+
+### 7. Compare a development branch against a reference branch
+
+Each E3SM checkout gets its own analysis cache, so two checkouts can be used side by side. Use the
+same case name for both:
+
+```bash
+spel create -s canopyfluxes -c canflux --run-case --srcroot ~/E3SM     # reference data from master
+spel create -s canopyfluxes -c canflux --srcroot ~/dev_E3SM            # the test from your branch
+spel run canflux                                                       # your branch on master's data
+```
+
+The second `create` regenerates `unit-tests/canflux/` but leaves the reference data in
+`unit-tests/input-data/canflux/` alone. `spel run` reports which checkout generated the test and
+which one produced the data. The diffs are then the answer differences between the branches. This
+works when both branches read the same derived-type components as inputs.
+
+### 8. Understand the code
+
+The whole-driver analysis answers questions that otherwise take reading dozens of files: which
+routines a configuration actually runs, which fields a routine reads and writes (through any depth
+of calls, with dummy arguments resolved), which state is carried from step to step and whether it
+is in the restart file. Browse it in the [web explorer](#database--web-interface), or query it
+directly with [`spel repl`](#spel-repl).
+
+### 9. Large structural refactors
+
+Some changes touch hundreds of files and are only practical with the analysis behind them:
+
+- [`spel compact`](#spel-compact) inventories the flux fields zeroed every step and rewrites a
+  type's fields to a compact subgrid layout.
+- `spel split` moves type definitions and their procedures out of large modules into new ones and
+  rewrites every `use` of a moved name.
+- `spel nutrient` finds the fields the carbon, nitrogen and phosphorus variants of a type share,
+  as candidates for a common base type, and can extract and merge them.
+
+## Directory layout
 
 | Path | Purpose |
 |------|---------|
@@ -113,6 +217,10 @@ All commands are subcommands of `spel`. Run `spel <command> --help` for the auth
 | [`spel profile`](#spel-profile) | Build and run a unit test without outputs under Nsight Systems/Compute |
 | [`spel acc2omp`](#spel-acc2omp) | Translate modules' OpenACC directives to OpenMP (to run multithreaded with gfortran) |
 | [`spel compact`](#spel-compact) | Inventory flux fields for a compact subgrid layout, and rewrite a type's fields to use it |
+| [`spel accplan`](#spel-accplan) | Propose an OpenACC loop structure (collapse, column-parallel, interchange, scatter) per loop |
+| `spel split` | Move type definitions and their procedures into new modules, rewriting every `use` |
+| `spel nutrient` | Find the fields C/N/P type variants share (candidates for a common base type) |
+| [`spel restore`](#spel-restore) | Copy the files changed in a unit-test case back into the E3SM checkout |
 | [`spel diff`](#spel-diff) | Compare two netCDF files and report relative error |
 | [`spel export`](#spel-export) | Write the `elm_drv` analysis as database CSVs (a snapshot) |
 | [`spel config`](#spel-config) | Print the resolved E3SM/ELM source paths |
@@ -535,9 +643,35 @@ variables (with namelist membership), routines (with their source text), argumen
 argument bindings, per-line accesses (direct and through callees), if blocks (namelist-gated ones
 flagged), `hist_addfld*`/`restartvar` registrations, the static step trace (every routine call of
 one `elm_drv` time step in execution order, and every read/write of a module variable along it,
-with dummies resolved to the actuals bound at each call) and the derived per-variable *field state*
-(see [Database / web interface](#database--web-interface)). The exporter is
-`spel/scripts/db_export/`; `schema.py` lists the columns.
+with dummies resolved to the actuals bound at each call, and the subgrid filter each access runs
+under), the filters the step builds and the disjoint/subset relations derived from them, and the
+derived per-variable *field state* (see [Database / web interface](#database--web-interface)). The
+exporter is `spel/scripts/db_export/`; `schema.py` lists the columns. Export takes a few seconds; a
+fresh `spel analyze` of an E3SM checkout takes about a minute.
+
+### `spel restore`
+
+Copies the ELM source files you changed inside a unit-test case back into `E3SM_SRCROOT`.
+
+```bash
+spel restore -c canflux --dry-run   # list them
+spel restore -c canflux -y          # copy without prompting
+```
+
+A file counts as changed when its modification time differs from the one most files in the case
+share (the time `spel create` wrote them). The `!#py ` token SPEL used to comment out unneeded code
+is removed again. Files from `SourceFiles/` (the netCDF interface, decomposition and driver stubs of
+the test harness) are never copied back. Review the result with `git diff` in the E3SM checkout.
+
+### `spel accplan`
+
+Proposes an OpenACC loop structure for each loop of the analyzed routines: collapse a perfect nest,
+parallelize over columns with an inner sequential loop, interchange, or scatter. It reads the loop
+nests and per-loop accesses from the analysis and reports only.
+
+```bash
+spel accplan --routine soiltemperature --min-lines 5
+```
 
 ### `spel config`
 
@@ -645,16 +779,25 @@ fut.type_dict         # dict[str, DerivedType]
 
 ## Database / web interface
 
-A Django app (`spel/db/`, HTMX plus a little d3) lets scientists and new team members browse one
-ELM time step: the call tree pruned by a namelist configuration, each routine's arguments, accesses,
-gates and source; a multi-variable *trace* with a timeline of where in the step each variable is
-read and written (arcs from a write to its next read, a dashed arc for state carried into the next
-step); a *variable catalog* classifying every field as **prognostic** (read before the step's first
-unconditional write: its value carries over), **diagnostic** (written first, registered for
-history), **intermediate** (written first, not output), **input** (only read) or **unused**, with
-restart/history registrations and their mismatches (restart-registered but recomputed every step;
-carried but not in the restart file); derived-type and module pages; a module `use` graph; and a
-*diff mode* comparing two namelist configurations or two snapshots.
+A Django app (`spel/db/`, HTMX plus a little d3) for scientists, developers and new team members to
+browse one ELM time step. Every page follows a *snapshot* (an analyzed E3SM checkout) and a
+*namelist configuration*, both picked in the toolbar, so what is shown is what that configuration
+actually runs.
+
+| Page | What it shows |
+|---|---|
+| Tree graph | A routine's callees as boxes, one row below the last routine each depends on; a line runs from a routine to a later one that reads what it wrote. Click into any routine. Book-keeping routines (summaries, zeroing, balance checks, budgets) are hidden by default, and variables written and read under disjoint filters (lake vs. non-lake columns) don't count as a dependency. |
+| Trace | Several variables on one timeline: where in the step each is read and written, arcs from a write to its next read, a dashed arc for state carried into the next step. |
+| Call tree | The step as an expandable tree pruned by the configuration, with each routine's arguments, accesses, namelist gates and source. |
+| Variables | Every field classified as **prognostic** (read before the step's first unconditional write: its value carries over), **diagnostic** (written first, registered for history), **intermediate** (written first, not output), **input** (only read) or **unused**, with restart/history registrations and their mismatches (restart-registered but recomputed every step; carried but not in the restart file). |
+| Types | Derived types and their members by subgrid level, instances, type-bound procedures; members can be added to the trace from here. |
+| Modules | What each module `use`s and what uses it, as a layered graph, plus per-module contents. |
+| Filters | The subgrid filters the step builds, where and under which conditions, and which pairs are disjoint or nested. |
+| Diff (experimental) | Two configurations or two snapshots compared: reachable routines, flipped if blocks, access sets, categories. |
+
+Search boxes are fuzzy throughout (`canpyflx` finds `canopyfluxes`).
+
+### Running it locally
 
 ```bash
 pip install -e '.[db]'                       # Django ('.[mysql]' adds the MariaDB driver)
@@ -666,11 +809,41 @@ python spel/db/manage.py import_presets       # namelist presets (COMPSET lnd_in
 python spel/db/manage.py runserver
 ```
 
+Several snapshots can be loaded side by side, e.g. E3SM master and a development branch:
+
+```bash
+spel analyze --srcroot ~/E3SM-master && spel export --srcroot ~/E3SM-master
+python spel/db/manage.py update_all_data script-output/db-export/master@<commit>
+```
+
 `update_all_data --list` shows the loaded snapshots. Namelist configurations are evaluated on
-first use with SPEL's if evaluator; every page takes `?snap=<label>&cfg=<preset slug>` so views are
-shareable. Signed-in users can create their own configurations in the namelist editor and override
-a variable's category by hand (overrides survive a `--replace`). The hosted instance uses MariaDB
-(`DB_ENGINE=mysql` in `.env`; `reset_db.sh` rebuilds it from an export directory).
+first use with SPEL's if evaluator; flags a configuration does not set take the default declared in
+the Fortran source. Every page takes `?snap=<label>&cfg=<preset slug>`, so views are shareable.
+Signed-in users can create their own configurations in the namelist editor and override a
+variable's category by hand (overrides survive a `--replace`). Results are cached for ten minutes:
+restart `runserver` after reloading a snapshot.
+
+### Deploying
+
+The app needs a server (it queries the database and evaluates configurations per request); static
+hosting such as GitHub Pages is not enough. On a VM behind Nginx or Caddy:
+
+- Set `DJANGO_SECRET_KEY`, `DJANGO_DEBUG=0`, `DJANGO_ALLOWED_HOSTS=<host>` and
+  `DJANGO_CSRF_TRUSTED_ORIGINS=https://<host>` in `spel/db/.env` (template: `.env.example`, never
+  commit the real file), plus the production TLS settings listed there.
+- `python spel/db/manage.py collectstatic`, then serve `STATIC_ROOT` from the web server and run
+  Django under gunicorn or similar.
+- Give the VM a fixed (Elastic) IP, point a DNS `A` record at it, and get a certificate with
+  Let's Encrypt (`certbot --nginx -d <host>`, or Caddy does it itself).
+- The hosted instance uses MariaDB (`DB_ENGINE=mysql`; `reset_db.sh` rebuilds it from an export
+  directory). SQLite works for a single small instance.
+
+### Reporting problems
+
+ELM has many configurations, and the analysis is conservative (an unknown condition counts as "may
+happen"). A routine that looks wrongly pruned, a dependency that cannot be real or a category that
+disagrees with the model are worth an [issue](https://github.com/peterdschwartz/SPEL/issues); please
+include the snapshot, the configuration and the page URL.
 
 ## Testing
 
@@ -678,8 +851,16 @@ a variable's category by hand (overrides survive a `--replace`). The hosted inst
 pytest
 ```
 
-Test suites live in `spel/scripts/tests/` and `spel/scripts/fortran_parser/tests/`. Tests that need
+Test suites live in `spel/scripts/tests/`, `spel/scripts/fortran_parser/tests/`,
+`spel/transforms/` and `spel/db/app/tests/` (pytest-django, skipped without the `db-test` extra). Tests that need
 a whole-ELM analysis use the `elm_drv_analysis` fixture (`conftest.py`). It loads a frozen copy at
 `.pytest-fixtures/elm_drv_analysis.pkl`, which is seeded once from the `E3SM_SRCROOT` analysis
 cache. Delete that file to refresh it, or point `SPEL_TEST_ANALYSIS` at another `analysis.pkl`. If
 neither the copy nor the cache exists, these tests are skipped.
+
+## Contributing
+
+`AGENTS.md` collects the working notes for developers and coding agents: machine setup, generated
+vs. hand-edited files, how to verify a refactor bit-for-bit, and the rule that new analyses are
+built on SPEL's Fortran parser and scope walker rather than on regexes over source text (extend the
+parser when it lacks something).

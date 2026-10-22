@@ -151,6 +151,34 @@ Do this in a scratch directory so `.mod`/`.o` files don't land in the repo.
   whose values the capture records from `get_nstep()`/`is_first_restart_step()`.
 - Adding a per-step variable changes the IO: reference data captured before it must be recaptured.
 
+## Developing SPEL: build on the parser, not on regexes
+
+SPEL has its own Fortran lexer, parser, AST and scope walker (`spel/scripts/fortran_parser/`:
+`lexer.py`, `spel_parser.py`, `spel_ast.py`, `scope_walk.py`, `symbols.py`), and analyses built on
+them (`record_access.py`, `registrations.py`, `spel/transforms/compact/index_forms.py`). A new
+feature that needs to know what a statement *is* or which names it uses must get that from them:
+
+- Take structure from the parse tree and the record: statements and constructs from the AST
+  (`registrations.parse_routine`, `iter_statements`/`line_guards` for enclosing ifs), accesses,
+  loops, assignments and calls from `Subroutine.record` (`SubroutineRecord`: `events`, `loop_nest`,
+  `associations`, `lookup`), read/write status and argument bindings from `Subroutine.record_access`,
+  index forms and filters from `IndexContext`. Expressions are AST nodes; walk them instead of
+  re-parsing their text.
+- Don't scan source text with regexes to recognise statements, declarations, calls, loop bounds or
+  variable names. Regex scans have caused real bugs here (`endif` not recognised, names inside
+  strings and keyword arguments counted as variables, continuation lines missed). Regexes are fine
+  only for pure text work that classifies nothing: placing an edit at a known line, renaming a
+  token the parser has already identified, or reading non-Fortran text.
+- If the parser or walker lacks what you need (a construct it rejects, a node that drops
+  information, an event the walker doesn't record), **extend the parser** rather than working around
+  it: add the node/field/event, make any behaviour change opt-in when existing callers depend on the
+  old output (as `keep_string_case`/`keep_directives` were), and add a snippet test in
+  `spel/scripts/fortran_parser/tests/` (`walk()` in `test_scope_walk.py` parses and walks a routine).
+- Parser, AST or walker changes alter the pickled analysis: rerun with `--reanalyze` and refresh the
+  frozen test fixture (delete `.pytest-fixtures/elm_drv_analysis.pkl`).
+- Older modules (`LoopConstructs.py`, parts of `utilityFunctions.py`) are line- and regex-based.
+  Don't extend them; port what you need onto the record instead.
+
 ## Analysis
 
 - `spel create` reuses the per-srcroot cache in `unit-tests/.spel-cache/<srcroot>-<hash>/elm_drv/`.
@@ -214,8 +242,16 @@ Do this in a scratch directory so `.mod`/`.o` files don't land in the repo.
 - Tests: `spel/scripts/tests/test_db_export.py` (no Django), `spel/db/app/tests/` (pytest-django,
   in-memory SQLite; skipped without the `db-test` extra). Evaluation and reachability are cached
   in LocMem for 10 minutes: restart `runserver` after reloading a snapshot.
-- UI: HTMX 2 partials + bespoke JS (`static/js/{explorer,timeline,calltree,modgraph,toggle}.js`);
-  d3 v7 (cdnjs) only for the timeline, tree graph and module graph. Pages take `?snap=&cfg=`.
+- UI: HTMX 2 partials + bespoke JS (`static/js/{explorer,tracelist,timeline,layered,calltree,modgraph,toggle}.js`);
+  d3 v7 (cdnjs) only for the timeline and the two layered graphs. `layered.js` is the shared engine
+  of the tree graph and the module graph (rows by dependency depth, channel-routed edges, transitive
+  reduction in the browser). Pages take `?snap=&cfg=`. Templates load JS/CSS with `{% static_v %}`
+  (`templatetags/staticv.py`, mtime query string) so edits reach browsers without a hard reload; a
+  new templatetag library needs a `runserver` restart.
+- Every search box is fuzzy (`q.fuzzy_filter`/`fuzzy_score`); keep new ones that way. The graph
+  root boxes take the best fuzzy match when the name is not exact.
+- The loader must load every table in `schema.TABLES` (it checks the CSVs exist, not that it reads
+  them: `module_deps` was once silently skipped). Add a loader step with any new table.
 
 ## Compact layout (`spel compact`)
 
