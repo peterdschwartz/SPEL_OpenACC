@@ -9,13 +9,32 @@ from .helper import compute_config_hash
 
 
 def active_snapshot(request, label: Optional[str] = None) -> Optional[Snapshot]:
-    """The snapshot named by `label` or the session, else the most recently loaded one."""
+    """The snapshot named by `label` or the session, else the default one, else the most recently loaded."""
+    chosen = label  # from the URL; the toolbar picker stores its choice in the session itself
     label = label or request.session.get("active_snapshot")
     snap = Snapshot.objects.filter(label=label).first() if label else None
     if snap is None:
-        snap = Snapshot.objects.filter(loaded_at__isnull=False).order_by("-loaded_at").first()
-    if snap is not None and request.session.get("active_snapshot") != snap.label:
+        # remember only a snapshot the visitor chose, so a later change of the default reaches everyone else
+        request.session.pop("active_snapshot", None)
+        return default_snapshot()
+    if chosen and request.session.get("active_snapshot") != snap.label:
         request.session["active_snapshot"] = snap.label
+    return snap
+
+
+def default_snapshot() -> Optional[Snapshot]:
+    """The snapshot marked default (`update_all_data --set-default`), else the most recently loaded one."""
+    loaded = Snapshot.objects.filter(loaded_at__isnull=False)
+    return loaded.filter(is_default=True).first() or loaded.order_by("-loaded_at").first()
+
+
+def set_default_snapshot(label: str) -> Snapshot:
+    """Mark `label` as the default snapshot (and no other). Raises Snapshot.DoesNotExist."""
+    snap = Snapshot.objects.get(label=label)
+    Snapshot.objects.exclude(pk=snap.pk).filter(is_default=True).update(is_default=False)
+    if not snap.is_default:
+        snap.is_default = True
+        snap.save(update_fields=["is_default"])
     return snap
 
 

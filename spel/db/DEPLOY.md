@@ -157,10 +157,18 @@ python manage.py createsuperuser
 
 ```bash
 python manage.py collectstatic --noinput       # copy CSS/JS into STATIC_ROOT for nginx
-python manage.py update_all_data --list        # what is loaded
+python manage.py update_all_data --list        # what is loaded; "(default)" marks what visitors see first
+python manage.py update_all_data --set-default master@<commit>   # choose that snapshot
 ```
 
+Without `--set-default`, visitors who haven't picked a snapshot see the most recently loaded one.
+The choice survives `--replace`. A visitor who already picked a snapshot in the toolbar keeps it
+for the rest of their session.
+
 ### Adding or refreshing a snapshot later
+
+The `systemctl` commands below need the `spel-explorer` service, which step 5 creates. On a first
+setup, skip them until then.
 
 Copy the export directory over and load it; the site keeps serving pages while it loads.
 
@@ -195,9 +203,12 @@ configurations and category overrides. A Lightsail instance snapshot also covers
 
 ## 5. gunicorn as a service
 
-`/etc/systemd/system/spel-explorer.service`:
+`spel-explorer` is a systemd service you create: one unit file that tells systemd to run gunicorn
+(which serves the Django app) at boot and to restart it if it crashes. Write the file with
+`sudo tee`; the quoted `'EOF'` keeps the shell from expanding anything inside:
 
-```ini
+```bash
+sudo tee /etc/systemd/system/spel-explorer.service > /dev/null <<'EOF'
 [Unit]
 Description=SPEL ELM explorer (gunicorn)
 After=network.target
@@ -213,14 +224,21 @@ Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
+EOF
 ```
 
+`User=ubuntu` is the login user on Lightsail's Ubuntu images; use yours if it differs (`whoami`).
+That user must own `/srv/spel-data` and be able to read `/srv/SPEL`. Then load and start it:
+
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now spel-explorer
-sudo systemctl status spel-explorer
-journalctl -u spel-explorer -f          # Django's log
+sudo systemctl daemon-reload                # read the new unit file
+sudo systemctl enable --now spel-explorer   # start it now and at every boot
+sudo systemctl status spel-explorer         # should say "active (running)"
+journalctl -u spel-explorer -f              # Django's log; Ctrl+C stops following
 ```
+
+After editing the unit file, run `sudo systemctl daemon-reload` and then
+`sudo systemctl restart spel-explorer`. Changes to `.env` or to the code only need the restart.
 
 The module path is `db.spel.wsgi` run from `/srv/SPEL/spel`, the same layout `manage.py` uses.
 `--timeout 120` leaves room for the first request under a new configuration, which evaluates every
@@ -229,9 +247,10 @@ opens it in WAL mode, so readers run in parallel and a writer waits for at most 
 
 ## 6. nginx
 
-`/etc/nginx/sites-available/spel-explorer`:
+Create the site file the same way:
 
-```nginx
+```bash
+sudo tee /etc/nginx/sites-available/spel-explorer > /dev/null <<'EOF'
 server {
     listen 80;
     server_name <host>;
@@ -249,7 +268,10 @@ server {
         proxy_read_timeout 120s;
     }
 }
+EOF
 ```
+
+Replace `<host>` with your domain or IP first. Then enable the site and reload nginx:
 
 ```bash
 sudo ln -s /etc/nginx/sites-available/spel-explorer /etc/nginx/sites-enabled/

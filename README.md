@@ -816,7 +816,8 @@ spel analyze --srcroot ~/E3SM-master && spel export --srcroot ~/E3SM-master
 python spel/db/manage.py update_all_data script-output/db-export/master@<commit>
 ```
 
-`update_all_data --list` shows the loaded snapshots. Namelist configurations are evaluated on
+`update_all_data --list` shows the loaded snapshots, and `update_all_data --set-default LABEL`
+chooses the one visitors see first (otherwise the most recently loaded). Namelist configurations are evaluated on
 first use with SPEL's if evaluator; flags a configuration does not set take the default declared in
 the Fortran source. Every page takes `?snap=<label>&cfg=<preset slug>`, so views are shareable.
 Signed-in users can create their own configurations in the namelist editor and override a

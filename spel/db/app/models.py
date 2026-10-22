@@ -48,6 +48,8 @@ class Snapshot(models.Model):
     failures = models.JSONField(default=dict)
     incomplete = models.JSONField(default=dict)
     stats = models.JSONField(default=dict)
+    # shown to visitors who haven't picked a snapshot (else the most recently loaded one)
+    is_default = models.BooleanField(default=False)
 
     class Meta:
         db_table = "snapshots"

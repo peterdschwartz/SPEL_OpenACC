@@ -119,13 +119,18 @@ class SnapshotLoader:
                 pass
         with transaction.atomic():
             old = Snapshot.objects.filter(label=self.label).first()
+            was_default = False
             if old is not None:
                 if not self.replace:
                     raise ValueError(f"snapshot '{self.label}' exists; use --replace to reload it")
                 self._stash_overrides(old)
+                was_default = old.is_default
                 self.log(f"Deleting snapshot '{self.label}' ...")
                 old.delete()
             snap = self._snapshot()
+            if was_default:  # a reload keeps the snapshot the default
+                snap.is_default = True
+                snap.save(update_fields=["is_default"])
             self._structure(snap)
             self._routines(snap)
             self._module_deps(snap)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -201,3 +202,29 @@ def test_build_env_multi_trigger_cascade(loaded):
     assert build_env(snap, {})["carbon_only"] == ".false."                                   # source defaults: none, all
     assert build_env(snap, {"suplnitro": "'ALL'", "suplphos": "'ALL'"})["carbon_only"] == ".true."  # a preset quotes them
     assert "carbon_only" not in build_env(snap, {"suplnitro": "'ALL'", "suplphos": "'ALL'", "spinup_state": "1"})
+
+
+def test_default_snapshot(loaded, export_dir, client):
+    """The marked snapshot is what a new visitor sees, it survives --replace, and only one is marked."""
+    from django.core.management import call_command
+
+    from db.app.management.loaders import SnapshotLoader
+    from db.app.models import Snapshot
+    from db.app.utils.configs import default_snapshot, set_default_snapshot
+
+    newer = SnapshotLoader(export_dir, label="newer", log=lambda s: None).load()
+    assert default_snapshot().pk == newer.pk  # nothing marked: the most recently loaded
+    set_default_snapshot("mini")
+    assert default_snapshot().label == "mini"
+    assert "mini" in client.get("/").content.decode()
+    SnapshotLoader(export_dir, label="mini", replace=True, log=lambda s: None).load()
+    assert default_snapshot().label == "mini"  # kept across a reload
+    call_command("update_all_data", set_default="newer", stdout=open(os.devnull, "w"))
+    assert list(Snapshot.objects.filter(is_default=True).values_list("label", flat=True)) == ["newer"]
+    # the visitor above never picked one: they now see the new default
+    assert "active_snapshot" not in client.session
+    assert client.get("/api/calltree/").json()["snapshot"] == "newer"
+    # a choice in the toolbar sticks across the default changing
+    client.post("/snapshots/select/", {"snapshot": "mini"})
+    call_command("update_all_data", set_default="newer", stdout=open(os.devnull, "w"))
+    assert client.get("/api/calltree/").json()["snapshot"] == "mini"
