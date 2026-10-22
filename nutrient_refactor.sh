@@ -1,5 +1,6 @@
 #!/bin/bash
-# Apply the nutrient base-type refactor to an E3SM checkout, one commit per step.
+# Apply the nutrient base-type refactor to an E3SM checkout, then split the data-type
+# modules and prune unused members: one commit per step.
 #
 #   nutrient_refactor.sh [-s SRCROOT] [-f FIRST_STEP] [-n]
 #
@@ -44,6 +45,7 @@ STEPS=(
   "spel nutrient restart|One restartvar per nutrient core field (spel nutrient restart)"
   "spel nutrient merge --procedure summary|Merge shared Summary code into core-component routines"
   "spel split|Split Vegetation/Column/GridcellDataType into type modules (spel split)"
+  "spel prune|Delete derived-type members nothing accesses (spel prune)"
 )
 
 if [ "$LIST" = 1 ]; then
