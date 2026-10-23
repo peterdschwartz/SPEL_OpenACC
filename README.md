@@ -32,8 +32,8 @@ SPEL is a normal Python package; a virtual environment is recommended. Dependenc
 in `pyproject.toml`.
 
 ```bash
-git clone https://github.com/peterdschwartz/SPEL_OpenACC.git
-cd SPEL_OpenACC
+git clone https://github.com/peterdschwartz/SPEL.git
+cd SPEL
 python -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
@@ -60,46 +60,6 @@ analysis cache) is derived from it. Verify with:
 ```bash
 spel config
 ```
-
-### Machine configuration
-
-Building a unit test needs a Fortran compiler, `cmake` and a matching `netcdf-fortran` (found with
-`pkg-config`). On a machine SPEL knows, `spel run`, `spel profile` and `spel validate` set that up
-themselves, and `e3sm_casegen.sh --preset ...` and `profile_compare.sh` take their machine
-defaults from the same place:
-
-```bash
-spel machine            # what applies here: E3SM machine, scratch, cprnc, toolchains
-spel machine check      # set up every toolchain and verify compiler, cmake, netcdf-fortran
-spel machine setup      # put unit-tests/ and unit-tests/input-data on scratch (symlinks)
-spel run canflux        # builds with the machine's default toolchain (SPEL_FC=nvfortran for another)
-```
-
-Perlmutter (`gfortran`, `nvfortran`, `ifx`) and Chrysalis (`ifx`, `gfortran`) are bundled
-(`spel/machines/*.toml`) and detected automatically. Their toolchains take the modules and
-environment of the corresponding compiler from the E3SM checkout's
-`cime_config/machines/config_machines.xml`, so they follow E3SM's own module versions; the
-machine file only adds glue (where unit tests go, `pkg-config` paths, `ACC_DEVICE_TYPE`).
-
-For another machine:
-
-```bash
-spel machine init mybox           # ~/.config/spel/machines/mybox.toml from the documented template
-$EDITOR ~/.config/spel/machines/mybox.toml
-SPEL_MACHINE=mybox spel machine check
-```
-
-A toolchain is a table `[toolchains.<fc>]` (`<fc>` = the compiler executable, what `SPEL_FC`
-selects) with either `e3sm_compiler = "gnu"` (modules from E3SM's machine entry, which needs
-`e3sm_machine`), `env_file = "~/env.sh"` (a file to source, e.g. a CIME case's
-`.env_mach_specific.sh`) or `commands = ["module load ...", ...]`, plus `pkg_config_path`,
-`ld_library_path` and `env`. `[detect]` (`hostname` regex or `env` variables) selects the file
-automatically; without it, E3SM's `NODENAME_REGEX` is used, or `SPEL_MACHINE=<name>` (environment
-or `.spel.env`) picks it. `SPEL_MACHINE=none` turns the machine layer off and SPEL uses the
-current shell environment, as before. `spel machine env --fc nvfortran` prints the shell script a
-toolchain produces (`source <(spel machine env --fc nvfortran)` gives you the same environment
-interactively). User files override bundled ones of the same name, so a copy of
-`perlmutter.toml` in `~/.config/spel/machines/` is the way to change it.
 
 ## Workflows
 
@@ -279,6 +239,45 @@ Some changes touch hundreds of files and are only practical with the analysis be
 | `spel/scripts/fut_<casename>.pkl` | Serialized analysis results (see below) |
 
 ---
+### Machine configuration
+
+Building a unit test needs a Fortran compiler, `cmake` and a matching `netcdf-fortran` (found with
+`pkg-config`). On a machine SPEL knows, `spel run`, `spel profile` and `spel validate` set that up
+themselves, and `e3sm_casegen.sh --preset ...` and `profile_compare.sh` take their machine
+defaults from the same place:
+
+```bash
+spel machine            # what applies here: E3SM machine, scratch, cprnc, toolchains
+spel machine check      # set up every toolchain and verify compiler, cmake, netcdf-fortran
+spel machine setup      # put unit-tests/ and unit-tests/input-data on scratch (symlinks)
+spel run canflux        # builds with the machine's default toolchain (SPEL_FC=nvfortran for another)
+```
+
+Perlmutter (`gfortran`, `nvfortran`, `ifx`) and Chrysalis (`ifx`, `gfortran`) are bundled
+(`spel/machines/*.toml`) and detected automatically. Their toolchains take the modules and
+environment of the corresponding compiler from the E3SM checkout's
+`cime_config/machines/config_machines.xml`, so they follow E3SM's own module versions; the
+machine file only adds glue (where unit tests go, `pkg-config` paths, `ACC_DEVICE_TYPE`).
+
+For another machine:
+
+```bash
+spel machine init mybox           # ~/.config/spel/machines/mybox.toml from the documented template
+$EDITOR ~/.config/spel/machines/mybox.toml
+SPEL_MACHINE=mybox spel machine check
+```
+
+A toolchain is a table `[toolchains.<fc>]` (`<fc>` = the compiler executable, what `SPEL_FC`
+selects) with either `e3sm_compiler = "gnu"` (modules from E3SM's machine entry, which needs
+`e3sm_machine`), `env_file = "~/env.sh"` (a file to source, e.g. a CIME case's
+`.env_mach_specific.sh`) or `commands = ["module load ...", ...]`, plus `pkg_config_path`,
+`ld_library_path` and `env`. `[detect]` (`hostname` regex or `env` variables) selects the file
+automatically; without it, E3SM's `NODENAME_REGEX` is used, or `SPEL_MACHINE=<name>` (environment
+or `.spel.env`) picks it. `SPEL_MACHINE=none` turns the machine layer off and SPEL uses the
+current shell environment, as before. `spel machine env --fc nvfortran` prints the shell script a
+toolchain produces (`source <(spel machine env --fc nvfortran)` gives you the same environment
+interactively). User files override bundled ones of the same name, so a copy of
+`perlmutter.toml` in `~/.config/spel/machines/` is the way to change it.
 
 ## CLI reference
 
