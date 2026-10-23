@@ -351,7 +351,7 @@ class Rewriter:
         def field(comp: str) -> str:
             name = f"'{comp}',".ljust(width + 1)
             unpack = ".true. " if self.sel.unpack[comp] else ".false."
-            return f"compact_field({name} class={cls_of[comp]}, unpack={unpack})"
+            return f"compact_field({name}  unpack={unpack})"
 
         gen = procedure(
             "compact_init",

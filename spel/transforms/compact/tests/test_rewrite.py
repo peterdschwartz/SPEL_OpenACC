@@ -83,7 +83,7 @@ def test_generated_plain_procedures_compile(tmp_path):
     assert "subroutine vegetation_nutrient_flux_compact_init(this, beg, end)" in text
     assert "type(vegetation_nutrient_flux), intent(inout) :: this" in text and "class(" not in text
     flat = " ".join(text.split())
-    assert "call this%cbuf%add(compact_field('leaf_to_litter', class=1, unpack=.true. ), this%leaf_to_litter)" in flat
+    assert "call this%cbuf%add(compact_field('leaf_to_litter',  unpack=.true. ), this%leaf_to_litter)" in flat
     if shutil.which("gfortran") is None:
         return
     module = f"""module NutrientFluxType

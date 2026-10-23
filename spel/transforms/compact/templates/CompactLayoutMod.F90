@@ -14,7 +14,7 @@ module CompactLayoutMod
   ! elements into it, pack copies them back.
   !
   !   call buf%init(begp, endp)
-  !   call buf%add(compact_field('leaf_mr', class=1, unpack=.true.), this%leaf_mr)
+  !   call buf%add(compact_field('leaf_mr', unpack=.true.), this%leaf_mr)
   !   ...                  ! this%leaf_mr now points at its compact storage
   !   call buf%full_view(this%leaf_mr)       ! back to the full layout
   !   call buf%compact_view(this%leaf_mr)    ! and to the compact storage
@@ -36,10 +36,9 @@ module CompactLayoutMod
 
   type, public :: compact_field
      character(len=64) :: name = ''
-     integer :: class = 0                     ! zeroing class
      logical :: unpack = .false.              ! copied to `full` at the unpack point
-     real(r8), pointer :: full(:) => null()   ! full layout (original allocation)
-     real(r8), pointer :: compact(:) => null()
+     real(r8),contiguous, pointer :: full(:) => null()   ! full layout (original allocation)
+     real(r8),contiguous, pointer :: compact(:) => null()
   end type compact_field
 
   type, public :: compact_buffer_type
@@ -66,9 +65,9 @@ module CompactLayoutMod
 contains
 
   !-----------------------------------------------------------------------
-  subroutine compact_set_clump(begp)
-    integer, intent(in) :: begp  ! first patch of the clump
-    compact_soilp_off = begp - 1
+  subroutine compact_set_clump(beg)
+    integer, intent(in) :: beg  ! first subgrid element of the clump
+    compact_soilp_off = beg - 1
   end subroutine compact_set_clump
 
   !-----------------------------------------------------------------------
@@ -131,7 +130,7 @@ contains
   end subroutine compact_full_view
 
   !-----------------------------------------------------------------------
-  subroutine compact_zero(this, class, num, filter, value)
+  subroutine compact_zero(this, class, num, filter, val)
     ! Set the fields of `class` to `value` on the clump's filter. Compact:
     ! `filter` must be the clump's soil patch filter (elements
     ! compact_soilp_off+1 .. compact_soilp_off+num).
@@ -139,21 +138,23 @@ contains
     integer , intent(in) :: class
     integer , intent(in) :: num
     integer , intent(in) :: filter(:)
-    real(r8), intent(in) :: value
-    integer :: i
+    real(r8), intent(in) :: val
+    integer :: i,j,f_i
 
     if (num <= 0 .or. .not. allocated(this%fields)) return
     if (this%bound .and. compact_soilp_off + num > this%end) then
        call shr_sys_abort('CompactLayoutMod: compact_zero: filter longer than the clump')
     end if
-    do i = 1, size(this%fields)
-       if (this%fields(i)%class /= class) cycle
-       if (this%bound) then
-          this%fields(i)%compact(compact_soilp_off+1 : compact_soilp_off+num) = value
-       else
-          this%fields(i)%full(filter(1:num)) = value
-       end if
-    end do
+    if (this%bound) then
+       do  i = 1, size(this%fields)
+          this%fields(i)%compact(compact_soilp_off+1 : compact_soilp_off+num) = val
+       end do
+    else
+       do concurrent(i = 1:size(this%fields), f_i=1:num)
+          j = filter(f_i)
+          this%fields(i)%full(j) = val
+       end do
+    end if
   end subroutine compact_zero
 
   !-----------------------------------------------------------------------
@@ -187,10 +188,10 @@ contains
     integer :: i, fp
 
     if (.not. allocated(this%fields)) return
-    do i = 1, size(this%fields)
-       do concurrent (fp = 1:num)
-          this%fields(i)%compact(compact_soilp_off + fp) = this%fields(i)%full(filter(fp))
-       end do
+
+    !$acc parallel loop independent vector
+    do concurrent (i=1:size(this%fields),fp = 1:num)
+       this%fields(i)%compact(compact_soilp_off + fp) = this%fields(i)%full(filter(fp))
     end do
   end subroutine compact_pack
 
