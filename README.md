@@ -159,22 +159,8 @@ says it does. With a gfortran build the target is bit-for-bit. `nsets` copies of
 indexing and race bugs that a single copy hides. [`spel diff`](#spel-diff) compares any two netCDF
 files.
 
-### 5. Port to GPUs or multicore
 
-```bash
-spel accplan --routine soiltemperature        # proposed OpenACC loop structure per loop
-SPEL_ACC=MULTICORE spel run soiltemp_acc      # OpenACC build, compare with ACC=OFF
-spel acc2omp --case soiltemp_acc --dry-run    # race check: scalars the analysis would privatize
-spel profile soiltemp_acc 4 --steps 10        # Nsight Systems timing of just the routine
-```
-
-The analysis knows each loop's extent, its index and what every scalar in it reads and writes, so
-SPEL can propose OpenACC loop structures ([`spel accplan`](#spel-accplan)), translate OpenACC to
-OpenMP to run multithreaded with gfortran ([`spel acc2omp`](#spel-acc2omp)), and point out scalars
-missing from `private` clauses. [`spel profile`](#spel-profile) times the routine alone under
-Nsight.
-
-### 6. Merge the change back into ELM
+### 5. Merge the change back into ELM
 
 ```bash
 spel restore -c canflux --dry-run     # list the files that would be copied back
@@ -187,7 +173,7 @@ uncommented) and copies them back to their place in the E3SM checkout. Files tha
 the test harness itself (`SourceFiles/`) are never copied. The ELM sources then contain exactly
 your change, ready for a full E3SM build and a pull request.
 
-### 7. Compare a development branch against a reference branch
+### 6. Compare a development branch against a reference branch
 
 Each E3SM checkout gets its own analysis cache, so two checkouts can be used side by side. Use the
 same case name for both:
@@ -203,7 +189,7 @@ The second `create` regenerates `unit-tests/canflux/` but leaves the reference d
 which one produced the data. The diffs are then the answer differences between the branches. This
 works when both branches read the same derived-type components as inputs.
 
-### 8. Understand the code
+### 7. Understand the code
 
 The whole-driver analysis answers questions that otherwise take reading dozens of files: which
 routines a configuration actually runs, which fields a routine reads and writes (through any depth
@@ -211,10 +197,11 @@ of calls, with dummy arguments resolved), which state is carried from step to st
 is in the restart file. Browse it in the [web explorer](#database--web-interface), or query it
 directly with [`spel repl`](#spel-repl).
 
-### 9. Large structural refactors
+### 8. Large structural refactors
 
-Some changes touch hundreds of files and are only practical with the analysis behind them:
-
+Some changes touch a large number of files and are only practical with the analysis behind them.
+SPEL's formal parsing approach facillitates programmatic querying and transformation of ELM source code.
+Examples include:
 - [`spel compact`](#spel-compact) inventories the flux fields zeroed every step and rewrites a
   type's fields to a compact subgrid layout.
 - `spel split` moves type definitions and their procedures out of large modules into new ones and
@@ -790,7 +777,7 @@ spel machine init NAME [--from M]   # new user machine file from the template (o
 spel machine setup [--move]         # symlink unit-tests/ and unit-tests/input-data to $scratch/spel-*
 ```
 
-### `spel upload`
+### `spel upload` (deprecated)
 
 rsyncs the netCDF interface Fortran files (`FUTConstantsMod.F90`, `nc_allocMod.F90`, `nc_io.F90`,
 `ReadWriteMod.F90`) from the current directory to a remote machine.
@@ -839,7 +826,7 @@ re-analyzing the source. `spel export` without `--case` reads the `elm_drv` cach
 
 ### Portability across machines and checkouts
 
-Pickles are designed to be **shared**. On export, every `filepath` on a module, subroutine, or
+Pickles are designed to be shared. On export, every `filepath` on a module, subroutine, or
 derived type is rewritten to be *relative to* `E3SM_SRCROOT`; on import, it is re-anchored to the
 *local* `E3SM_SRCROOT`. A pickle produced on one machine therefore works on another, even when
 the E3SM clone lives somewhere entirely different.

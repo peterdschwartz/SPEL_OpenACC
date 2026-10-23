@@ -24,35 +24,6 @@ the toolchains, `spel run`/`spel profile`/`spel validate` build inside the toolc
 falls back to the current shell environment. When a machine's setup changes, change its machine
 file, not these notes alone.
 
-### Laptop (Ryzen AI 5 340, 6 cores / 12 threads, no NVIDIA GPU)
-
-- `spel` comes from `~/climate-projects/py12env`.
-- nvfortran (NVHPC 26.5) is `~/.local/nvhpc/Linux_x86_64/26.5`, and its netcdf-fortran build is
-  `~/.local/nvhpc-libs/netcdf-fortran`. Run `source ~/.local/nvhpc-libs/env.sh` before any
-  nvfortran build; pass the same file to `profile_compare.sh --env`.
-- No GPU: `ACC=GPU` builds can't run here; use `ACC=MULTICORE` / `OPENMP`.
-- CIME machine `mylaptop` (gnu); the macro `cime_config/machines/cmake_macros/mylaptop_gnu.cmake`
-  is untracked in each E3SM checkout. A one-year run of the 21-gridcell refcase
-  (`~/climate-projects/input-data/spel-refcases/I1850GSWCNPRDCTCBC/canflux/0081-01-01`) takes
-  about 4 minutes.
-
-### GPU workstation (Ryzen 5 3600, 6 cores / 12 threads, RTX 4070)
-
-As recorded on 2026-10-16; not re-checked since.
-
-- `spel` comes from `~/python-envs/py3.12`.
-- nvfortran is `/opt/nvidia/hpc_sdk/Linux_x86_64/25.9`; its netcdf-fortran build is
-  `~/.local/netcdf-fortran` (+ `~/.local/netcdf-c`, `~/.local/hdf5`). There is no `env.sh`;
-  before any nvfortran build set:
-
-  ```bash
-  export PATH=/opt/nvidia/hpc_sdk/Linux_x86_64/25.9/compilers/bin:$PATH
-  export PKG_CONFIG_PATH=$HOME/.local/netcdf-fortran/lib/pkgconfig:$HOME/.local/netcdf-c/lib/pkgconfig:$HOME/.local/hdf5/lib/pkgconfig
-  export LD_LIBRARY_PATH=$HOME/.local/netcdf-fortran/lib:$HOME/.local/netcdf-c/lib:$HOME/.local/hdf5/lib:/opt/nvidia/hpc_sdk/Linux_x86_64/25.9/compilers/lib:$LD_LIBRARY_PATH
-  ```
-
-  Put that in a file and pass it to `profile_compare.sh --env`.
-
 ### Perlmutter
 
 Production profiling and large (e.g. crop, `--preset crop-perf`) reference runs. Recorded on
@@ -63,10 +34,6 @@ Production profiling and large (e.g. crop, `--preset crop-perf`) reference runs.
   `srun --jobid=JOB --overlap -N1 -n1 -c 64 ...`); Slurm jobs need the user's OK.
 - `spel` comes from the NERSC python module (`nersc-python` 3.13, conda env 26.8.1); the user
   install is `~/.local/perlmutter/python-3.13/26.8.1/bin/spel`.
-- E3SM checkouts: `~/merge/E3SM` (branch `peterdschwartz/lnd/gpu-refactor-with-crop-perf-changes`),
-  `~/E3SM` (upstream bishtgautam/lnd/add-t-meshes-v3). Cases and runs go under
-  `$SCRATCH/E3SM_testings` (home quota is small); `unit-tests/` and its input data are symlinked
-  to `$SCRATCH`.
 - Crop performance runs: `./e3sm_casegen.sh --preset crop-perf --res t-lr25 --with-crops
   --compressed-cft` (pm-cpu default compiler = Intel, 1024 tasks, 5 days, debug queue).
 - Unit-test toolchains (`spel/machines/perlmutter.toml`, all verified 2026-10-22 with
@@ -404,8 +371,6 @@ Testing:
 
 ## Don'ts
 
-- Don't modify uncommitted work in the E3SM checkouts (`~/climate-projects/E3SM`, `~/climate-projects/dev_E3SM`)
+- Don't modify uncommitted work in the E3SM checkouts 
   unless the user asks; if they do, back the file up first.
-- `~/climate-projects/E3SM` (master) may be instrumented: run `spel instrument --undo` before
-  analyzing it, and don't reanalyze it to test SPEL changes (use `dev_E3SM`).
 - Don't name scratch Python files after stdlib modules (e.g. `/tmp/copy.py`).
